@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isSpaceMember(spaceId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/spaces/$(spaceId)/members/$(request.auth.uid));
+    }
+
+    function isSpaceAdmin(spaceId) {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/spaces/$(spaceId)/members/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/spaces/$(spaceId)/members/$(request.auth.uid)).data.role == 'admin') ||
+        (exists(/databases/$(database)/documents/spaces/$(spaceId)) &&
+         get(/databases/$(database)/documents/spaces/$(spaceId)).data.createdBy == request.auth.uid)
+      );
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isUser(userId);
+      allow update: if isUser(userId);
+      allow delete: if false;
+    }
+
+    // Spaces
+    match /spaces/{spaceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isSpaceAdmin(spaceId);
+      allow delete: if isSpaceAdmin(spaceId);
+
+      // Members subcollection
+      match /members/{memberId} {
+        allow read: if isAuthenticated();
+        // Space admin can add/modify/remove members, or user can remove themselves (leave)
+        allow create, update: if isSpaceAdmin(spaceId);
+        allow delete: if isSpaceAdmin(spaceId) || isUser(memberId);
+      }
+
+      // Join requests subcollection
+      match /joinRequests/{requestId} {
+        allow read: if isAuthenticated() && (isUser(requestId) || isSpaceAdmin(spaceId));
+        allow create: if isUser(requestId);
+        allow update, delete: if isSpaceAdmin(spaceId) || isUser(requestId);
+      }
+
+      // Public messages within a space
+      match /messages/{messageId} {
+        allow read: if isSpaceMember(spaceId);
+        allow create: if isSpaceMember(spaceId);
+        allow update: if isSpaceMember(spaceId);
+        allow delete: if isSpaceAdmin(spaceId) || (isAuthenticated() && resource.data.senderId == request.auth.uid);
+      }
+
+      // Files within a space
+      match /files/{fileId} {
+        allow read: if isSpaceMember(spaceId);
+        allow create: if isSpaceMember(spaceId);
+        allow delete: if isSpaceAdmin(spaceId) || (isAuthenticated() && resource.data.uploadedBy == request.auth.uid);
+      }
+
+      // Announcements within a space
+      match /announcements/{announcementId} {
+        allow read: if isSpaceMember(spaceId);
+        allow create, update, delete: if isSpaceAdmin(spaceId);
+      }
+
+      // Links within a space
+      match /links/{linkId} {
+        allow read: if isSpaceMember(spaceId);
+        allow create: if isSpaceMember(spaceId);
+        allow delete: if isSpaceAdmin(spaceId) || (isAuthenticated() && resource.data.senderId == request.auth.uid);
+      }
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Direct 1-to-1 Conversations
+    match /conversations/{conversationId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.participants;
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.participants;
+
+      // Encrypted Private Messages
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow create: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants &&
+          request.resource.data.senderId == request.auth.uid;
+        allow delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+      }
+    }
+  }
+}

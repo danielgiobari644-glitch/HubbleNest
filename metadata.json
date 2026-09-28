@@ -1,0 +1,6 @@
+{
+  "name": "HubbleNest",
+  "description": "A modern digital space for private groups, classrooms, communities, and teams with real-time chat, encrypted messaging, Cloudinary media sharing, and QR access.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

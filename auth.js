@@ -1,138 +1,226 @@
-/* =============================================================
-   LinkRoom — Auth page logic (index.html)
-   Handles: email/password sign-in + sign-up + Google OAuth.
-   Redirects to app.html on success.
-   ============================================================= */
+/**
+ * HubbleNest Authentication & Gradual Multi-Step Signup
+ * 
+ * Supports:
+ * - 7-Step progressive signup with micro-interactions
+ * - Email/Password and Google Sign-In
+ * - Cloudinary profile photo upload
+ * - Web Crypto key generation on account creation
+ * - Password reset & session observation
+ */
 
-window.AuthPage = (function () {
-  'use strict';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  sendPasswordResetEmail,
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  setDoc, 
+  query, 
+  where, 
+  serverTimestamp 
+} from './firebase.js';
 
-  let mode = 'signin'; // or 'signup'
+import { uploadToCloudinary } from './cloudinary.js';
+import { ensureUserKeyPair } from './encryption.js';
+import { showToast } from './utils.js';
 
-  function init() {
-    // Apply saved theme
-    const saved = Utils.ls.get('theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
+// State for multi-step signup
+export const signupState = {
+  currentStep: 1,
+  totalSteps: 7,
+  fullName: '',
+  username: '',
+  usernameLower: '',
+  photoURL: '',
+  email: '',
+  password: '',
+  isCheckingUsername: false,
+  isUsernameAvailable: false
+};
 
-    // Year footer
-    const y = document.getElementById('year'); if (y) y.textContent = new Date().getFullYear();
+/**
+ * Check if a username is already taken in Firestore
+ */
+export async function checkUsernameAvailability(username) {
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+  if (clean.length < 3) {
+    return { available: false, message: 'Username must be at least 3 characters (letters, numbers, underscores)' };
+  }
 
-    // If already signed in & has profile, go straight to app
-    LR.getSession().then(({ data: { session } }) => {
-      if (session) {
-        // Check profile, if exists go to app
-        LR.getCurrentProfile().then(prof => {
-          if (prof && prof.full_name && prof.username) {
-            window.location.replace('app.html');
-          }
-        });
-      }
-    }).catch(() => {});
-
-    const form     = document.getElementById('authForm');
-    const submit   = document.getElementById('authSubmit');
-    const switchA  = document.getElementById('switchMode');
-    const google   = document.getElementById('googleBtn');
-    const nameF    = document.getElementById('nameField');
-    const userF    = document.getElementById('usernameField');
-    const titleEl  = document.getElementById('authTitle');
-    const subEl    = document.getElementById('authSubtitle');
-    const switchP  = document.getElementById('authSwitch');
-    const toggle   = document.getElementById('themeToggle');
-
-    if (toggle) toggle.addEventListener('click', () => {
-      const t = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', t);
-      Utils.ls.set('theme', t);
-    });
-
-    if (switchA) switchA.addEventListener('click', (e) => {
-      e.preventDefault();
-      mode = mode === 'signin' ? 'signup' : 'signin';
-      updateUI();
-    });
-
-    if (google) google.addEventListener('click', async () => {
-      try {
-        await LR.signInWithGoogle();
-      } catch (e) {
-        UI.err('Google sign-in failed. Make sure Google OAuth is enabled in your Supabase dashboard.');
-        console.error(e);
-      }
-    });
-
-    if (form) form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = document.getElementById('email').value.trim();
-      const password = document.getElementById('password').value;
-
-      if (!Utils.validEmail(email)) return UI.err('Please enter a valid email address.');
-      if (password.length < 6) return UI.err('Password must be at least 6 characters.');
-
-      submit.disabled = true; submit.textContent = 'Please wait…';
-
-      try {
-        if (mode === 'signin') {
-          const { error } = await LR.signInWithEmail(email, password);
-          if (error) throw new Error(mapAuthError(error.message));
-          UI.ok('Welcome back!');
-          setTimeout(() => window.location.replace('app.html'), 600);
-        } else {
-          const fullName = document.getElementById('fullName').value.trim();
-          const username = document.getElementById('username').value.trim();
-          if (!fullName) throw new Error('Please enter your full name.');
-          if (!Utils.validUsername(username)) throw new Error('Username must be 3-24 chars, letters/numbers/underscores only.');
-
-          const { data, error } = await LR.signUpWithEmail(email, password, { full_name: fullName, username });
-          if (error) throw new Error(mapAuthError(error.message));
-
-          if (data?.session) {
-            UI.ok('Account created! Redirecting…');
-            setTimeout(() => window.location.replace('app.html'), 600);
-          } else {
-            UI.ok('Check your email to confirm your account, then sign in.');
-            mode = 'signin';
-            updateUI();
-            submit.disabled = false;
-            submit.textContent = 'Sign in';
-          }
-        }
-      } catch (err) {
-        UI.err(err.message || 'Something went wrong.');
-        submit.disabled = false;
-        submit.textContent = mode === 'signin' ? 'Sign in' : 'Sign up';
-      }
-    });
-
-    function updateUI() {
-      const isSignup = mode === 'signup';
-      nameF.hidden  = !isSignup;
-      userF.hidden  = !isSignup;
-      titleEl.textContent = isSignup ? 'Create your account' : 'Welcome back';
-      subEl.textContent   = isSignup ? 'Sign up to join LinkRoom' : 'Sign in to continue to LinkRoom';
-      submit.textContent  = isSignup ? 'Sign up' : 'Sign in';
-      switchP.innerHTML = isSignup
-        ? 'Already have an account? <a href="#" id="switchMode">Sign in</a>'
-        : 'Don\'t have an account? <a href="#" id="switchMode">Sign up</a>';
-      document.getElementById('switchMode').addEventListener('click', (e) => {
-        e.preventDefault();
-        mode = mode === 'signin' ? 'signup' : 'signin';
-        updateUI();
-      });
+  try {
+    const q = query(collection(db, 'users'), where('usernameLower', '==', clean));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      return { available: true, message: 'Username available' };
+    } else {
+      return { available: false, message: 'That username is already taken.' };
     }
+  } catch (err) {
+    console.error('Username check error:', err);
+    return { available: true, message: 'Username available' }; // fallback
+  }
+}
+
+/**
+ * Complete user profile document in Firestore
+ */
+export async function createOrUpdateUserProfile(user, additionalData = {}) {
+  const userRef = doc(db, 'users', user.uid);
+  const snap = await getDoc(userRef);
+
+  let keyData = null;
+  try {
+    keyData = await ensureUserKeyPair(user.uid);
+  } catch (e) {
+    console.warn('Could not generate crypto keys:', e);
   }
 
-  function mapAuthError(msg) {
-    const s = (msg || '').toLowerCase();
-    if (s.includes('invalid login')) return 'Email or password is incorrect.';
-    if (s.includes('email not confirmed')) return 'Please confirm your email before signing in.';
-    if (s.includes('already registered') || s.includes('user already')) return 'An account already exists with this email.';
-    if (s.includes('rate limit')) return 'Too many attempts. Please wait a minute and try again.';
-    if (s.includes('password')) return 'Password does not meet requirements.';
-    if (s.includes('weak password')) return 'Please choose a stronger password.';
-    return msg;
+  if (!snap.exists()) {
+    const profile = {
+      uid: user.uid,
+      email: user.email || additionalData.email || '',
+      displayName: additionalData.fullName || user.displayName || 'HubbleNest Member',
+      username: additionalData.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5)),
+      usernameLower: (additionalData.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5))).toLowerCase(),
+      photoURL: additionalData.photoURL || user.photoURL || '',
+      bio: additionalData.bio || 'HubbleNest community member',
+      publicKeyJwk: keyData ? keyData.publicKeyJwk : null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      theme: 'dark'
+    };
+    await setDoc(userRef, profile);
+    return profile;
+  } else {
+    const existing = snap.data();
+    // Ensure public key exists
+    if (!existing.publicKeyJwk && keyData) {
+      await setDoc(userRef, { publicKeyJwk: keyData.publicKeyJwk }, { merge: true });
+    }
+    return existing;
   }
+}
 
-  document.addEventListener('DOMContentLoaded', init);
-  return { init };
-})();
+/**
+ * Handle Final Step of Gradual Signup: Create Account
+ */
+export async function finalizeSignup(onSuccess, onError) {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, signupState.email, signupState.password);
+    const user = cred.user;
+
+    const profile = await createOrUpdateUserProfile(user, {
+      fullName: signupState.fullName,
+      username: signupState.username,
+      photoURL: signupState.photoURL,
+      email: signupState.email
+    });
+
+    showToast(`Welcome to HubbleNest, ${signupState.fullName}!`, 'success');
+    if (onSuccess) onSuccess(user, profile);
+  } catch (err) {
+    console.error('Signup error:', err);
+    let message = 'Unable to create your account. Please try again.';
+    if (err.code === 'auth/email-already-in-use') {
+      message = 'That email is already connected to an account.';
+    } else if (err.code === 'auth/weak-password') {
+      message = 'The password is too weak. Please use at least 6 characters.';
+    } else if (err.code === 'auth/invalid-email') {
+      message = 'Please provide a valid email address.';
+    }
+    showToast(message, 'error');
+    if (onError) onError(message);
+  }
+}
+
+/**
+ * Login with Email and Password
+ */
+export async function loginWithEmail(email, password) {
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    const userRef = doc(db, 'users', cred.user.uid);
+    const snap = await getDoc(userRef);
+    if (!snap.exists()) {
+      await createOrUpdateUserProfile(cred.user);
+    } else {
+      // Ensure encryption key exists on this device
+      ensureUserKeyPair(cred.user.uid).catch(console.warn);
+    }
+    showToast('Signed in successfully', 'success');
+    return cred.user;
+  } catch (err) {
+    console.error('Login error:', err);
+    let message = 'Failed to sign in. Please verify your email and password.';
+    if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      message = 'Incorrect email or password. Please try again.';
+    } else if (err.code === 'auth/too-many-requests') {
+      message = 'Too many failed attempts. Please try again in a few minutes.';
+    }
+    showToast(message, 'error');
+    throw new Error(message);
+  }
+}
+
+/**
+ * Sign In with Google
+ */
+export async function loginWithGoogle() {
+  try {
+    const res = await signInWithPopup(auth, googleProvider);
+    const user = res.user;
+    const profile = await createOrUpdateUserProfile(user);
+    showToast(`Signed in as ${user.displayName || 'User'}`, 'success');
+    return { user, profile };
+  } catch (err) {
+    console.error('Google Sign-In error:', err);
+    if (err.code !== 'auth/popup-closed-by-user') {
+      showToast('Could not complete Google Sign-In. Please try again.', 'error');
+    }
+    throw err;
+  }
+}
+
+/**
+ * Send Password Reset Email
+ */
+export async function resetPassword(email) {
+  if (!email || !email.includes('@')) {
+    showToast('Please enter a valid email address.', 'error');
+    return false;
+  }
+  try {
+    await sendPasswordResetEmail(auth, email);
+    showToast('Password reset link sent to your email.', 'success');
+    return true;
+  } catch (err) {
+    console.error('Reset password error:', err);
+    let msg = 'Failed to send reset email. Please try again.';
+    if (err.code === 'auth/user-not-found') {
+      msg = 'No account found with this email.';
+    }
+    showToast(msg, 'error');
+    return false;
+  }
+}
+
+/**
+ * Sign Out
+ */
+export async function logoutUser() {
+  try {
+    await signOut(auth);
+    showToast('Signed out of HubbleNest', 'info');
+  } catch (err) {
+    console.error('Logout error:', err);
+    showToast('Failed to sign out', 'error');
+  }
+}
