@@ -85,8 +85,7 @@ export function subscribeToUserConversations(userId, onUpdate) {
   const q = query(
     collection(db, 'conversations'),
     where('participants', 'array-contains', userId),
-    orderBy('updatedAt', 'desc'),
-    limit(30)
+    limit(40)
   );
 
   return onSnapshot(q, (snap) => {
@@ -94,6 +93,14 @@ export function subscribeToUserConversations(userId, onUpdate) {
     snap.forEach((d) => {
       convs.push({ id: d.id, ...d.data() });
     });
+
+    // Sort in memory by updatedAt descending (no composite index required)
+    convs.sort((a, b) => {
+      const tA = a.updatedAt?.seconds || 0;
+      const tB = b.updatedAt?.seconds || 0;
+      return tB - tA;
+    });
+
     onUpdate(convs);
   }, (err) => {
     console.error('Conversations listener error:', err);

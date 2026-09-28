@@ -313,6 +313,18 @@ export async function updateSpaceSettings(spaceId, updates) {
 }
 
 /**
+ * Update Space Cover Image (Admin Action)
+ */
+export async function updateSpaceCover(spaceId, coverUrl) {
+  const spaceRef = doc(db, 'spaces', spaceId);
+  await updateDoc(spaceRef, {
+    imageURL: coverUrl,
+    updatedAt: serverTimestamp()
+  });
+  showToast('Space cover image updated!', 'success');
+}
+
+/**
  * Delete a Space (Admin Action)
  */
 export async function deleteSpace(spaceId) {

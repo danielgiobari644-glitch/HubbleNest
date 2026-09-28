@@ -748,24 +748,27 @@ img, video {
 
 .space-card {
   background: var(--bg-glass-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  transition: all var(--transition-fast);
+  transition: all var(--transition-normal);
   cursor: pointer;
   position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
 }
 
 .space-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--border-hover);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-4px) scale(1.01);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 0 24px rgba(59, 130, 246, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
 }
 
 .space-card-cover {
-  height: 120px;
+  height: 130px;
   width: 100%;
   background: linear-gradient(135deg, #1e293b, #0f172a);
   position: relative;
@@ -776,6 +779,11 @@ img, video {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.4s var(--transition-normal);
+}
+
+.space-card:hover .space-card-cover-img {
+  transform: scale(1.05);
 }
 
 .space-card-body {
@@ -879,13 +887,72 @@ img, video {
 }
 
 .space-hero-cover {
-  height: 180px;
+  height: 220px;
   width: 100%;
   position: relative;
   background: linear-gradient(135deg, #1e293b, #0f172a);
+  overflow: hidden;
 }
 
 .space-hero-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s var(--transition-normal);
+}
+
+.space-header:hover .space-hero-cover-img {
+  transform: scale(1.02);
+}
+
+.cover-gradient-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(9, 13, 22, 0.85) 0%, rgba(9, 13, 22, 0.2) 60%, transparent 100%);
+  pointer-events: none;
+}
+
+.change-cover-overlay-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.change-cover-overlay-btn:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.space-cover-picker-box {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-elevated);
+  border: 2px dashed var(--border-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition-fast);
+}
+
+.space-cover-picker-box:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-glass-card);
+}
+
+.space-cover-preview-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -970,10 +1037,13 @@ img, video {
   display: flex;
   flex-direction: column;
   height: 600px;
-  background: var(--bg-surface);
+  background: var(--bg-glass-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .chat-messages {
@@ -989,7 +1059,18 @@ img, video {
   display: flex;
   gap: 12px;
   max-width: 80%;
-  animation: fadeIn 0.15s ease-out;
+  animation: messageSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .message-row.msg-own {

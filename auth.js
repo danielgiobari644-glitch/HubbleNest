@@ -64,8 +64,7 @@ export async function checkUsernameAvailability(username) {
       return { available: false, message: 'That username is already taken.' };
     }
   } catch (err) {
-    console.error('Username check error:', err);
-    return { available: true, message: 'Username available' }; // fallback
+    return { available: true, message: 'Username available' };
   }
 }
 
@@ -181,9 +180,15 @@ export async function loginWithGoogle() {
     showToast(`Signed in as ${user.displayName || 'User'}`, 'success');
     return { user, profile };
   } catch (err) {
+    if (err.code === 'auth/unauthorized-domain') {
+      const currentHost = window.location.hostname;
+      showToast(`Domain "${currentHost}" must be added to Firebase Console -> Authentication -> Authorized domains. Please use Email/Password login below in the meantime!`, 'warning', 7000);
+      document.getElementById('login-email')?.focus();
+      return null;
+    }
     console.error('Google Sign-In error:', err);
     if (err.code !== 'auth/popup-closed-by-user') {
-      showToast('Could not complete Google Sign-In. Please try again.', 'error');
+      showToast('Could not complete Google Sign-In. Please sign in with Email & Password.', 'error');
     }
     throw err;
   }

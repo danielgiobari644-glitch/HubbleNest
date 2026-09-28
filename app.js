@@ -5,6 +5,7 @@
 
 import { 
   auth, 
+  db,
   onAuthStateChanged, 
   doc, 
   getDoc 
@@ -31,6 +32,7 @@ import {
   declineJoinRequest, 
   extendSpaceExpiration, 
   updateSpaceSettings, 
+  updateSpaceCover,
   deleteSpace 
 } from './spaces.js';
 
@@ -466,11 +468,23 @@ function renderSpaceHeader() {
   }
 
   if (coverEl) {
-    if (sp.imageURL) {
-      coverEl.innerHTML = `<img src="${sp.imageURL}" class="space-hero-cover-img" alt="${escapeHtml(sp.name)}"/>`;
-    } else {
-      coverEl.innerHTML = `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, #1e293b, #0f172a);"></div>`;
-    }
+    const isAdmin = state.activeSpaceRole === 'admin';
+    const coverHtml = sp.imageURL 
+      ? `<img src="${sp.imageURL}" class="space-hero-cover-img" alt="${escapeHtml(sp.name)}"/>` 
+      : `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, #1e293b, #0f172a); display: flex; align-items: center; justify-content: center;"><span style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500;">HubbleNest Sanctuary</span></div>`;
+
+    const adminCoverBtn = isAdmin ? `
+      <input type="file" id="space-cover-file-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleUpdateSpaceCover(this.files[0])" />
+      <button class="btn btn-sm btn-secondary change-cover-overlay-btn" onclick="document.getElementById('space-cover-file-input').click()">
+        📷 Change Cover
+      </button>
+    ` : '';
+
+    coverEl.innerHTML = `
+      ${coverHtml}
+      <div class="cover-gradient-scrim"></div>
+      ${adminCoverBtn}
+    `;
   }
 
   if (adminBtn) {
@@ -1257,6 +1271,7 @@ export async function handleCreateSpaceSubmit() {
   const catInput = document.getElementById('create-space-category');
   const typeInput = document.getElementById('create-space-type');
   const expInput = document.getElementById('create-space-expiration');
+  const coverFileInput = document.getElementById('create-space-cover-file');
   const submitBtn = document.getElementById('btn-submit-create-space');
 
   if (!nameInput.value.trim()) {
@@ -1267,12 +1282,20 @@ export async function handleCreateSpaceSubmit() {
   if (submitBtn) submitBtn.classList.add('btn-loading');
 
   try {
+    let coverUrl = '';
+    if (coverFileInput && coverFileInput.files && coverFileInput.files[0]) {
+      showToast('Uploading space cover to Cloudinary...', 'info');
+      const coverRes = await uploadToCloudinary(coverFileInput.files[0], null, 15);
+      coverUrl = coverRes.url;
+    }
+
     const newSpace = await createSpace(state.currentUser, {
       name: nameInput.value.trim(),
       description: descInput ? descInput.value.trim() : '',
       category: catInput ? catInput.value : 'Community',
       type: typeInput ? typeInput.value : 'permanent',
-      expiresAt: expInput && expInput.value ? expInput.value : null
+      expiresAt: expInput && expInput.value ? expInput.value : null,
+      imageURL: coverUrl
     });
 
     closeModal('modal-create-space');
@@ -1282,6 +1305,23 @@ export async function handleCreateSpaceSubmit() {
     showToast(err.message || 'Failed to create Space', 'error');
   } finally {
     if (submitBtn) submitBtn.classList.remove('btn-loading');
+  }
+}
+
+/**
+ * Handle Cover Image Update for active space by Admin
+ */
+export async function handleUpdateSpaceCover(file) {
+  if (!file || !state.activeSpace) return;
+  showToast('Uploading new cover to Cloudinary...', 'info');
+  try {
+    const res = await uploadToCloudinary(file, null, 15);
+    await updateSpaceCover(state.activeSpace.id, res.url);
+    state.activeSpace.imageURL = res.url;
+    renderSpaceHeader();
+    showToast('Space cover image updated!', 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to update cover', 'error');
   }
 }
 
@@ -1362,6 +1402,7 @@ window.HubbleNest = {
   openQrModal,
   downloadSpaceQr,
   copySpaceJoinLink,
+  handleUpdateSpaceCover,
 
   // Chat
   handleSendMessage,

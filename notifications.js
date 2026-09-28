@@ -29,8 +29,7 @@ export function subscribeToNotifications(userId, onNotificationsUpdate) {
   const q = query(
     collection(db, 'notifications'),
     where('userId', '==', userId),
-    orderBy('createdAt', 'desc'),
-    limit(25)
+    limit(50)
   );
 
   activeNotifUnsubscribe = onSnapshot(q, (snapshot) => {
@@ -41,6 +40,13 @@ export function subscribeToNotifications(userId, onNotificationsUpdate) {
       const item = { id: d.id, ...d.data() };
       notifs.push(item);
       if (!item.isRead) unreadCount++;
+    });
+
+    // Sort descending by timestamp in memory (no composite index required)
+    notifs.sort((a, b) => {
+      const tA = a.createdAt?.seconds || (a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0);
+      const tB = b.createdAt?.seconds || (b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0);
+      return tB - tA;
     });
 
     onNotificationsUpdate(notifs, unreadCount);

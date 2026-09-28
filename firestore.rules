@@ -26,7 +26,7 @@ service cloud.firestore {
 
     // User Profiles
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create: if isUser(userId);
       allow update: if isUser(userId);
       allow delete: if false;
