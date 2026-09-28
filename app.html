@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b1e" />
+  <meta name="description" content="Your LinkRoom workspace — rooms, chat, files, and private messaging." />
+  <title>LinkRoom — Workspace</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%236366f1'/%3E%3Cpath d='M30 50h40M50 30v40' stroke='white' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="app-body">
+  <!-- App shell: sidebar + main content -->
+  <div class="app-shell" id="appShell" hidden>
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <a href="#" class="brand-logo brand-logo-sm" id="dashboardHome">
+          <div class="brand-mark">
+            <svg viewBox="0 0 100 100" width="28" height="28">
+              <rect width="100" height="100" rx="22" fill="url(#g)"/>
+              <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+              <path d="M30 50h40M50 30v40" stroke="white" stroke-width="8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span>LinkRoom</span>
+        </a>
+        <button class="icon-btn sidebar-close" id="sidebarClose" aria-label="Close sidebar">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <div class="sidebar-actions">
+        <button class="btn btn-primary btn-block btn-sm" id="createRoomBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Create Room
+        </button>
+        <button class="btn btn-secondary btn-block btn-sm" id="joinRoomBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 12h16M14 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Join Room
+        </button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="3" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <span>Dashboard</span>
+        </a>
+        <a href="#" class="nav-item" data-view="messages">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1 1 21 11.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Messages</span>
+          <span class="badge" id="dmBadge" hidden>0</span>
+        </a>
+        <a href="#" class="nav-item" data-view="notifications">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 21a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Notifications</span>
+          <span class="badge" id="notifBadge" hidden>0</span>
+        </a>
+        <a href="#" class="nav-item" data-view="search">
+          <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Search</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+
+      <div class="sidebar-profile">
+        <button class="profile-chip" id="profileChip">
+          <img id="profileAvatar" src="" alt="" class="avatar avatar-sm" />
+          <div class="profile-chip-info">
+            <span class="profile-chip-name" id="profileChipName">User</span>
+            <span class="profile-chip-handle" id="profileChipHandle">@user</span>
+          </div>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- Main area -->
+    <main class="main-area" id="mainArea">
+      <!-- Top bar -->
+      <header class="topbar">
+        <button class="icon-btn sidebar-toggle" id="sidebarToggle" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <h1 class="topbar-title" id="topbarTitle">Dashboard</h1>
+        <div class="topbar-actions">
+          <button class="icon-btn" id="searchTopBtn" aria-label="Search">
+            <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button class="icon-btn notif-btn" id="notifTopBtn" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 21a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="dot" id="notifDot" hidden></span>
+          </button>
+          <button class="icon-btn" id="themeToggleApp" aria-label="Toggle theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Content host -->
+      <section class="content-host" id="contentHost">
+        <!-- View: dashboard -->
+        <div class="view view-dashboard active" id="view-dashboard"></div>
+
+        <!-- View: room -->
+        <div class="view view-room" id="view-room"></div>
+
+        <!-- View: private messages list -->
+        <div class="view view-messages" id="view-messages"></div>
+
+        <!-- View: notifications -->
+        <div class="view view-notifications" id="view-notifications"></div>
+
+        <!-- View: search -->
+        <div class="view view-search" id="view-search"></div>
+
+        <!-- View: profile -->
+        <div class="view view-profile" id="view-profile"></div>
+      </section>
+    </main>
+
+    <!-- Mobile bottom nav -->
+    <nav class="bottom-nav">
+      <button class="bottom-nav-item active" data-view="dashboard">
+        <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3" y="3" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="bottom-nav-item" data-view="messages">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1 1 21 11.5z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <span>Messages</span>
+        <span class="badge" id="dmBadgeMobile" hidden>0</span>
+      </button>
+      <button class="bottom-nav-item" data-view="search">
+        <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Search</span>
+      </button>
+      <button class="bottom-nav-item" data-view="notifications">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 21a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Alerts</span>
+        <span class="badge" id="notifBadgeMobile" hidden>0</span>
+      </button>
+      <button class="bottom-nav-item" data-view="profile">
+        <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Profile</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Onboarding gate: shows when user has no profile yet -->
+  <div class="onboarding-gate" id="onboardingGate" hidden>
+    <div class="onboarding-card">
+      <div class="brand-mark mx-auto">
+        <svg viewBox="0 0 100 100" width="48" height="48">
+          <rect width="100" height="100" rx="22" fill="url(#g)"/>
+          <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+          <path d="M30 50h40M50 30v40" stroke="white" stroke-width="8" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h2>Set up your profile</h2>
+      <p>Tell people who you are. You can change this anytime.</p>
+      <form id="onboardingForm" class="auth-form">
+        <div class="avatar-uploader">
+          <label class="avatar-uploader-circle" for="onboardAvatar">
+            <img id="onboardAvatarPreview" alt="" class="avatar avatar-xl" src="" />
+            <span class="avatar-uploader-edit"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+          </label>
+          <input id="onboardAvatar" type="file" accept="image/*" hidden />
+        </div>
+        <div class="field">
+          <label for="onboardName">Full name</label>
+          <input id="onboardName" type="text" required placeholder="Your name" />
+        </div>
+        <div class="field">
+          <label for="onboardUsername">Username</label>
+          <input id="onboardUsername" type="text" required placeholder="username" />
+        </div>
+        <div class="field">
+          <label for="onboardBio">Short bio <span class="muted">(optional)</span></label>
+          <textarea id="onboardBio" rows="3" placeholder="Tell people a little about you"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Continue</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Loading screen -->
+  <div class="loading-screen" id="loadingScreen">
+    <div class="brand-mark mx-auto">
+      <svg viewBox="0 0 100 100" width="56" height="56">
+        <rect width="100" height="100" rx="22" fill="url(#g)"/>
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+        <path d="M30 50h40M50 30v40" stroke="white" stroke-width="8" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+    <p>Loading your workspace…</p>
+  </div>
+
+  <!-- Toasts / Modal / Spinner -->
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+  <div id="modalRoot"></div>
+  <div id="spinnerOverlay" class="spinner-overlay" hidden>
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Scripts: Supabase + libraries + app -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/crypto.js"></script>
+
+  <script src="js/supabase-client.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/notifications.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/rooms.js"></script>
+  <script src="js/chat.js"></script>
+  <script src="js/private-chat.js"></script>
+  <script src="js/files.js"></script>
+  <script src="js/links.js"></script>
+  <script src="js/announcements.js"></script>
+  <script src="js/members.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
