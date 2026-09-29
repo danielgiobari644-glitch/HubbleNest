@@ -181,14 +181,15 @@ export async function loginWithGoogle() {
     return { user, profile };
   } catch (err) {
     if (err.code === 'auth/unauthorized-domain') {
-      const currentHost = window.location.hostname;
-      showToast(`Domain "${currentHost}" must be added to Firebase Console -> Authentication -> Authorized domains. Please use Email/Password login below in the meantime!`, 'warning', 7000);
+      showToast('Google sign-in is not set up for this address yet. Please use your email and password to sign in.', 'info', 6000);
       document.getElementById('login-email')?.focus();
       return null;
     }
     console.error('Google Sign-In error:', err);
-    if (err.code !== 'auth/popup-closed-by-user') {
-      showToast('Could not complete Google Sign-In. Please sign in with Email & Password.', 'error');
+    if (err.code === 'auth/popup-blocked') {
+      showToast('Pop-up window was blocked. Please allow pop-ups to continue.', 'warning');
+    } else if (err.code !== 'auth/popup-closed-by-user') {
+      showToast('Unable to sign in with Google right now. Please use your email and password.', 'info');
     }
     throw err;
   }

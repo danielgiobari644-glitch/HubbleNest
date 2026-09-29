@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HubbleNest</title>
-  <meta name="description" content="A modern digital space for private groups, classrooms, communities, and teams with real-time chat, encrypted messaging, Cloudinary media sharing, and QR access." />
+  <meta name="description" content="A modern digital space for private groups, classrooms, communities, and teams with real-time conversations, private messaging, file sharing, and QR access." />
   <meta property="og:title" content="HubbleNest" />
   <meta property="og:description" content="A modern digital space for private groups, classrooms, communities, and teams." />
   <meta property="og:type" content="website" />
@@ -44,7 +44,7 @@
 
       <!-- Zone 3: Actions & Profile -->
       <div class="topbar-actions">
-        <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.openCreateSpaceModal()">
+        <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.openCreateSpacePage()">
           + Create Space
         </button>
 
@@ -75,13 +75,17 @@
             <div class="menu-user-name" id="menu-user-name">Member</div>
             <div class="menu-user-handle" id="menu-user-handle">@user</div>
           </div>
-          <div class="menu-item" onclick="window.HubbleNest.openProfileModal()">
+          <div class="menu-item" onclick="window.HubbleNest.openProfilePage()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
-            <span>My Profile</span>
+            <span>My Profile & Settings</span>
           </div>
           <div class="menu-item" onclick="window.HubbleNest.toggleTheme()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
             <span>Toggle Theme</span>
+          </div>
+          <div class="menu-item" onclick="window.HubbleNest.showLandingPage()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+            <span>Explore Landing Page</span>
           </div>
           <div class="menu-item danger-item" onclick="window.HubbleNest.logoutUser()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
@@ -91,11 +95,624 @@
       </div>
     </header>
 
-    <!-- Authentication Screen (When Not Logged In) -->
-    <main class="auth-wrapper" id="auth-container">
+    <!-- ==========================================================================
+         LANDING PAGE (First-Time User Experience & Public Showcase)
+         ========================================================================== -->
+    <div id="landing-page-container" class="landing-page-wrapper">
+      
+      <!-- Top banner for authenticated users visiting landing page -->
+      <div id="landing-user-banner" class="landing-user-bar" style="display: none;">
+        <span>You are currently signed in.</span>
+        <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.loadDashboard(); window.HubbleNest.setupAuthenticatedUI();">
+          Return to My Spaces →
+        </button>
+      </div>
+
+      <!-- Landing Header / Top Navigation -->
+      <nav class="landing-nav">
+        <div class="landing-nav-inner">
+          <div class="brand-zone" onclick="window.HubbleNest.showLandingPage()">
+            <div class="brand-icon">H</div>
+            <span>HubbleNest</span>
+          </div>
+
+          <div class="landing-nav-links">
+            <a href="#sanctuaries" class="landing-nav-link">Sanctuaries</a>
+            <a href="#showcase" class="landing-nav-link">Connectivity</a>
+            <a href="#how-it-works" class="landing-nav-link">How It Works</a>
+            <a href="#architecture" class="landing-nav-link">Architecture</a>
+            <a href="#security" class="landing-nav-link">Privacy & E2EE</a>
+            <a href="#join-space-section" class="landing-nav-link">Have a Code?</a>
+          </div>
+
+          <div class="landing-nav-actions">
+            <button class="icon-btn theme-toggle-btn" onclick="window.HubbleNest.toggleTheme()" aria-label="Toggle Theme" title="Toggle Theme">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-landing-signin" onclick="window.HubbleNest.showAuthView('login')">
+              Sign In
+            </button>
+            <button class="btn btn-primary btn-landing-getstarted" onclick="window.HubbleNest.showAuthView('signup')">
+              Get Started
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Hero Section -->
+      <header class="hero-section">
+        
+        <!-- Ambient Kicker Pill -->
+        <div class="hero-kicker">
+          <span class="kicker-pulse-dot"></span>
+          <span>A Private Digital Sanctuary for People Who Belong Together</span>
+        </div>
+
+        <!-- Hero Headline -->
+        <h1 class="hero-title">
+          <span class="hero-title-line">Your people.</span>
+          <span class="hero-title-line">Your space.</span>
+          <span class="hero-title-line hero-gradient-text">Everything connected.</span>
+        </h1>
+
+        <!-- Supporting Text -->
+        <p class="hero-subtitle">
+          Create private spaces where your community can connect, communicate, share and grow together.
+        </p>
+
+        <!-- Hero Actions -->
+        <div class="hero-actions">
+          <button class="btn btn-primary btn-hero-cta" onclick="window.HubbleNest.showAuthView('signup')">
+            <span>Get Started</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </button>
+          <button class="btn btn-secondary btn-hero-secondary" onclick="window.HubbleNest.showAuthView('login')">
+            Sign In
+          </button>
+        </div>
+
+        <!-- Quick Space Code Join Chip in Hero -->
+        <div class="hero-quick-join">
+          <span class="quick-join-label">Received an invite code?</span>
+          <div class="quick-join-input-group">
+            <span class="code-prefix">HN-</span>
+            <input type="text" id="hero-space-code-input" class="quick-join-input" placeholder="7K4P92" maxlength="6" uppercase autocomplete="off" />
+            <button type="button" class="btn-quick-join-submit" onclick="window.HubbleNest.handleHeroCodeJoin()">Join Space →</button>
+          </div>
+        </div>
+
+        <!-- Elegant Floating Space Interface Representation (Product Glimpse) -->
+        <div class="hero-preview-wrapper">
+          
+          <!-- Orbiting Glass Micro-Badges -->
+          <div class="floating-badge floating-badge-1">
+            <div class="badge-icon-box" style="color: #38bdf8;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <div>
+              <div class="badge-title">Web Crypto P-256 E2EE</div>
+              <div class="badge-desc">Zero-knowledge direct messages</div>
+            </div>
+          </div>
+
+          <div class="floating-badge floating-badge-2">
+            <div class="badge-icon-box" style="color: #a78bfa;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            </div>
+            <div>
+              <div class="badge-title">Cloudinary Vault</div>
+              <div class="badge-desc">Full-fidelity documents & media</div>
+            </div>
+          </div>
+
+          <div class="floating-badge floating-badge-3">
+            <div class="badge-icon-box" style="color: #34d399;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div>
+              <div class="badge-title">Sovereign Gatekeeping</div>
+              <div class="badge-desc">Admins approve every member</div>
+            </div>
+          </div>
+
+          <div class="floating-badge floating-badge-4">
+            <div class="badge-icon-box" style="color: #fbbf24;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/></svg>
+            </div>
+            <div>
+              <div class="badge-title">Instant QR Access</div>
+              <div class="badge-desc">Print, screen, or link sharing</div>
+            </div>
+          </div>
+
+          <!-- Main Floating Glass Sanctuary Window -->
+          <div class="hero-preview-card">
+            
+            <!-- Window Top Titlebar / Space Header -->
+            <div class="preview-hero-banner">
+              <div class="preview-hero-banner-content">
+                <div>
+                  <div class="preview-space-badge">
+                    <span>✦ PRIVATE SANCTUARY</span>
+                    <span>·</span>
+                    <span>Classroom & Fellowship</span>
+                    <span>·</span>
+                    <span class="badge-dot-live"></span>
+                    <span>Live Space</span>
+                  </div>
+                  <h3 class="preview-space-heading">St. Jude Fellowship & Design Studio</h3>
+                  <p class="preview-space-sub">A focused space for seminars, collaborative research, weekly reflections & resource vaults.</p>
+                </div>
+
+                <div class="preview-banner-actions">
+                  <span class="preview-code-chip">HN-7K4P92</span>
+                  <div class="preview-avatar-stack">
+                    <span class="avatar-pill avatar-1">MC</span>
+                    <span class="avatar-pill avatar-2">LV</span>
+                    <span class="avatar-pill avatar-3">ER</span>
+                    <span class="avatar-pill avatar-4">JD</span>
+                    <span class="avatar-pill avatar-more">+24</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Space Navigation Bar Inside Preview -->
+            <div class="preview-space-nav">
+              <div class="preview-nav-tab active-preview-tab">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span>Discussion Chat</span>
+              </div>
+              <div class="preview-nav-tab">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>Vault & Files (18)</span>
+              </div>
+              <div class="preview-nav-tab">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                <span>Announcements (1)</span>
+              </div>
+              <div class="preview-nav-tab">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span>Encrypted DMs</span>
+              </div>
+            </div>
+
+            <!-- Main Body Layout Inside Preview -->
+            <div class="preview-body-container">
+              
+              <!-- Chat Stream Column -->
+              <div class="preview-chat-column">
+                
+                <!-- Pinned Announcement Widget -->
+                <div class="preview-pinned-notice">
+                  <div class="pinned-notice-icon">📌</div>
+                  <div class="pinned-notice-content">
+                    <div class="pinned-notice-title">Fall Seminar Colloquium: Keynote Schedule & Vault Assets Published</div>
+                    <div class="pinned-notice-desc">Please review the syllabus reading list and slide decks in the Space Vault prior to Thursday's session.</div>
+                  </div>
+                </div>
+
+                <!-- Message 1 -->
+                <div class="preview-msg">
+                  <div class="preview-msg-avatar" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">MC</div>
+                  <div class="preview-msg-bubble">
+                    <div class="preview-msg-meta">
+                      <span class="preview-msg-name">Maya Chen</span>
+                      <span class="preview-msg-role">Admin</span>
+                      <span class="preview-msg-time">10:42 AM</span>
+                    </div>
+                    <div class="preview-msg-text">
+                      Good morning team! The architectural acoustic analysis and high-resolution blueprint scans are now uploaded to our shared files.
+                    </div>
+                    
+                    <!-- File Attachment Card in Message -->
+                    <div class="preview-file-card">
+                      <div class="preview-file-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      </div>
+                      <div class="preview-file-info">
+                        <div class="preview-file-name">Acoustics_Case_Study_2026.pdf</div>
+                        <div class="preview-file-sub">4.8 MB · Verified Document</div>
+                      </div>
+                      <div class="preview-file-tag">PDF</div>
+                    </div>
+
+                    <!-- Message Reactions -->
+                    <div class="preview-reactions">
+                      <span class="reaction-chip">✨ 7</span>
+                      <span class="reaction-chip">🙌 5</span>
+                      <span class="reaction-chip">👏 4</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Message 2 -->
+                <div class="preview-msg">
+                  <div class="preview-msg-avatar" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9);">LV</div>
+                  <div class="preview-msg-bubble">
+                    <div class="preview-msg-meta">
+                      <span class="preview-msg-name">Liam Vance</span>
+                      <span class="preview-msg-time">10:45 AM</span>
+                    </div>
+                    <div class="preview-msg-text">
+                      Downloaded and reviewed! The spatial distribution model on page 14 is exceptional. I’ve added our team review notes to the shared drive.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Message Input Box Simulation -->
+                <div class="preview-input-bar">
+                  <div class="preview-input-placeholder">Send a message to St. Jude Fellowship...</div>
+                  <div class="preview-input-tools">
+                    <button class="preview-tool-btn" title="Add File">📎</button>
+                    <button class="preview-tool-btn" title="Emoji">😊</button>
+                    <button class="preview-send-btn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Sidebar Activity & Security Column -->
+              <div class="preview-sidebar-column">
+                
+                <div class="preview-info-card">
+                  <div class="info-card-header">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span>Sanctuary Security</span>
+                  </div>
+                  <div class="info-metric-item">
+                    <span class="metric-label">Access Mode</span>
+                    <span class="metric-val">Admin Approval</span>
+                  </div>
+                  <div class="info-metric-item">
+                    <span class="metric-label">Retention</span>
+                    <span class="metric-val">Permanent Sanctuary</span>
+                  </div>
+                  <div class="info-metric-item">
+                    <span class="metric-label">Private 1:1 DMs</span>
+                    <span class="metric-val" style="color: #38bdf8;">Locked & Private</span>
+                  </div>
+                  <div class="info-metric-item">
+                    <span class="metric-label">Cloud Pipeline</span>
+                    <span class="metric-val" style="color: #a78bfa;">Fast Media Delivery</span>
+                  </div>
+                </div>
+
+                <div class="preview-info-card">
+                  <div class="info-card-header">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Recent Members</span>
+                  </div>
+                  <div class="preview-member-mini-list">
+                    <div class="mini-member-row">
+                      <div class="mini-avatar">MC</div>
+                      <div class="mini-info">
+                        <div class="mini-name">Maya Chen</div>
+                        <div class="mini-role">Space Administrator</div>
+                      </div>
+                      <span class="online-indicator"></span>
+                    </div>
+                    <div class="mini-member-row">
+                      <div class="mini-avatar">LV</div>
+                      <div class="mini-info">
+                        <div class="mini-name">Liam Vance</div>
+                        <div class="mini-role">Lead Fellow</div>
+                      </div>
+                      <span class="online-indicator"></span>
+                    </div>
+                    <div class="mini-member-row">
+                      <div class="mini-avatar">ER</div>
+                      <div class="mini-info">
+                        <div class="mini-name">Elena Rostova</div>
+                        <div class="mini-role">Member</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </header>
+
+      <!-- Section: Sanctuaries for Every Purpose -->
+      <section class="landing-section" id="sanctuaries">
+        <div class="section-header">
+          <span class="section-eyebrow">✦ Built for Real Communities</span>
+          <h2 class="section-title">Designed for every group that belongs together.</h2>
+          <p class="section-subtitle">
+            Not a public social network. Not an impersonal school portal. A digital sanctuary crafted specifically for private collective focus.
+          </p>
+        </div>
+
+        <div class="use-cases-grid">
+          
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #60a5fa;">🎓</div>
+            <h3 class="use-case-title">Digital Classrooms & Seminars</h3>
+            <p class="use-case-desc">
+              Organize syllabus readings, lecture archives, seminar discussions, and student research vaults in a private, distraction-free environment.
+            </p>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #c084fc;">⛪</div>
+            <h3 class="use-case-title">Churches, Fellowships & Ministries</h3>
+            <p class="use-case-desc">
+              Share weekly reflections, sermons, prayer bulletins, and care group communications with safe, administrator-approved access.
+            </p>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #38bdf8;">⚡</div>
+            <h3 class="use-case-title">Teams & Creative Studios</h3>
+            <p class="use-case-desc">
+              Exchange high-resolution project assets via Cloudinary, coordinate focused sprint threads, and protect confidential strategy with client-side encrypted DMs.
+            </p>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #34d399;">🔬</div>
+            <h3 class="use-case-title">Study Circles & Research Groups</h3>
+            <p class="use-case-desc">
+              Curate academic papers, extract links automatically from conversations, and create temporary research sprints with automatic expiration.
+            </p>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #f59e0b;">🌐</div>
+            <h3 class="use-case-title">Organizations & Non-Profits</h3>
+            <p class="use-case-desc">
+              Onboard volunteers and committee members through instant printable QR codes while ensuring no unauthorized entrants slip past administrator approval.
+            </p>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-icon-box" style="color: #ec4899;">🛠️</div>
+            <h3 class="use-case-title">Workshops & Intensive Bootcamps</h3>
+            <p class="use-case-desc">
+              Launch pop-up rooms that last for the duration of a conference or weekend workshop, complete with real-time file sharing and broadcast announcements.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Section: Interactive Showcase Switcher -->
+      <section class="landing-section" id="showcase" style="padding-top: 40px;">
+        <div class="visualization-hub">
+          <div class="section-eyebrow" style="margin-bottom: 8px;">✦ The Core Connectivity Hub</div>
+          <h2 class="section-title" style="margin-bottom: 20px;">Everything your group needs in one coherent nest.</h2>
+          <p class="section-subtitle" style="margin: 0 auto 48px;">
+            Communication, resource custody, encryption, and member verification working as a singular, harmonious system.
+          </p>
+
+          <div class="hub-center-core">
+            <div class="brand-icon" style="width: 52px; height: 52px; font-size: 1.6rem; margin-bottom: 8px;">H</div>
+            <span style="font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; color: #fff;">HUBBLENEST</span>
+          </div>
+
+          <div class="hub-orbit-grid">
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">💬</span>
+              <div style="text-align: left;">
+                <div>Realtime Stream</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">Reactions & Threads</span>
+              </div>
+            </div>
+
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">☁️</span>
+              <div style="text-align: left;">
+                <div>Cloudinary Vault</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">Media & Documents</span>
+              </div>
+            </div>
+
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">🔒</span>
+              <div style="text-align: left;">
+                <div>Web Crypto E2EE</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">P-256 + AES-GCM</span>
+              </div>
+            </div>
+
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">📱</span>
+              <div style="text-align: left;">
+                <div>QR Gatekeeper</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">Display & Print Ready</span>
+              </div>
+            </div>
+
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">📢</span>
+              <div style="text-align: left;">
+                <div>Broadcasts</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">Pinned Announcements</span>
+              </div>
+            </div>
+
+            <div class="hub-node-card">
+              <span style="font-size: 1.25rem;">⏳</span>
+              <div style="text-align: left;">
+                <div>Life Cycles</div>
+                <span style="color: var(--text-muted); font-size: 0.75rem; font-weight: normal;">Permanent or Ephemeral</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section: How HubbleNest Works (3 Steps) -->
+      <section class="landing-section" id="how-it-works">
+        <div class="section-header">
+          <span class="section-eyebrow">✦ Simple, Powerful Sovereignty</span>
+          <h2 class="section-title">How HubbleNest works in 3 clear steps.</h2>
+          <p class="section-subtitle">
+            From creation to active collaboration in less than sixty seconds.
+          </p>
+        </div>
+
+        <div class="steps-grid">
+          
+          <div class="step-card">
+            <div class="step-number">01</div>
+            <h3 class="step-card-title">Craft Your Sanctuary</h3>
+            <p class="step-card-desc">
+              Choose your space name, category, and lifespan — whether permanent for enduring teams or auto-expiring for pop-up workshops. Customize your sanctuary with Cloudinary cover art.
+            </p>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">02</div>
+            <h3 class="step-card-title">Invite via QR or Code</h3>
+            <p class="step-card-desc">
+              Generate a printable high-contrast QR code or share your unique six-character Space Code (like HN-7K4P92). New arrivals submit requests, and administrators approve each member with one tap.
+            </p>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">03</div>
+            <h3 class="step-card-title">Communicate & Vault</h3>
+            <p class="step-card-desc">
+              Engage in fluid discussion streams, publish pinned announcements, upload PDFs, audio and video to the shared Cloudinary vault, and converse in client-side encrypted private channels.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Section: Architecture & Security -->
+      <section class="landing-section" id="architecture">
+        <div class="section-header">
+          <span class="section-eyebrow">✦ Principled Engineering</span>
+          <h2 class="section-title">The anti-platform by design.</h2>
+          <p class="section-subtitle">
+            Most modern communication platforms monetize your attention through algorithmic feeds and background telemetry. HubbleNest rejects that paradigm completely.
+          </p>
+        </div>
+
+        <div class="features-container">
+          
+          <div class="feature-spotlight-row">
+            <div class="feature-content-side">
+              <span class="feature-tag-chip">Zero Algorithmic Intrusion</span>
+              <h3 class="feature-heading">No engagement algorithms. No doomscrolling. No advertisements.</h3>
+              <p class="feature-description">
+                HubbleNest spaces display messages in pure chronological order. There are no recommendation algorithms trying to manipulate your emotions, no engagement metrics to distract you, and zero tracking pixels. Just your people and your work.
+              </p>
+              <div class="feature-checklist">
+                <div class="check-item">✓ 100% chronological discussion streams</div>
+                <div class="check-item">✓ Completely free of surveillance advertising</div>
+                <div class="check-item">✓ Zero telemetry profiling on community members</div>
+              </div>
+            </div>
+            <div class="feature-visual-side" style="display: flex; align-items: center; justify-content: center; min-height: 240px; background: radial-gradient(circle, rgba(59, 130, 246, 0.15), transparent 70%);">
+              <div style="text-align: center; padding: 24px;">
+                <div style="font-size: 3rem; margin-bottom: 12px;">🛡️</div>
+                <div style="font-family: var(--font-display); font-size: 1.25rem; font-weight: 700;">Protected Sanctuary</div>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 280px; margin: 8px auto 0;">Your space is closed to public web scrapers and unauthorized lurkers.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="feature-spotlight-row reverse-row" id="security">
+            <div class="feature-content-side">
+              <span class="feature-tag-chip">End-to-End Cryptography</span>
+              <h3 class="feature-heading">Genuine Web Crypto client-side encryption for private 1:1 messaging.</h3>
+              <p class="feature-description">
+                When you converse privately with another member, your browser generates standard NIST P-256 elliptic curve keys and derives shared secrets using ECDH. The plaintext is encrypted using AES-GCM 256-bit ciphers before ever leaving your device.
+              </p>
+              <div class="feature-checklist">
+                <div class="check-item">✓ Web Crypto SubtleCrypto W3C Standard</div>
+                <div class="check-item">✓ Plaintext never stored or transmitted to server</div>
+                <div class="check-item">✓ Unique 96-bit cryptographic IV generated per message</div>
+              </div>
+            </div>
+            <div class="feature-visual-side" style="display: flex; align-items: center; justify-content: center; min-height: 240px; background: radial-gradient(circle, rgba(168, 85, 247, 0.15), transparent 70%);">
+              <div style="text-align: center; padding: 24px;">
+                <div style="font-size: 3rem; margin-bottom: 12px;">🔐</div>
+                <div style="font-family: var(--font-display); font-size: 1.25rem; font-weight: 700;">P-256 ECDH + AES-256</div>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 280px; margin: 8px auto 0;">Mathematical privacy guaranteed directly in your browser.</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Section: Interactive Quick Space Joiner -->
+      <section class="landing-section" id="join-space-section" style="padding-top: 20px;">
+        <div class="landing-cta-banner" style="background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.25) 0%, rgba(15, 23, 42, 0.9) 75%);">
+          <div class="section-eyebrow" style="color: #a5b4fc;">✦ Direct Sanctuary Entry</div>
+          <h2 class="cta-title">Have a Space Code or invite?</h2>
+          <p class="cta-subtitle">
+            Enter your 6-character space code below to request instant access or preview your community.
+          </p>
+
+          <div style="max-width: 440px; margin: 0 auto 32px;">
+            <div class="quick-join-input-group" style="padding: 6px 12px; background: var(--bg-surface); border: 1px solid var(--border-hover); border-radius: var(--radius-full); box-shadow: var(--shadow-md);">
+              <span class="code-prefix" style="color: var(--accent-primary); font-weight: 800; font-size: 1.1rem; padding-left: 8px;">HN-</span>
+              <input type="text" id="landing-join-code-input" class="quick-join-input" placeholder="7K4P92" maxlength="6" style="text-transform: uppercase; font-size: 1.1rem; font-weight: 700; letter-spacing: 0.1em; background: transparent;" />
+              <button type="button" class="btn btn-primary btn-sm" style="border-radius: var(--radius-full); padding: 10px 20px;" onclick="window.HubbleNest.handleLandingCodeJoin()">
+                Enter Space →
+              </button>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="window.HubbleNest.showAuthView('signup')">
+              Create a Space Instead
+            </button>
+            <button class="btn btn-secondary" onclick="window.HubbleNest.showAuthView('login')">
+              Sign In to Your Spaces
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="landing-footer">
+        <div class="footer-inner">
+          <div class="brand-zone" onclick="window.HubbleNest.showLandingPage()">
+            <div class="brand-icon">H</div>
+            <span>HubbleNest</span>
+          </div>
+
+          <div class="footer-links">
+            <a href="#sanctuaries" class="footer-link">Sanctuaries</a>
+            <a href="#how-it-works" class="footer-link">How It Works</a>
+            <a href="#architecture" class="footer-link">Architecture</a>
+            <a href="#security" class="footer-link">Privacy & E2EE</a>
+            <span class="footer-link" onclick="window.HubbleNest.showAuthView('signup')">Create Space</span>
+            <span class="footer-link" onclick="window.HubbleNest.showAuthView('login')">Sign In</span>
+          </div>
+
+          <div style="font-size: 0.85rem; color: var(--text-muted);">
+            © 2026 HubbleNest. Built for people who belong together.
+          </div>
+        </div>
+      </footer>
+
+    </div>
+
+    <!-- Authentication Screen (When Not Logged In and User Clicks Auth) -->
+    <main class="auth-wrapper" id="auth-container" style="display: none;">
       
       <!-- Login Card -->
       <div class="auth-card" id="card-login">
+        <button type="button" class="back-home-btn" onclick="window.HubbleNest.showLandingPage()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          <span>Back to HubbleNest</span>
+        </button>
         <div class="auth-header">
           <div class="brand-zone" style="justify-content: center; margin-bottom: 12px;">
             <div class="brand-icon">H</div>
@@ -139,6 +756,10 @@
 
       <!-- Gradual Multi-Step Signup Card -->
       <div class="auth-card" id="card-signup" style="display: none;">
+        <button type="button" class="back-home-btn" onclick="window.HubbleNest.showLandingPage()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          <span>Back to HubbleNest</span>
+        </button>
         
         <!-- Progress Segments -->
         <div class="step-progress-bar">
@@ -312,7 +933,7 @@
           <div class="auth-header" style="padding: 32px 0;">
             <div class="brand-icon" style="margin: 0 auto 20px; width: 48px; height: 48px; font-size: 1.5rem;">H</div>
             <h2 class="auth-title">Setting up your HubbleNest...</h2>
-            <p class="auth-subtitle">Generating your Web Crypto cryptographic keys and preparing your workspace.</p>
+            <p class="auth-subtitle">Securing your account and preparing your private sanctuary.</p>
           </div>
         </div>
 
@@ -330,19 +951,25 @@
           <span>My Spaces</span>
         </div>
 
-        <div class="nav-link" id="nav-direct" onclick="window.HubbleNest.openDirectMessagesView()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span>Direct Messages</span>
+        <div class="nav-link" id="nav-people" onclick="window.HubbleNest.openPeopleView()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>People</span>
         </div>
 
-        <div class="nav-link" onclick="window.HubbleNest.openJoinModal()">
+        <div class="nav-link" id="nav-direct" onclick="window.HubbleNest.openDirectMessagesView()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>Private Messages</span>
+          <span class="nav-badge" id="direct-requests-badge" style="display: none; margin-left: auto;">0</span>
+        </div>
+
+        <div class="nav-link" id="nav-join" onclick="window.HubbleNest.openJoinSpacePage()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01"/><path d="M17 7h.01"/><path d="M7 17h.01"/><path d="M17 17h.01"/></svg>
           <span>Join a Space</span>
         </div>
 
-        <div class="nav-link" onclick="window.HubbleNest.openProfileModal()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span>Security & Settings</span>
+        <div class="nav-link" id="nav-profile" onclick="window.HubbleNest.openProfilePage()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+          <span>My Profile & Settings</span>
         </div>
       </aside>
 
@@ -351,30 +978,89 @@
 
         <!-- VIEW 1: DASHBOARD -->
         <div class="view-section active-view" id="view-dashboard">
-          <div class="dash-header">
-            <div>
-              <h1 class="dash-title" id="dash-greeting">Welcome to HubbleNest</h1>
-              <p style="color: var(--text-secondary); font-size: 0.95rem;">Select a Space or enter with a code.</p>
+          
+          <!-- Modern Dashboard Hero Hub Card -->
+          <div class="dash-hero-hub">
+            <div class="dash-hero-inner">
+              <div class="dash-hero-left">
+                <div class="dash-user-avatar">
+                  <img id="dash-hero-avatar" src="" alt="Avatar" />
+                </div>
+                <div>
+                  <h1 class="dash-hero-title" id="dash-greeting">Welcome to HubbleNest</h1>
+                  <p class="dash-hero-subtitle" id="dash-greeting-sub">Your private, encrypted digital sanctuary for collaborative spaces and direct conversations.</p>
+                </div>
+              </div>
+              <div class="dash-hero-actions">
+                <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpacePage()">
+                  + Create Space
+                </button>
+                <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinSpacePage()">
+                  Join with Code
+                </button>
+              </div>
             </div>
-            <div class="dash-actions">
-              <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinModal()">
-                Join Space
+
+            <!-- Stats & Quick Metrics Row -->
+            <div class="dash-stats-row">
+              <div class="dash-stat-item" onclick="window.HubbleNest.loadDashboard()" style="cursor: pointer;" title="View all your active spaces">
+                <span class="dash-stat-num" id="dash-stat-spaces">0</span>
+                <span class="dash-stat-label">My Spaces</span>
+              </div>
+              <div class="dash-stat-item" onclick="window.HubbleNest.openPeopleView()" style="cursor: pointer;" title="Browse all HubbleNest members">
+                <span class="dash-stat-num" id="dash-stat-people">0</span>
+                <span class="dash-stat-label">People</span>
+              </div>
+              <div class="dash-stat-item" onclick="window.HubbleNest.openDirectMessagesView()" style="cursor: pointer;" title="View private conversations">
+                <span class="dash-stat-num" id="dash-stat-dms">0</span>
+                <span class="dash-stat-label">Private Chats</span>
+              </div>
+              <div class="dash-stat-item" style="margin-left: auto;">
+                <span style="font-size: 0.85rem; color: var(--status-success); font-weight: 500; display: inline-flex; align-items: center; gap: 6px;">
+                  🔒 Device E2EE Active
+                </span>
+              </div>
+            </div>
+
+            <!-- Inline Quick Space Join Bar (No Popups Required!) -->
+            <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+              <span style="font-size: 0.875rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
+                <span>⚡</span> <span>Quick Join: Enter a 6-character space code:</span>
+              </span>
+              <div style="display: flex; gap: 8px; flex: 1; max-width: 380px;">
+                <input type="text" id="dash-quick-join-input" class="form-input" placeholder="HN-XXXXXX" style="text-transform: uppercase; font-family: var(--font-mono); font-size: 0.95rem; text-align: center; letter-spacing: 0.08em; padding: 8px 12px;" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleQuickCodeJoin()" />
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.handleQuickCodeJoin()" style="white-space: nowrap;">
+                  Join Space
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section Heading -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h2 style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin-bottom: 2px;">Your Spaces</h2>
+              <p style="font-size: 0.85rem; color: var(--text-muted);">Spaces you own or participate in as an approved member.</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openJoinSpacePage()">
+                🔑 Join with Code
               </button>
-              <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpaceModal()">
+              <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.openCreateSpacePage()">
                 + Create Space
               </button>
             </div>
           </div>
 
-          <!-- Category Filter Bar -->
+          <!-- Category Filter Bar with Dynamic Counts -->
           <div class="category-tabs">
-            <button class="tab-btn tab-active" data-category="All">All Spaces</button>
-            <button class="tab-btn" data-category="Classroom">Classroom</button>
-            <button class="tab-btn" data-category="Study Group">Study Group</button>
-            <button class="tab-btn" data-category="Church & Fellowship">Church & Fellowship</button>
-            <button class="tab-btn" data-category="Team & Project">Team & Project</button>
-            <button class="tab-btn" data-category="Community">Community</button>
-            <button class="tab-btn" data-category="Workshop">Workshop</button>
+            <button class="tab-btn tab-active" data-category="All">All Spaces (<span id="cat-count-All">0</span>)</button>
+            <button class="tab-btn" data-category="Classroom">Classroom (<span id="cat-count-Classroom">0</span>)</button>
+            <button class="tab-btn" data-category="Study Group">Study Group (<span id="cat-count-StudyGroup">0</span>)</button>
+            <button class="tab-btn" data-category="Church & Fellowship">Fellowship (<span id="cat-count-Fellowship">0</span>)</button>
+            <button class="tab-btn" data-category="Team & Project">Team & Project (<span id="cat-count-Team">0</span>)</button>
+            <button class="tab-btn" data-category="Community">Community (<span id="cat-count-Community">0</span>)</button>
+            <button class="tab-btn" data-category="Workshop">Workshop (<span id="cat-count-Workshop">0</span>)</button>
           </div>
 
           <!-- Grid of Spaces -->
@@ -397,11 +1083,11 @@
                 <p class="space-detail-desc" id="space-detail-desc"></p>
               </div>
               <div class="space-header-actions">
-                <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openQrModal()">
+                <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.switchSpaceTab('invite')">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01"/><path d="M17 7h.01"/><path d="M7 17h.01"/><path d="M17 17h.01"/></svg>
                   <span>QR / Invite</span>
                 </button>
-                <button class="btn btn-secondary btn-sm" id="space-admin-controls-btn" style="display: none;" onclick="window.HubbleNest.openAdminSettingsModal()">
+                <button class="btn btn-secondary btn-sm" id="space-admin-controls-btn" style="display: none;" onclick="window.HubbleNest.switchSpaceTab('settings')">
                   ⚙ Settings
                 </button>
               </div>
@@ -415,6 +1101,8 @@
             <button class="space-nav-item" data-tab="links" onclick="window.HubbleNest.switchSpaceTab('links')">Links</button>
             <button class="space-nav-item" data-tab="announcements" onclick="window.HubbleNest.switchSpaceTab('announcements')">Announcements</button>
             <button class="space-nav-item" data-tab="members" onclick="window.HubbleNest.switchSpaceTab('members')">Members</button>
+            <button class="space-nav-item" data-tab="invite" onclick="window.HubbleNest.switchSpaceTab('invite')">Invite & QR</button>
+            <button class="space-nav-item" id="space-tab-nav-settings" style="display: none;" data-tab="settings" onclick="window.HubbleNest.switchSpaceTab('settings')">⚙ Settings</button>
           </nav>
 
           <!-- TAB CONTENT: CHAT -->
@@ -458,13 +1146,34 @@
             <div class="files-toolbar">
               <h3 style="font-size: 1.15rem; font-weight: 600;">Shared Links</h3>
               <button class="btn btn-secondary btn-sm" onclick="
-                const u = prompt('Enter link URL:');
-                if (u) {
-                  const t = prompt('Enter link title (optional):');
-                  import('./links.js').then(l => l.addCustomLink(window.HubbleNest.activeSpaceId || state.activeSpace.id, state.userProfile, { url: u, title: t }));
-                }
+                const form = document.getElementById('inline-link-adder');
+                if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
               ">+ Add Link</button>
             </div>
+
+            <!-- Inline Link Adding Box (No Popups!) -->
+            <div id="inline-link-adder" style="display: none; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px; margin-bottom: 20px;">
+              <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 12px;">Add a Useful Link to Space</h4>
+              <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;">
+                <input type="url" id="inline-link-url" class="form-input" placeholder="https://example.com" style="flex: 2; min-width: 200px;" />
+                <input type="text" id="inline-link-title" class="form-input" placeholder="Title or description (optional)" style="flex: 1; min-width: 160px;" />
+              </div>
+              <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('inline-link-adder').style.display='none'">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="
+                  const url = document.getElementById('inline-link-url').value;
+                  const title = document.getElementById('inline-link-title').value;
+                  if (!url) return;
+                  import('./links.js').then(l => {
+                    l.addCustomLink(state.activeSpace.id, state.userProfile, { url, title });
+                    document.getElementById('inline-link-url').value = '';
+                    document.getElementById('inline-link-title').value = '';
+                    document.getElementById('inline-link-adder').style.display = 'none';
+                  });
+                ">Save Link</button>
+              </div>
+            </div>
+
             <div class="files-grid" id="space-links-list"></div>
           </div>
 
@@ -472,10 +1181,34 @@
           <div id="space-tab-announcements" style="display: none;">
             <div class="files-toolbar">
               <h3 style="font-size: 1.15rem; font-weight: 600;">Space Announcements</h3>
-              <button class="btn btn-primary btn-sm" id="btn-new-announcement" style="display: none;" onclick="window.HubbleNest.openNewAnnouncementModal()">
+              <button class="btn btn-primary btn-sm" id="btn-new-announcement" style="display: none;" onclick="window.HubbleNest.toggleAnnouncementComposer()">
                 + Post Announcement
               </button>
             </div>
+
+            <!-- Inline Announcement Composer (Replaces Modal Popup!) -->
+            <div id="announcement-inline-composer" class="announcement-composer-box" style="display: none;">
+              <h4 style="font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">Create New Announcement</h4>
+              <div class="form-group">
+                <label class="form-label" for="ann-title-input-inline">Title</label>
+                <input type="text" id="ann-title-input-inline" class="form-input" placeholder="e.g. Schedule Change or Community Guidelines" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="ann-content-input-inline">Announcement Content</label>
+                <textarea id="ann-content-input-inline" class="form-textarea" rows="4" placeholder="Write announcement details here..."></textarea>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 14px; flex-wrap: wrap; gap: 12px;">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 0.875rem; cursor: pointer;">
+                  <input type="checkbox" id="ann-pinned-input-inline" style="width: 16px; height: 16px;" />
+                  <span>Pin to top of space</span>
+                </label>
+                <div style="display: flex; gap: 8px;">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.toggleAnnouncementComposer(false)">Cancel</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleCreateAnnouncementInline()">Publish Announcement</button>
+                </div>
+              </div>
+            </div>
+
             <div class="announcements-list" id="announcements-list-container"></div>
           </div>
 
@@ -495,51 +1228,159 @@
             <div class="members-list" id="members-list-grid"></div>
           </div>
 
+          <!-- TAB CONTENT: INVITE & QR (In-Page, No Modal Popup!) -->
+          <div id="space-tab-invite" style="display: none;">
+            <div class="space-tab-card" style="margin: 0 auto;">
+              <div class="qr-display-box">
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);" id="invite-tab-space-name">Space Invite</div>
+                <p style="font-size: 0.9rem; color: var(--text-secondary); max-width: 440px;">
+                  Share this QR code or 6-character space code with members to invite them to this private sanctuary.
+                </p>
+                <div class="qr-canvas-container" style="background: white; padding: 16px; border-radius: 12px; box-shadow: var(--shadow-md);">
+                  <canvas id="space-qr-canvas-tab" class="qr-canvas" style="display: block;"></canvas>
+                </div>
+                <div class="qr-code-text" id="qr-tab-code-display" style="font-family: var(--font-mono); font-size: 1.5rem; letter-spacing: 0.1em; font-weight: 700; color: var(--accent-primary);">HN-CODE</div>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 8px;">
+                  <button class="btn btn-secondary" onclick="window.HubbleNest.copySpaceJoinLink()">
+                    📋 Copy Invite Link
+                  </button>
+                  <button class="btn btn-primary" onclick="window.HubbleNest.downloadSpaceQr()">
+                    ⬇ Download QR Image
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB CONTENT: SETTINGS (In-Page, No Modal Popup!) -->
+          <div id="space-tab-settings" style="display: none;">
+            <div class="settings-card" style="max-width: 700px; margin: 0 auto;">
+              <div class="settings-card-header">
+                <h3 class="settings-card-title">Space Settings & Administration</h3>
+                <p class="settings-card-desc">Configure details, manage visual appearance, and handle expiration for this Space.</p>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="edit-space-name-tab">Space Name</label>
+                <input type="text" id="edit-space-name-tab" class="form-input" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="edit-space-desc-tab">Description</label>
+                <textarea id="edit-space-desc-tab" class="form-textarea" rows="3"></textarea>
+              </div>
+
+              <div style="border-top: 1px solid var(--border-subtle); padding-top: 20px; margin-top: 20px;">
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px;">Space Cover Banner</h4>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Choose a clear image to give your space a distinctive header.</p>
+                <input type="file" id="edit-space-cover-file-tab" accept="image/*" style="display: none;" onchange="
+                  if (this.files[0]) {
+                    window.HubbleNest.handleUpdateSpaceCover(this.files[0]);
+                  }
+                " />
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('edit-space-cover-file-tab').click()">
+                  🖼️ Upload New Cover Photo
+                </button>
+              </div>
+
+              <div style="border-top: 1px solid var(--border-subtle); padding-top: 20px; margin-top: 20px;">
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px;">Extend Duration</h4>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Keep temporary spaces active by adding more time before automatic expiration.</p>
+                <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.handleExtendExpiration()">
+                  + Extend by 7 Days
+                </button>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-subtle);">
+                <button class="btn btn-primary" onclick="window.HubbleNest.handleSaveSpaceSettingsFromTab()">Save Changes</button>
+              </div>
+
+              <div style="border-top: 2px solid rgba(239, 68, 68, 0.2); padding-top: 20px; margin-top: 32px; background: rgba(239, 68, 68, 0.04); border-radius: var(--radius-md); padding: 16px;">
+                <h4 style="font-size: 0.95rem; font-weight: 600; color: var(--status-danger); margin-bottom: 6px;">Danger Zone</h4>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Permanently delete this Space, all public messages, files, and memberships. This cannot be undone.</p>
+                <button class="btn btn-danger btn-sm" onclick="window.HubbleNest.handleDeleteSpace()">
+                  Delete Space Permanently
+                </button>
+              </div>
+            </div>
+          </div>
+
         </div>
 
-        <!-- VIEW 3: DIRECT MESSAGES (1-to-1 ENCRYPTED) -->
+        <!-- VIEW 3: PEOPLE / MEMBERS DIRECTORY -->
+        <div class="view-section" id="view-people">
+          <div class="dash-header">
+            <div>
+              <h1 class="dash-title">People Directory</h1>
+              <p style="color: var(--text-secondary); font-size: 0.95rem;">Browse members, explore profiles, and connect privately.</p>
+            </div>
+            <div class="dash-actions" style="max-width: 340px; width: 100%;">
+              <input type="text" id="people-search-input" class="form-input" placeholder="Search people by name or @username..." oninput="window.HubbleNest.handlePeopleSearch(this.value)" />
+            </div>
+          </div>
+
+          <div class="people-grid" id="people-directory-grid">
+            <div style="grid-column: 1 / -1; padding: 48px 0; text-align: center; color: var(--text-muted);">
+              Loading members...
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 4: PRIVATE DIRECT MESSAGES -->
         <div class="view-section" id="view-direct-messages">
           <div class="dash-header">
             <div>
-              <h1 class="dash-title">End-to-End Encrypted Messages</h1>
-              <p style="color: var(--text-secondary); font-size: 0.95rem;">Private direct conversations encrypted client-side using AES-256-GCM + ECDH.</p>
+              <h1 class="dash-title">Private Messages</h1>
+              <p style="color: var(--text-secondary); font-size: 0.95rem;">Private, protected conversations with people you belong with.</p>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="
-              const u = prompt('Enter the username of the member you wish to message:');
-              if (u) {
-                import('./search.js').then(s => s.executeGlobalSearch(u, state.currentUser.uid)).then(res => {
-                  if (res.people.length > 0) {
-                    window.HubbleNest.startDirectChatWithUser(res.people[0].uid);
-                  } else {
-                    alert('No user found with that username.');
-                  }
-                });
-              }
-            ">+ New Conversation</button>
+            <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.openPeopleView()">
+              + Find People
+            </button>
           </div>
 
           <div style="display: flex; gap: 24px; min-height: 520px;">
             <!-- Conversations Sidebar -->
-            <div style="width: 260px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 12px; display: flex; flex-direction: column; gap: 6px;" id="direct-conv-list">
-              <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">Loading conversations...</div>
+            <div style="width: 290px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 12px; display: flex; flex-direction: column; gap: 8px;">
+              
+              <!-- Incoming Chat Requests Box -->
+              <div id="direct-requests-container" class="direct-requests-box" style="display: none;">
+                <div class="direct-requests-header">
+                  <span>Chat Requests</span>
+                  <span class="nav-badge" id="direct-requests-count">0</span>
+                </div>
+                <div id="direct-requests-list"></div>
+              </div>
+
+              <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 6px;">Conversations</div>
+
+              <div id="direct-conv-list" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 480px;">
+                <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">Loading conversations...</div>
+              </div>
             </div>
 
             <!-- Active Chat Box -->
             <div style="flex: 1; display: flex; flex-direction: column;">
               <div class="chat-container" id="direct-chat-active" style="display: none;">
-                <div style="padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface-elevated);">
-                  <div>
-                    <h3 style="font-size: 1.05rem; font-weight: 600;" id="direct-chat-peer-name">Member</h3>
-                    <div style="font-size: 0.75rem; color: var(--text-muted);" id="direct-chat-peer-fingerprint">E2E Security: Verified</div>
+                <div style="padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface-elevated);">
+                  <div style="display: flex; align-items: center; gap: 12px; cursor: pointer;" onclick="if(state.activeDirectPeer) window.HubbleNest.openUserCardModal(state.activeDirectPeer.uid)">
+                    <div class="msg-avatar" style="width: 36px; height: 36px;">
+                      <img id="direct-chat-peer-avatar" src="" class="avatar-img" alt="Peer" />
+                    </div>
+                    <div>
+                      <h3 style="font-size: 1rem; font-weight: 600;" id="direct-chat-peer-name">Member</h3>
+                      <div style="font-size: 0.75rem; color: var(--accent-primary);" id="direct-chat-peer-handle">@member</div>
+                    </div>
                   </div>
-                  <span style="font-size: 0.75rem; color: var(--status-success); font-weight: 600;">🔒 E2E Active</span>
+                  <span style="font-size: 0.8rem; color: var(--status-success); font-weight: 500; display: flex; align-items: center; gap: 4px;">
+                    🔒 Private Conversation
+                  </span>
                 </div>
 
                 <div class="chat-messages" id="direct-messages-feed"></div>
 
                 <div class="chat-composer">
                   <div class="composer-row">
-                    <input type="text" id="direct-message-input" class="composer-input" placeholder="Type an encrypted message..." onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendDirectMessage()" />
+                    <input type="text" id="direct-message-input" class="composer-input" placeholder="Type a private message..." onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendDirectMessage()" />
                     <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleSendDirectMessage()">
                       Send
                     </button>
@@ -550,7 +1391,266 @@
               <div id="direct-chat-empty" class="empty-state" style="padding: 80px 0;">
                 <div class="empty-state-icon">🔒</div>
                 <h3 class="empty-state-title">Select a conversation</h3>
-                <p class="empty-state-desc">Choose a member on the left or start a new private encrypted chat.</p>
+                <p class="empty-state-desc">Choose a member on the left or connect with people in the directory.</p>
+                <button class="btn btn-secondary btn-sm" style="margin-top: 14px;" onclick="window.HubbleNest.openPeopleView()">Browse People Directory</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 5: CREATE SPACE PAGE (NO POPUPS) -->
+        <div class="view-section" id="view-create-space">
+          <div class="page-container">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <button type="button" class="back-link-btn" onclick="window.HubbleNest.loadDashboard()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  <span>Back to Spaces</span>
+                </button>
+                <h1 style="margin-top: 8px;">Create a New Space</h1>
+                <p>Build your private collaborative hub for your classroom, team, fellowship, or project.</p>
+              </div>
+            </div>
+
+            <div class="create-space-grid">
+              <div class="create-form-side">
+                <div class="form-group">
+                  <label class="form-label" for="page-create-space-name">Space Name</label>
+                  <input type="text" id="page-create-space-name" class="form-input" placeholder="e.g. Physics 101 or North Fellowship" required oninput="
+                    const previewTitle = document.getElementById('create-preview-title');
+                    if (previewTitle) previewTitle.textContent = this.value || 'New Space Name';
+                  " />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="page-create-space-category">Category</label>
+                  <select id="page-create-space-category" class="form-select" onchange="
+                    const catEl = document.getElementById('create-preview-cat');
+                    if (catEl) catEl.textContent = this.value;
+                  ">
+                    <option value="Classroom">Classroom</option>
+                    <option value="Study Group">Study Group</option>
+                    <option value="Church & Fellowship">Church & Fellowship</option>
+                    <option value="Team & Project">Team & Project</option>
+                    <option value="Community">Community</option>
+                    <option value="Workshop">Workshop</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Cover Image (Optional)</label>
+                  <div class="space-cover-picker-box" onclick="document.getElementById('page-create-space-cover-file').click()">
+                    <img id="page-create-space-cover-preview" class="space-cover-preview-img" style="display: none;" alt="Cover Preview" />
+                    <div id="page-create-space-cover-placeholder" style="display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-muted); padding: 18px;">
+                      <span style="font-size: 1.5rem;">🖼️</span>
+                      <span style="font-size: 0.85rem;">Click to upload a custom cover banner</span>
+                    </div>
+                  </div>
+                  <input type="file" id="page-create-space-cover-file" accept="image/*" style="display: none;" onchange="
+                    const file = this.files[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (e) => {
+                        const img = document.getElementById('page-create-space-cover-preview');
+                        const placeholder = document.getElementById('page-create-space-cover-placeholder');
+                        const cardImg = document.getElementById('create-preview-cover-img');
+                        if (img) { img.src = e.target.result; img.style.display = 'block'; }
+                        if (placeholder) placeholder.style.display = 'none';
+                        if (cardImg) { cardImg.src = e.target.result; cardImg.style.display = 'block'; }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  " />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="page-create-space-desc">Description (Optional)</label>
+                  <textarea id="page-create-space-desc" class="form-textarea" rows="3" placeholder="Briefly describe the purpose of this group..." oninput="
+                    const previewDesc = document.getElementById('create-preview-desc');
+                    if (previewDesc) previewDesc.textContent = this.value || 'Your space description will appear here.';
+                  "></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="page-create-space-type">Space Duration</label>
+                  <select id="page-create-space-type" class="form-select" onchange="
+                    document.getElementById('page-expiration-date-group').style.display = this.value === 'temporary' ? 'block' : 'none';
+                  ">
+                    <option value="permanent">Permanent (Stays until deleted)</option>
+                    <option value="temporary">Temporary (Set expiration date)</option>
+                  </select>
+                </div>
+
+                <div class="form-group" id="page-expiration-date-group" style="display: none;">
+                  <label class="form-label" for="page-create-space-expiration">Expiration Date & Time</label>
+                  <input type="datetime-local" id="page-create-space-expiration" class="form-input" />
+                </div>
+
+                <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-subtle);">
+                  <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.loadDashboard()">Cancel</button>
+                  <button type="button" class="btn btn-primary" id="btn-submit-create-space-page" onclick="window.HubbleNest.handleCreateSpaceFromPage()">
+                    Create Space
+                  </button>
+                </div>
+              </div>
+
+              <!-- Live Card Preview Sticky Column -->
+              <div class="create-preview-side">
+                <span style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em;">Live Preview</span>
+                <div class="space-card create-preview-sticky">
+                  <div class="space-card-cover">
+                    <img id="create-preview-cover-img" class="space-card-cover-img" style="display: none;" alt="Preview" />
+                    <div id="create-preview-cover-fallback" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); color: #3b82f6; font-size: 2rem; font-weight: 800;">
+                      HN
+                    </div>
+                  </div>
+                  <div class="space-card-body">
+                    <div class="space-card-meta">
+                      <span id="create-preview-cat">Classroom</span>
+                      <span>·</span>
+                      <span>1 member</span>
+                      <span>·</span>
+                      <span class="admin-pill">Creator</span>
+                    </div>
+                    <h4 class="space-card-title" id="create-preview-title">New Space Name</h4>
+                    <p class="space-card-desc" id="create-preview-desc">Your space description will appear here.</p>
+                    <div class="space-card-footer">
+                      <span class="code-chip">HN-XXXXXX</span>
+                      <span style="color: var(--text-muted); font-size: 0.75rem;">Permanent</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 6: JOIN SPACE PAGE (NO POPUPS) -->
+        <div class="view-section" id="view-join-space">
+          <div class="page-container" style="max-width: 680px;">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <button type="button" class="back-link-btn" onclick="window.HubbleNest.loadDashboard()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  <span>Back to Spaces</span>
+                </button>
+                <h1 style="margin-top: 8px;">Join a Space</h1>
+                <p>Enter the unique 6-character code provided by an administrator or member.</p>
+              </div>
+            </div>
+
+            <div class="join-page-card">
+              <div class="form-group" style="margin-bottom: 20px;">
+                <label class="form-label" for="page-join-code-input" style="font-size: 0.95rem;">Enter Space Code</label>
+                <div style="display: flex; gap: 10px;">
+                  <input type="text" id="page-join-code-input" class="form-input" placeholder="HN-XXXXXX" style="text-transform: uppercase; font-family: var(--font-mono); font-size: 1.25rem; text-align: center; letter-spacing: 0.1em; padding: 12px;" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleJoinPageCodeSearch(this.value)" />
+                  <button type="button" class="btn btn-primary" onclick="window.HubbleNest.handleJoinPageCodeSearch(document.getElementById('page-join-code-input').value)">
+                    Find Space
+                  </button>
+                </div>
+                <div class="form-hint" style="margin-top: 8px;">Codes usually start with "HN-" followed by 6 alphanumeric characters.</div>
+              </div>
+
+              <!-- Live In-Page Space Result Box -->
+              <div id="join-page-result-box" style="display: none;" class="join-preview-box">
+                <div style="text-align: center; padding: 12px 0;">
+                  <div class="brand-icon" style="margin: 0 auto 14px; width: 52px; height: 52px; font-size: 1.4rem;">H</div>
+                  <h3 class="auth-title" id="page-preview-space-name" style="font-size: 1.4rem; margin-bottom: 4px;">Space Name</h3>
+                  <div id="page-preview-space-meta" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;"></div>
+                  <p id="page-preview-space-desc" style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;"></p>
+                  
+                  <div style="background: var(--bg-surface-elevated); padding: 12px; border-radius: var(--radius-md); font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px;">
+                    🔒 This space is private. Messages and files are accessible after approval.
+                  </div>
+
+                  <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('join-page-result-box').style.display='none'">Clear</button>
+                    <button class="btn btn-primary" id="page-btn-request-join">Request to Join</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 7: MY PROFILE & SETTINGS PAGE (NO POPUPS) -->
+        <div class="view-section" id="view-profile">
+          <div class="page-container" style="max-width: 720px;">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <button type="button" class="back-link-btn" onclick="window.HubbleNest.loadDashboard()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  <span>Back to Spaces</span>
+                </button>
+                <h1 style="margin-top: 8px;">My Profile & Account Settings</h1>
+                <p>Manage your public appearance, bio, and device security credentials.</p>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <!-- Profile Picture Upload Area -->
+              <input type="file" id="page-profile-photo-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleProfilePhotoUploadPage(this.files[0])" />
+              <div class="profile-avatar-edit-box" onclick="document.getElementById('page-profile-photo-input').click()" title="Click to upload a new profile picture">
+                <div class="profile-avatar-preview">
+                  <img id="page-profile-avatar-preview" src="" class="avatar-img" alt="Avatar" />
+                </div>
+                <div class="profile-avatar-edit-text">
+                  <span class="profile-avatar-edit-title">Profile Picture</span>
+                  <span class="profile-avatar-edit-sub" id="page-profile-photo-status">Click to upload a new picture</span>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" style="margin-left: auto;">Change Photo</button>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="page-profile-name">Display Name</label>
+                <input type="text" id="page-profile-name" class="form-input" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="page-profile-handle">Username</label>
+                <input type="text" id="page-profile-handle" class="form-input" disabled style="opacity: 0.7; cursor: not-allowed;" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="page-profile-bio">Bio / About You</label>
+                <textarea id="page-profile-bio" class="form-textarea" rows="3" placeholder="Tell fellow members a little about yourself..."></textarea>
+              </div>
+
+              <div style="border-top: 1px solid var(--border-subtle); padding-top: 20px; margin-top: 20px;">
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px;">Private & Protected Messaging</h4>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+                  Your direct messages are locked directly on this device using client-side Web Crypto encryption keys.
+                </p>
+                <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); font-size: 0.85rem; color: var(--status-success); font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                  <span>🔒</span>
+                  <span>Security Fingerprint: Device Verified & Protected</span>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-subtle);">
+                <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.loadDashboard()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.HubbleNest.handleSaveProfileFromPage()">Save Profile Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 8: MEMBER PROFILE PAGE (NO POPUPS) -->
+        <div class="view-section" id="view-member-profile">
+          <div class="page-container" style="max-width: 580px;">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <button type="button" class="back-link-btn" onclick="window.HubbleNest.goBackFromMemberProfile()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  <span>Back</span>
+                </button>
+                <h1 style="margin-top: 8px;">Member Profile</h1>
+              </div>
+            </div>
+
+            <div class="settings-card" id="page-member-profile-content">
+              <div style="padding: 40px 0; text-align: center; color: var(--text-muted);">
+                Loading member profile...
               </div>
             </div>
           </div>
@@ -562,19 +1662,23 @@
 
     <!-- Mobile Bottom Navigation Bar (<768px) -->
     <nav class="mobile-bottom-nav">
-      <button class="mobile-nav-btn active" onclick="window.HubbleNest.loadDashboard()">
+      <button class="mobile-nav-btn active" id="mob-nav-spaces" onclick="window.HubbleNest.loadDashboard()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
         <span>Spaces</span>
       </button>
-      <button class="mobile-nav-btn" onclick="window.HubbleNest.openDirectMessagesView()">
+      <button class="mobile-nav-btn" id="mob-nav-people" onclick="window.HubbleNest.openPeopleView()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>People</span>
+      </button>
+      <button class="mobile-nav-btn" id="mob-nav-direct" onclick="window.HubbleNest.openDirectMessagesView()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span>Direct</span>
       </button>
-      <button class="mobile-nav-btn" onclick="window.HubbleNest.openJoinModal()">
+      <button class="mobile-nav-btn" id="mob-nav-join" onclick="window.HubbleNest.openJoinSpacePage()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01"/><path d="M17 7h.01"/><path d="M7 17h.01"/><path d="M17 17h.01"/></svg>
         <span>Join</span>
       </button>
-      <button class="mobile-nav-btn" onclick="window.HubbleNest.openProfileModal()">
+      <button class="mobile-nav-btn" id="mob-nav-profile" onclick="window.HubbleNest.openProfilePage()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
         <span>Profile</span>
       </button>
@@ -818,36 +1922,64 @@
     </div>
   </div>
 
-  <!-- Modal: User Profile & Security Fingerprint -->
+  <!-- Modal: User Profile & Security -->
   <div class="modal modal-overlay" id="modal-user-profile">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3 class="modal-title">My Profile & Security</h3>
+        <h3 class="modal-title">My Profile & Settings</h3>
         <button class="modal-close-btn" onclick="window.HubbleNest.closeModal('modal-user-profile')">&times;</button>
       </div>
       <div class="modal-body">
+        
+        <!-- Profile Picture Upload Area -->
+        <input type="file" id="profile-photo-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleProfilePhotoUpload(this.files[0])" />
+        <div class="profile-avatar-edit-box" onclick="document.getElementById('profile-photo-input').click()" title="Click to change your profile picture">
+          <div class="profile-avatar-preview">
+            <img id="profile-edit-avatar-preview" src="" class="avatar-img" alt="Avatar Preview" />
+          </div>
+          <div class="profile-avatar-edit-text">
+            <span class="profile-avatar-edit-title">Profile Picture</span>
+            <span class="profile-avatar-edit-sub" id="profile-photo-upload-status">Click to upload a new picture</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-left: auto;">Change</button>
+        </div>
+
         <div class="form-group">
           <label class="form-label" for="profile-edit-name">Display Name</label>
           <input type="text" id="profile-edit-name" class="form-input" />
         </div>
         <div class="form-group">
-          <label class="form-label" for="profile-edit-bio">Bio / Role</label>
-          <textarea id="profile-edit-bio" class="form-textarea" rows="2" placeholder="Tell other members what you do..."></textarea>
+          <label class="form-label" for="profile-edit-bio">Bio / About You</label>
+          <textarea id="profile-edit-bio" class="form-textarea" rows="2" placeholder="Tell others a little about yourself..."></textarea>
         </div>
 
         <div style="border-top: 1px solid var(--border-subtle); padding-top: 16px; margin-top: 16px;">
-          <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px;">End-to-End Cryptography</h4>
+          <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 6px;">Private & Protected Messaging</h4>
           <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-            HubbleNest employs client-side AES-256-GCM + NIST P-256 ECDH encryption for all 1-to-1 private messages.
+            Your direct conversations are secured directly on your device so that only you and the recipient can read them.
           </p>
-          <div style="background: var(--bg-surface-elevated); padding: 10px 14px; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 0.8rem; word-break: break-all;" id="profile-fingerprint-display">
-            HN-ECDH-ACTIVE
+          <div style="background: var(--bg-surface-elevated); padding: 10px 14px; border-radius: var(--radius-md); font-size: 0.85rem; color: var(--status-success); font-weight: 500; display: flex; align-items: center; gap: 8px;" id="profile-fingerprint-display">
+            <span>🔒</span>
+            <span>Security Status: Active & Protected</span>
           </div>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="window.HubbleNest.closeModal('modal-user-profile')">Cancel</button>
-        <button class="btn btn-primary" onclick="window.HubbleNest.handleSaveProfile()">Save Profile</button>
+        <button class="btn btn-primary" id="btn-save-profile" onclick="window.HubbleNest.handleSaveProfile()">Save Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Member Profile Card & Chat Request -->
+  <div class="modal modal-overlay" id="modal-user-card">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Member Profile</h3>
+        <button class="modal-close-btn" onclick="window.HubbleNest.closeModal('modal-user-card')">&times;</button>
+      </div>
+      <div class="modal-body user-card-modal-body" id="user-card-modal-content">
+        <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading member profile...</div>
       </div>
     </div>
   </div>
@@ -871,7 +2003,7 @@
     <div class="modal-dialog" style="max-width: 400px; text-align: center;">
       <div class="modal-body" style="padding: 32px 24px;">
         <div style="margin-bottom: 16px; font-size: 2rem;">☁️</div>
-        <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">Uploading to Cloudinary</h4>
+        <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">Uploading File...</h4>
         <div id="upload-progress-text" style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px;">Preparing upload...</div>
         <div style="height: 6px; background: var(--border-subtle); border-radius: 3px; overflow: hidden;">
           <div id="upload-progress-bar" style="width: 0%; height: 100%; background: var(--accent-primary); transition: width 0.2s;"></div>

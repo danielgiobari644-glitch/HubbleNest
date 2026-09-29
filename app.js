@@ -48,8 +48,30 @@ import {
   subscribeToUserConversations, 
   subscribeToPrivateMessages, 
   getOrCreateConversation, 
-  sendPrivateMessage 
+  sendPrivateMessage,
+  deletePrivateMessage,
+  getConversationId
 } from './private-chat.js';
+
+import {
+  sendChatRequest,
+  acceptChatRequest,
+  declineChatRequest,
+  cancelChatRequest,
+  subscribeToIncomingRequests,
+  getChatRelationship
+} from './chat-requests.js';
+
+import {
+  fetchPeopleDirectory,
+  searchPeopleDirectory,
+  fetchPublicUserCard
+} from './people.js';
+
+import {
+  uploadProfilePhoto,
+  updateUserProfile
+} from './profile.js';
 
 import { 
   subscribeToSpaceFiles, 
@@ -135,9 +157,13 @@ const state = {
   activeConversation: null,
   activeDirectPeer: null,
   directMessages: [],
+  people: [],
+  incomingChatRequests: [],
+  selectedUserCard: null,
   notifications: [],
   unreadNotifications: 0,
-  replyingTo: null
+  replyingTo: null,
+  previousView: 'dashboard'
 };
 
 // Initialize Theme
@@ -168,7 +194,7 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     state.currentUser = null;
     state.userProfile = null;
-    showAuthView();
+    showLandingPage();
   }
 });
 
@@ -176,10 +202,12 @@ function setupAuthenticatedUI() {
   const topbar = document.getElementById('main-topbar');
   const appContainer = document.getElementById('app-container');
   const authContainer = document.getElementById('auth-container');
+  const landingContainer = document.getElementById('landing-page-container');
 
+  if (landingContainer) landingContainer.style.display = 'none';
+  if (authContainer) authContainer.style.display = 'none';
   if (topbar) topbar.style.display = 'flex';
   if (appContainer) appContainer.style.display = 'flex';
-  if (authContainer) authContainer.style.display = 'none';
 
   // Update topbar avatar
   const avatarImg = document.getElementById('user-avatar-topbar');
@@ -192,22 +220,108 @@ function setupAuthenticatedUI() {
   const menuHandle = document.getElementById('menu-user-handle');
   if (menuName) menuName.textContent = state.userProfile.displayName || 'Member';
   if (menuHandle) menuHandle.textContent = `@${state.userProfile.username || 'user'}`;
+
+  // Subscribe to incoming chat requests
+  subscribeToIncomingRequests(state.currentUser.uid, (requests) => {
+    state.incomingChatRequests = requests;
+    const badge = document.getElementById('direct-requests-badge');
+    const countEl = document.getElementById('direct-requests-count');
+    const container = document.getElementById('direct-requests-container');
+
+    if (badge) {
+      if (requests.length > 0) {
+        badge.textContent = requests.length;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    if (countEl) countEl.textContent = requests.length;
+    if (container) {
+      container.style.display = requests.length > 0 ? 'block' : 'none';
+    }
+
+    renderDirectRequests();
+  });
 }
 
-function showAuthView() {
+export function showLandingPage() {
   const topbar = document.getElementById('main-topbar');
   const appContainer = document.getElementById('app-container');
   const authContainer = document.getElementById('auth-container');
+  const landingContainer = document.getElementById('landing-page-container');
+  const userBanner = document.getElementById('landing-user-banner');
 
   if (topbar) topbar.style.display = 'none';
   if (appContainer) appContainer.style.display = 'none';
+  if (authContainer) authContainer.style.display = 'none';
+  if (landingContainer) landingContainer.style.display = 'block';
+
+  if (state.currentUser && userBanner) {
+    userBanner.style.display = 'flex';
+  } else if (userBanner) {
+    userBanner.style.display = 'none';
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function showAuthView(mode = 'signup') {
+  const topbar = document.getElementById('main-topbar');
+  const appContainer = document.getElementById('app-container');
+  const authContainer = document.getElementById('auth-container');
+  const landingContainer = document.getElementById('landing-page-container');
+
+  if (topbar) topbar.style.display = 'none';
+  if (appContainer) appContainer.style.display = 'none';
+  if (landingContainer) landingContainer.style.display = 'none';
   if (authContainer) authContainer.style.display = 'flex';
 
-  resetSignupSteps();
-  showLoginCard();
+  if (mode === 'signup') {
+    showSignupCard();
+  } else {
+    showLoginCard();
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function handleHeroCodeJoin() {
+  const input = document.getElementById('hero-space-code-input');
+  const raw = input ? input.value.trim().toUpperCase() : '';
+  processLandingCode(raw);
+}
+
+export function handleLandingCodeJoin() {
+  const input = document.getElementById('landing-join-code-input');
+  const raw = input ? input.value.trim().toUpperCase() : '';
+  processLandingCode(raw);
+}
+
+function processLandingCode(rawCode) {
+  if (!rawCode) {
+    showToast('Please enter a 6-character space code.', 'warning');
+    return;
+  }
+  const cleanCode = rawCode.startsWith('HN-') ? rawCode : `HN-${rawCode}`;
+  
+  if (state.currentUser) {
+    handleCodeSearch(cleanCode);
+  } else {
+    sessionStorage.setItem('pendingJoinCode', cleanCode);
+    showToast(`Code ${cleanCode} saved! Sign in or create an account to enter this Space.`, 'info', 5000);
+    showAuthView('signup');
+  }
 }
 
 function checkUrlJoinParam() {
+  const pendingCode = sessionStorage.getItem('pendingJoinCode');
+  if (pendingCode) {
+    sessionStorage.removeItem('pendingJoinCode');
+    handleCodeSearch(pendingCode);
+    return;
+  }
+
   const path = window.location.pathname;
   if (path.startsWith('/join/')) {
     const code = path.replace('/join/', '').trim();
@@ -327,7 +441,7 @@ async function loadDashboard() {
   unsubscribeFromChat();
 
   document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
-  document.getElementById('view-dashboard').classList.add('active-view');
+  document.getElementById('view-dashboard')?.classList.add('active-view');
 
   // Update nav link
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
@@ -337,11 +451,47 @@ async function loadDashboard() {
   const greetingEl = document.getElementById('dash-greeting');
   if (greetingEl && state.userProfile) {
     const firstName = (state.userProfile.displayName || 'Member').split(' ')[0];
-    greetingEl.textContent = `Welcome back, ${firstName}`;
+    greetingEl.textContent = `Welcome back, ${firstName} 👋`;
+  }
+
+  const avatarEl = document.getElementById('dash-hero-avatar');
+  if (avatarEl && state.userProfile) {
+    avatarEl.src = getAvatarUrl(state.userProfile.photoURL, state.userProfile.displayName);
   }
 
   renderSpacesGridLoading();
   state.userSpaces = await fetchUserSpaces(state.currentUser.uid);
+
+  // Update stats on dashboard hero
+  const statSpaces = document.getElementById('dash-stat-spaces');
+  if (statSpaces) statSpaces.textContent = state.userSpaces.length;
+
+  const statPeople = document.getElementById('dash-stat-people');
+  if (statPeople) statPeople.textContent = state.people ? state.people.length : 0;
+
+  const statDms = document.getElementById('dash-stat-dms');
+  if (statDms) statDms.textContent = state.conversations ? state.conversations.length : 0;
+
+  // Update dynamic category badge counts
+  const categories = ['All', 'Classroom', 'Study Group', 'Church & Fellowship', 'Team & Project', 'Community', 'Workshop'];
+  const catKeyMap = {
+    'All': 'All',
+    'Classroom': 'Classroom',
+    'Study Group': 'StudyGroup',
+    'Church & Fellowship': 'Fellowship',
+    'Team & Project': 'Team',
+    'Community': 'Community',
+    'Workshop': 'Workshop'
+  };
+  categories.forEach(cat => {
+    const elId = `cat-count-${catKeyMap[cat]}`;
+    const badge = document.getElementById(elId);
+    if (badge) {
+      const count = cat === 'All' ? state.userSpaces.length : state.userSpaces.filter(s => s.category === cat).length;
+      badge.textContent = count;
+    }
+  });
+
   renderSpacesGrid();
 }
 
@@ -367,7 +517,7 @@ function renderSpacesGrid() {
 
   if (filtered.length === 0) {
     container.innerHTML = `
-      <div class="empty-state">
+      <div class="empty-state" style="grid-column: 1 / -1; padding: 64px 20px;">
         <div class="empty-state-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
@@ -377,9 +527,9 @@ function renderSpacesGrid() {
         </div>
         <h3 class="empty-state-title">Your spaces will appear here</h3>
         <p class="empty-state-desc">Create your own private sanctuary or join an existing group with a code or QR invite.</p>
-        <div style="display: flex; gap: 12px; justify-content: center;">
-          <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpaceModal()">Create a Space</button>
-          <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinModal()">Join with Code</button>
+        <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpacePage()">+ Create a Space</button>
+          <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinSpacePage()">🔑 Join with Code</button>
         </div>
       </div>
     `;
@@ -410,8 +560,11 @@ function renderSpacesGrid() {
           <h4 class="space-card-title">${escapeHtml(sp.name)}</h4>
           <p class="space-card-desc">${escapeHtml(sp.description || 'Private collaborative workspace.')}</p>
           <div class="space-card-footer">
-            <span class="code-chip">${escapeHtml(sp.code || 'HN-SPACE')}</span>
-            ${expInfo ? `<span style="color: ${expInfo.urgent ? 'var(--status-danger)' : 'var(--text-muted)'}; font-size: 0.75rem;">${expInfo.text}</span>` : `<span style="color: var(--text-muted); font-size: 0.75rem;">Permanent</span>`}
+            <span class="code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code)}')">${escapeHtml(sp.code || 'HN-SPACE')} 📋</span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              ${expInfo ? `<span style="color: ${expInfo.urgent ? 'var(--status-danger)' : 'var(--text-muted)'}; font-size: 0.75rem;">${expInfo.text}</span>` : `<span style="color: var(--text-muted); font-size: 0.75rem;">Permanent</span>`}
+              <span class="space-card-btn-enter">Enter →</span>
+            </div>
           </div>
         </div>
       </div>
@@ -490,6 +643,11 @@ function renderSpaceHeader() {
   if (adminBtn) {
     adminBtn.style.display = state.activeSpaceRole === 'admin' ? 'inline-flex' : 'none';
   }
+
+  const settingsTabNav = document.getElementById('space-tab-nav-settings');
+  if (settingsTabNav) {
+    settingsTabNav.style.display = state.activeSpaceRole === 'admin' ? 'inline-block' : 'none';
+  }
 }
 
 export function switchSpaceTab(tabName) {
@@ -504,7 +662,9 @@ export function switchSpaceTab(tabName) {
     files: document.getElementById('space-tab-files'),
     links: document.getElementById('space-tab-links'),
     announcements: document.getElementById('space-tab-announcements'),
-    members: document.getElementById('space-tab-members')
+    members: document.getElementById('space-tab-members'),
+    invite: document.getElementById('space-tab-invite'),
+    settings: document.getElementById('space-tab-settings')
   };
 
   Object.keys(containers).forEach(k => {
@@ -522,6 +682,92 @@ export function switchSpaceTab(tabName) {
     initAnnouncementsListener();
   } else if (tabName === 'members') {
     initMembersListener();
+  } else if (tabName === 'invite') {
+    initInviteTab();
+  } else if (tabName === 'settings') {
+    initSettingsTab();
+  }
+}
+
+function initInviteTab() {
+  if (!state.activeSpace) return;
+  const canvas = document.getElementById('space-qr-canvas-tab');
+  const codeText = document.getElementById('qr-tab-code-display');
+  const nameText = document.getElementById('invite-tab-space-name');
+
+  const joinUrl = `${window.location.origin}/join/${state.activeSpace.code}`;
+
+  if (canvas) renderQrToCanvas(canvas, joinUrl, 260);
+  if (codeText) codeText.textContent = state.activeSpace.code;
+  if (nameText) nameText.textContent = `Invite to ${state.activeSpace.name}`;
+}
+
+function initSettingsTab() {
+  if (!state.activeSpace) return;
+  const nameInput = document.getElementById('edit-space-name-tab');
+  const descInput = document.getElementById('edit-space-desc-tab');
+  if (nameInput) nameInput.value = state.activeSpace.name || '';
+  if (descInput) descInput.value = state.activeSpace.description || '';
+}
+
+export async function handleSaveSpaceSettingsFromTab() {
+  if (!state.activeSpace) return;
+  const nameInput = document.getElementById('edit-space-name-tab');
+  const descInput = document.getElementById('edit-space-desc-tab');
+  const name = nameInput ? nameInput.value.trim() : '';
+  const desc = descInput ? descInput.value.trim() : '';
+
+  if (!name) {
+    showToast('Space name cannot be empty', 'warning');
+    return;
+  }
+
+  try {
+    await updateSpaceSettings(state.activeSpace.id, { name, description: desc });
+    state.activeSpace.name = name;
+    state.activeSpace.description = desc;
+    renderSpaceHeader();
+    showToast('Space settings saved successfully!', 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to save space settings', 'error');
+  }
+}
+
+export function toggleAnnouncementComposer(show) {
+  const box = document.getElementById('announcement-inline-composer');
+  if (!box) return;
+  if (show === undefined) {
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  } else {
+    box.style.display = show ? 'block' : 'none';
+  }
+  if (box.style.display === 'block') {
+    document.getElementById('ann-title-input-inline')?.focus();
+  }
+}
+
+export async function handleCreateAnnouncementInline() {
+  const titleInput = document.getElementById('ann-title-input-inline');
+  const contentInput = document.getElementById('ann-content-input-inline');
+  const pinnedInput = document.getElementById('ann-pinned-input-inline');
+  const title = titleInput ? titleInput.value.trim() : '';
+  const content = contentInput ? contentInput.value.trim() : '';
+  const pinned = pinnedInput ? pinnedInput.checked : false;
+
+  if (!title || !content) {
+    showToast('Please enter both title and content.', 'warning');
+    return;
+  }
+
+  try {
+    await createAnnouncement(state.activeSpace.id, state.userProfile, { title, content, isPinned: pinned });
+    if (titleInput) titleInput.value = '';
+    if (contentInput) contentInput.value = '';
+    if (pinnedInput) pinnedInput.checked = false;
+    toggleAnnouncementComposer(false);
+    showToast('Announcement published!', 'success');
+  } catch (err) {
+    showToast(err.message || 'Failed to publish announcement', 'error');
   }
 }
 
@@ -872,18 +1118,18 @@ function renderMembersList() {
     const canManage = state.activeSpaceRole === 'admin' && !isMe;
 
     return `
-      <div class="member-card">
-        <div class="msg-avatar">
-          <img src="${getAvatarUrl(m.photoURL, m.displayName)}" class="avatar-img" alt=""/>
+      <div class="member-card" style="cursor: pointer;" onclick="window.HubbleNest.openUserCardModal('${m.userId}')">
+        <div class="msg-avatar" style="width: 42px; height: 42px;">
+          <img src="${getAvatarUrl(m.photoURL, m.displayName)}" class="avatar-img" alt="${escapeHtml(m.displayName)}"/>
         </div>
         <div class="member-info">
           <div class="member-name">${escapeHtml(m.displayName)} ${isMe ? '(You)' : ''}</div>
           <div class="member-role">${isAdmin ? '★ Administrator' : 'Member'}</div>
         </div>
-        <div style="display: flex; gap: 6px;">
+        <div style="display: flex; gap: 6px;" onclick="event.stopPropagation();">
           ${!isMe ? `
-            <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.startDirectChatWithUser('${m.userId}')" title="Send Private Message">
-              Message
+            <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.openUserCardModal('${m.userId}')" title="View Member Profile">
+              Profile
             </button>
           ` : ''}
           ${canManage ? `
@@ -991,7 +1237,260 @@ function initLinksListener() {
 }
 
 /* ==========================================================================
-   10. DIRECT MESSAGING (E2E ENCRYPTED)
+   10. PEOPLE DIRECTORY & USER PROFILE CARDS
+   ========================================================================== */
+
+export async function openPeopleView() {
+  state.currentView = 'people';
+  unsubscribeFromChat();
+
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-people')?.classList.add('active-view');
+
+  // Update nav links
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-people')?.classList.add('active');
+
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mob-nav-people')?.classList.add('active');
+
+  await loadPeopleDirectory();
+}
+
+export async function loadPeopleDirectory() {
+  const container = document.getElementById('people-directory-grid');
+  if (container) {
+    container.innerHTML = `<div style="grid-column: 1 / -1; padding: 48px 0; text-align: center; color: var(--text-muted);">Finding members on HubbleNest...</div>`;
+  }
+
+  const people = await fetchPeopleDirectory(state.currentUser?.uid);
+  state.people = people;
+  renderPeopleGrid(people);
+}
+
+function renderPeopleGrid(peopleList) {
+  const container = document.getElementById('people-directory-grid');
+  if (!container) return;
+
+  if (!peopleList || peopleList.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="grid-column: 1 / -1; padding: 60px 0;">
+        <div class="empty-state-icon">👥</div>
+        <h3 class="empty-state-title">No members found</h3>
+        <p class="empty-state-desc">Try searching with a different name or invite members with a Space code.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = peopleList.map(p => {
+    return `
+      <div class="person-card" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
+        <div class="person-header">
+          <div class="person-avatar">
+            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" />
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div class="person-name">${escapeHtml(p.displayName)}</div>
+            <div class="person-handle">@${escapeHtml(p.username)}</div>
+          </div>
+        </div>
+        <div class="person-bio">${escapeHtml(p.bio || 'HubbleNest community member')}</div>
+        <div class="person-footer">
+          <span style="font-size: 0.8rem; color: var(--text-muted);">HubbleNest Member</span>
+          <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); window.HubbleNest.openUserCardModal('${p.uid}')">
+            View Profile
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+export async function handlePeopleSearch(term) {
+  if (!state.currentUser) return;
+  const filtered = await searchPeopleDirectory(term, state.currentUser.uid);
+  renderPeopleGrid(filtered);
+}
+
+/**
+ * Open a Member's Profile Page (No Popups!) with Chat Request status
+ */
+export async function openMemberProfilePage(userId) {
+  if (!userId) return;
+  if (state.currentView !== 'member-profile') {
+    state.previousView = state.currentView;
+  }
+  state.currentView = 'member-profile';
+  unsubscribeFromChat();
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-member-profile')?.classList.add('active-view');
+
+  const pageContent = document.getElementById('page-member-profile-content');
+  if (pageContent) {
+    pageContent.innerHTML = `<div style="padding: 40px 0; text-align: center; color: var(--text-muted);">Loading member profile...</div>`;
+  }
+
+  const peerData = await fetchPublicUserCard(userId);
+  if (!peerData) {
+    if (pageContent) pageContent.innerHTML = `<div style="padding: 32px; text-align: center; color: var(--text-muted);">Member not found.</div>`;
+    return;
+  }
+
+  state.selectedUserCard = peerData;
+  const isMe = userId === state.currentUser?.uid;
+
+  // Check relationship & existing request status
+  let rel = null;
+  if (!isMe) {
+    rel = await getChatRelationship(state.currentUser?.uid, userId);
+  }
+
+  let statusBadgeHtml = '';
+  let actionsHtml = '';
+
+  if (isMe) {
+    statusBadgeHtml = `<div class="user-card-status-badge" style="background: rgba(59, 130, 246, 0.12); color: var(--accent-primary);">This is your profile</div>`;
+    actionsHtml = `
+      <button class="btn btn-primary" onclick="window.HubbleNest.openProfilePage()">
+        Edit My Profile & Settings
+      </button>
+    `;
+  } else if (rel && (rel.data?.status === 'accepted' || rel.direction === 'connected')) {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-connected">✓ Connected in Private Chat</div>`;
+    actionsHtml = `
+      <button class="btn btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${userId}')">
+        Open Private Chat
+      </button>
+    `;
+  } else if (rel && rel.data?.status === 'pending' && rel.direction === 'sent') {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">⏳ Chat Request Pending</div>`;
+    actionsHtml = `
+      <button class="btn btn-secondary" disabled style="opacity: 0.8; cursor: default;">
+        Request Pending
+      </button>
+      <button class="btn btn-ghost" style="color: var(--text-muted);" onclick="window.HubbleNest.cancelSentRequest('${rel.data.id}', '${userId}')">
+        Cancel Request
+      </button>
+    `;
+  } else if (rel && rel.data?.status === 'pending' && rel.direction === 'received') {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">✉ ${escapeHtml(peerData.displayName)} wants to chat with you</div>`;
+    actionsHtml = `
+      <button class="btn btn-primary" onclick="window.HubbleNest.handleAcceptRequest('${rel.data.id}')">
+        Accept Request
+      </button>
+      <button class="btn btn-secondary" onclick="window.HubbleNest.handleDeclineRequest('${rel.data.id}')">
+        Decline
+      </button>
+    `;
+  } else if (rel && rel.data?.status === 'declined') {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-declined">Request Declined</div>`;
+    actionsHtml = `
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">This member is not accepting chat requests right now.</p>
+    `;
+  } else {
+    actionsHtml = `
+      <button class="btn btn-primary" id="btn-request-to-chat" onclick="window.HubbleNest.handleSendChatRequest('${userId}')">
+        ✉ Request to Chat
+      </button>
+    `;
+  }
+
+  const profileCardHtml = `
+    <div class="user-card-avatar" style="width: 80px; height: 80px; margin: 0 auto 16px;">
+      <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" alt="${escapeHtml(peerData.displayName)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />
+    </div>
+    <div class="user-card-name" style="text-align: center; font-size: 1.4rem; font-weight: 700;">${escapeHtml(peerData.displayName)}</div>
+    <div class="user-card-handle" style="text-align: center; font-size: 0.9rem; color: var(--accent-primary); margin-bottom: 12px;">@${escapeHtml(peerData.username)}</div>
+    <div style="text-align: center; margin-bottom: 16px;">${statusBadgeHtml}</div>
+    <div class="user-card-bio" style="text-align: center; font-size: 0.95rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-surface-elevated); border-radius: var(--radius-md);">${escapeHtml(peerData.bio || 'HubbleNest community member')}</div>
+    <div class="user-card-actions" style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+      ${actionsHtml}
+    </div>
+  `;
+
+  if (pageContent) pageContent.innerHTML = profileCardHtml;
+  const modalContent = document.getElementById('user-card-modal-content');
+  if (modalContent) modalContent.innerHTML = profileCardHtml;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function openUserCardModal(userId) {
+  openMemberProfilePage(userId);
+}
+
+export function goBackFromMemberProfile() {
+  const prev = state.previousView || 'people';
+  if (prev === 'dashboard') loadDashboard();
+  else if (prev === 'space' && state.activeSpace) openSpace(state.activeSpace.id);
+  else if (prev === 'direct') openDirectMessagesView();
+  else openPeopleView();
+}
+
+export async function handleSendChatRequest(targetUserId) {
+  const btn = document.getElementById('btn-request-to-chat');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Sending request...';
+  }
+
+  try {
+    const peerData = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
+    await sendChatRequest(state.userProfile, peerData);
+    // Refresh the modal view to show pending state
+    await openUserCardModal(targetUserId);
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✉ Request to Chat';
+    }
+  }
+}
+
+export async function handleAcceptRequest(requestId) {
+  try {
+    const res = await acceptChatRequest(requestId, state.userProfile);
+    closeModal('modal-user-card');
+    if (res && res.conversation) {
+      openDirectMessagesView();
+      setTimeout(() => {
+        selectConversation(res.conversation.id, res.peer.uid);
+      }, 250);
+    }
+  } catch (err) {
+    console.error('Failed to accept request:', err);
+  }
+}
+
+export async function handleDeclineRequest(requestId) {
+  try {
+    await declineChatRequest(requestId);
+    closeModal('modal-user-card');
+  } catch (err) {
+    console.error('Failed to decline request:', err);
+  }
+}
+
+export async function cancelSentRequest(requestId, targetUserId) {
+  try {
+    await cancelChatRequest(requestId);
+    await openUserCardModal(targetUserId);
+  } catch (err) {
+    console.error('Failed to cancel request:', err);
+  }
+}
+
+export async function openDirectChatWithPeer(peerUserId) {
+  closeModal('modal-user-card');
+  const convId = getConversationId(state.currentUser.uid, peerUserId);
+  openDirectMessagesView();
+  setTimeout(() => {
+    selectConversation(convId, peerUserId);
+  }, 250);
+}
+
+/* ==========================================================================
+   11. PRIVATE DIRECT MESSAGING
    ========================================================================== */
 
 export async function openDirectMessagesView() {
@@ -999,11 +1498,17 @@ export async function openDirectMessagesView() {
   unsubscribeFromChat();
 
   document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
-  document.getElementById('view-direct-messages').classList.add('active-view');
+  document.getElementById('view-direct-messages')?.classList.add('active-view');
 
   // Update nav link
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.getElementById('nav-direct')?.classList.add('active');
+
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mob-nav-direct')?.classList.add('active');
+
+  // Render pending requests box
+  renderDirectRequests();
 
   // Subscribe to conversations
   subscribeToUserConversations(state.currentUser.uid, (convs) => {
@@ -1012,14 +1517,54 @@ export async function openDirectMessagesView() {
   });
 }
 
+function renderDirectRequests() {
+  const container = document.getElementById('direct-requests-container');
+  const countBadge = document.getElementById('direct-requests-count');
+  const listEl = document.getElementById('direct-requests-list');
+  if (!container || !listEl) return;
+
+  if (!state.incomingChatRequests || state.incomingChatRequests.length === 0) {
+    container.style.display = 'none';
+    if (countBadge) countBadge.textContent = '0';
+    return;
+  }
+
+  container.style.display = 'block';
+  if (countBadge) countBadge.textContent = state.incomingChatRequests.length;
+
+  listEl.innerHTML = state.incomingChatRequests.map(req => {
+    return `
+      <div class="direct-request-item">
+        <div class="direct-request-item-top" onclick="window.HubbleNest.openUserCardModal('${req.senderId}')" style="cursor: pointer;">
+          <div class="direct-request-avatar">
+            <img src="${getAvatarUrl(req.senderPhoto, req.senderName)}" alt="${escapeHtml(req.senderName)}" />
+          </div>
+          <div class="direct-request-info">
+            <div class="direct-request-name">${escapeHtml(req.senderName)}</div>
+            <div class="direct-request-handle">@${escapeHtml(req.senderUsername)}</div>
+          </div>
+        </div>
+        <div class="direct-request-actions">
+          <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleAcceptRequest('${req.id}')">
+            Accept
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.handleDeclineRequest('${req.id}')">
+            Decline
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderConversationsList() {
   const container = document.getElementById('direct-conv-list');
   if (!container) return;
 
   if (state.conversations.length === 0) {
     container.innerHTML = `
-      <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
-        No private conversations yet.<br>Click "+ New" to begin messaging a member.
+      <div style="padding: 24px 12px; text-align: center; color: var(--text-muted); font-size: 0.85rem; line-height: 1.5;">
+        No conversations yet.<br>Connect with members in the People directory to start chatting.
       </div>
     `;
     return;
@@ -1031,16 +1576,16 @@ function renderConversationsList() {
     const isActive = state.activeConversation?.id === conv.id;
 
     return `
-      <div class="nav-link ${isActive ? 'active' : ''}" onclick="window.HubbleNest.selectConversation('${conv.id}', '${peerUid}')">
-        <div class="msg-avatar" style="width: 28px; height: 28px;">
-          <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" class="avatar-img" alt=""/>
+      <div class="nav-link ${isActive ? 'active' : ''}" style="padding: 10px 12px; border-radius: var(--radius-md);" onclick="window.HubbleNest.selectConversation('${conv.id}', '${peerUid}')">
+        <div class="msg-avatar" style="width: 36px; height: 36px; flex-shrink: 0;">
+          <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" class="avatar-img" alt="${escapeHtml(peerData.displayName)}"/>
         </div>
         <div style="flex: 1; min-width: 0;">
-          <div style="font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <div style="font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
             ${escapeHtml(peerData.displayName)}
           </div>
-          <div style="font-size: 0.75rem; color: var(--text-muted);">
-            End-to-End Encrypted
+          <div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${conv.lastMessage ? '🔒 Private message' : 'Protected conversation'}
           </div>
         </div>
       </div>
@@ -1049,7 +1594,6 @@ function renderConversationsList() {
 }
 
 export async function selectConversation(convId, peerUid) {
-  // Fetch peer profile
   const peerSnap = await getDoc(doc(db, 'users', peerUid));
   if (!peerSnap.exists()) return;
 
@@ -1057,15 +1601,17 @@ export async function selectConversation(convId, peerUid) {
   state.activeDirectPeer = peerData;
   state.activeConversation = { id: convId };
 
-  // Update header
+  // Update header with peer's details
   const headerName = document.getElementById('direct-chat-peer-name');
-  const headerFingerprint = document.getElementById('direct-chat-peer-fingerprint');
+  const headerHandle = document.getElementById('direct-chat-peer-handle');
+  const headerAvatar = document.getElementById('direct-chat-peer-avatar');
   const emptyPlaceholder = document.getElementById('direct-chat-empty');
   const activeChatBox = document.getElementById('direct-chat-active');
 
   if (headerName) headerName.textContent = peerData.displayName || 'Member';
-  if (headerFingerprint) {
-    headerFingerprint.textContent = `E2E Security: ${getPublicKeyFingerprint(peerData.publicKeyJwk)}`;
+  if (headerHandle) headerHandle.textContent = `@${peerData.username || 'member'}`;
+  if (headerAvatar) {
+    headerAvatar.src = getAvatarUrl(peerData.photoURL, peerData.displayName);
   }
 
   if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
@@ -1073,7 +1619,7 @@ export async function selectConversation(convId, peerUid) {
 
   renderConversationsList();
 
-  // Subscribe to messages with local decryption
+  // Subscribe to messages with local client-side decryption
   subscribeToPrivateMessages(convId, state.userProfile, peerData, (messages) => {
     state.directMessages = messages;
     renderDirectMessages();
@@ -1084,18 +1630,41 @@ function renderDirectMessages() {
   const container = document.getElementById('direct-messages-feed');
   if (!container) return;
 
+  if (state.directMessages.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding: 40px 0;">
+        <div class="empty-state-icon">🔒</div>
+        <h4 class="empty-state-title">This conversation is private</h4>
+        <p class="empty-state-desc">Messages sent here can only be seen and read by you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}.</p>
+      </div>
+    `;
+    return;
+  }
+
   container.innerHTML = state.directMessages.map(msg => {
     const isOwn = msg.senderId === state.currentUser.uid;
     const decrypted = msg.decrypted || { text: '...' };
+    const senderPhoto = isOwn ? state.userProfile.photoURL : state.activeDirectPeer?.photoURL;
+    const senderName = isOwn ? state.userProfile.displayName : state.activeDirectPeer?.displayName;
 
     return `
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
+        <div class="msg-avatar" style="width: 32px; height: 32px;">
+          <img src="${getAvatarUrl(senderPhoto, senderName)}" class="avatar-img" alt="${escapeHtml(senderName || '')}" />
+        </div>
         <div class="msg-bubble-box">
           <div class="msg-bubble">
             ${escapeHtml(decrypted.text || '[Attachment]')}
+            ${isOwn ? `
+              <div class="msg-actions-hover">
+                <button class="btn-ghost msg-delete-action" style="padding: 2px 6px; color: var(--status-danger);" onclick="window.HubbleNest.deleteDirectMessage('${msg.id}')" title="Delete message">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                </button>
+              </div>
+            ` : ''}
           </div>
-          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; text-align: ${isOwn ? 'right' : 'left'};">
-            ${formatTimeAgo(msg.createdAt)} · 🔒 Encrypted
+          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; text-align: ${isOwn ? 'right' : 'left'};">
+            ${formatTimeAgo(msg.createdAt)} · 🔒 Private
           </div>
         </div>
       </div>
@@ -1103,6 +1672,15 @@ function renderDirectMessages() {
   }).join('');
 
   container.scrollTop = container.scrollHeight;
+}
+
+export async function deleteDirectMessage(msgId) {
+  if (!state.activeConversation || !msgId) return;
+  try {
+    await deletePrivateMessage(state.activeConversation.id, msgId);
+  } catch (err) {
+    showToast('Failed to delete message', 'error');
+  }
 }
 
 export async function handleSendDirectMessage() {
@@ -1118,23 +1696,66 @@ export async function handleSendDirectMessage() {
       attachments: []
     });
   } catch (err) {
-    showToast(err.message || 'Encryption transmission failed', 'error');
+    showToast(err.message || 'Unable to send message right now', 'error');
   }
 }
 
-export async function startDirectChatWithUser(targetUserId) {
-  const userSnap = await getDoc(doc(db, 'users', targetUserId));
-  if (!userSnap.exists()) {
-    showToast('Member not found', 'error');
-    return;
-  }
+/**
+ * Handle Profile Photo Upload in My Profile Modal
+ */
+export async function handleProfilePhotoUpload(file) {
+  if (!file) return;
 
-  const peerData = userSnap.data();
-  const conv = await getOrCreateConversation(state.userProfile, peerData);
-  openDirectMessagesView();
-  setTimeout(() => {
-    selectConversation(conv.id, targetUserId);
-  }, 200);
+  const statusEl = document.getElementById('profile-photo-upload-status');
+  const previewImg = document.getElementById('profile-edit-avatar-preview');
+  if (statusEl) statusEl.textContent = 'Uploading picture...';
+
+  try {
+    const photoURL = await uploadProfilePhoto(file, (percent, status) => {
+      if (statusEl) statusEl.textContent = `${status}`;
+    });
+
+    if (previewImg) previewImg.src = photoURL;
+    if (statusEl) {
+      statusEl.textContent = 'Picture uploaded ✓';
+      statusEl.style.color = 'var(--status-success)';
+    }
+
+    // Save directly to user profile
+    await updateUserProfile(state.currentUser.uid, { photoURL });
+    state.userProfile.photoURL = photoURL;
+
+    // Update topbar avatar
+    const topbarAvatar = document.getElementById('user-avatar-topbar');
+    if (topbarAvatar) topbarAvatar.src = photoURL;
+
+    showToast('Profile picture updated!', 'success');
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'Upload failed. Please try again.';
+      statusEl.style.color = 'var(--status-danger)';
+    }
+    showToast('Failed to upload picture. Please try another image.', 'error');
+  }
+}
+
+/**
+ * Handle Notification Click
+ */
+export function handleNotificationClick(notifId, spaceId) {
+  markNotificationAsRead(notifId);
+  const notif = state.notifications.find(n => n.id === notifId);
+  document.getElementById('notifications-dropdown-menu')?.classList.remove('menu-active');
+
+  if (notif?.type === 'chat_request' && notif.senderId) {
+    openUserCardModal(notif.senderId);
+  } else if (notif?.type === 'chat_request_accepted' && notif.senderId) {
+    openDirectChatWithPeer(notif.senderId);
+  } else if (notif?.type === 'private_message' && notif.senderId) {
+    openDirectChatWithPeer(notif.senderId);
+  } else if (spaceId) {
+    openSpace(spaceId);
+  }
 }
 
 /* ==========================================================================
@@ -1262,29 +1883,62 @@ export async function handleCodeSearch(code) {
 }
 
 /* ==========================================================================
-   14. CREATE SPACE HANDLER
+   14. CREATE SPACE HANDLERS (PAGE & MODAL COMPATIBLE)
    ========================================================================== */
 
-export async function handleCreateSpaceSubmit() {
-  const nameInput = document.getElementById('create-space-name');
-  const descInput = document.getElementById('create-space-desc');
-  const catInput = document.getElementById('create-space-category');
-  const typeInput = document.getElementById('create-space-type');
-  const expInput = document.getElementById('create-space-expiration');
-  const coverFileInput = document.getElementById('create-space-cover-file');
-  const submitBtn = document.getElementById('btn-submit-create-space');
+export function openCreateSpacePage() {
+  state.currentView = 'create-space';
+  unsubscribeFromChat();
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-create-space')?.classList.add('active-view');
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
 
-  if (!nameInput.value.trim()) {
+  const nameInput = document.getElementById('page-create-space-name');
+  if (nameInput) nameInput.value = '';
+  const descInput = document.getElementById('page-create-space-desc');
+  if (descInput) descInput.value = '';
+  const previewTitle = document.getElementById('create-preview-title');
+  if (previewTitle) previewTitle.textContent = 'New Space Name';
+  const previewDesc = document.getElementById('create-preview-desc');
+  if (previewDesc) previewDesc.textContent = 'Your space description will appear here.';
+  const previewImg = document.getElementById('create-preview-cover-img');
+  if (previewImg) previewImg.style.display = 'none';
+  const previewFallback = document.getElementById('create-preview-cover-fallback');
+  if (previewFallback) previewFallback.style.display = 'flex';
+  const fileInput = document.getElementById('page-create-space-cover-file');
+  if (fileInput) fileInput.value = '';
+  const coverPreview = document.getElementById('page-create-space-cover-preview');
+  if (coverPreview) coverPreview.style.display = 'none';
+  const coverPlaceholder = document.getElementById('page-create-space-cover-placeholder');
+  if (coverPlaceholder) coverPlaceholder.style.display = 'flex';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export async function handleCreateSpaceFromPage() {
+  const nameInput = document.getElementById('page-create-space-name');
+  const descInput = document.getElementById('page-create-space-desc');
+  const catInput = document.getElementById('page-create-space-category');
+  const typeInput = document.getElementById('page-create-space-type');
+  const expInput = document.getElementById('page-create-space-expiration');
+  const coverFileInput = document.getElementById('page-create-space-cover-file');
+  const submitBtn = document.getElementById('btn-submit-create-space-page');
+
+  if (!nameInput || !nameInput.value.trim()) {
     showToast('Space name is required.', 'warning');
+    nameInput?.focus();
     return;
   }
 
-  if (submitBtn) submitBtn.classList.add('btn-loading');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating Space...';
+  }
 
   try {
     let coverUrl = '';
     if (coverFileInput && coverFileInput.files && coverFileInput.files[0]) {
-      showToast('Uploading space cover to Cloudinary...', 'info');
+      showToast('Uploading space cover image...', 'info');
       const coverRes = await uploadToCloudinary(coverFileInput.files[0], null, 15);
       coverUrl = coverRes.url;
     }
@@ -1292,20 +1946,26 @@ export async function handleCreateSpaceSubmit() {
     const newSpace = await createSpace(state.currentUser, {
       name: nameInput.value.trim(),
       description: descInput ? descInput.value.trim() : '',
-      category: catInput ? catInput.value : 'Community',
+      category: catInput ? catInput.value : 'Classroom',
       type: typeInput ? typeInput.value : 'permanent',
       expiresAt: expInput && expInput.value ? expInput.value : null,
       imageURL: coverUrl
     });
 
-    closeModal('modal-create-space');
     showToast(`"${newSpace.name}" created!`, 'success');
     openSpace(newSpace.id);
   } catch (err) {
     showToast(err.message || 'Failed to create Space', 'error');
   } finally {
-    if (submitBtn) submitBtn.classList.remove('btn-loading');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Space';
+    }
   }
+}
+
+export async function handleCreateSpaceSubmit() {
+  return handleCreateSpaceFromPage();
 }
 
 /**
@@ -1313,7 +1973,7 @@ export async function handleCreateSpaceSubmit() {
  */
 export async function handleUpdateSpaceCover(file) {
   if (!file || !state.activeSpace) return;
-  showToast('Uploading new cover to Cloudinary...', 'info');
+  showToast('Uploading new cover image...', 'info');
   try {
     const res = await uploadToCloudinary(file, null, 15);
     await updateSpaceCover(state.activeSpace.id, res.url);
@@ -1326,7 +1986,187 @@ export async function handleUpdateSpaceCover(file) {
 }
 
 /* ==========================================================================
-   15. GLOBAL SEARCH
+   15. JOIN SPACE VIA CODE (PAGE & QUICK JOIN)
+   ========================================================================== */
+
+export function openJoinSpacePage() {
+  state.currentView = 'join-space';
+  unsubscribeFromChat();
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-join-space')?.classList.add('active-view');
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-join')?.classList.add('active');
+
+  const input = document.getElementById('page-join-code-input');
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 100);
+  }
+  const resultBox = document.getElementById('join-page-result-box');
+  if (resultBox) resultBox.style.display = 'none';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export async function handleQuickCodeJoin() {
+  const input = document.getElementById('dash-quick-join-input');
+  const code = input ? input.value.trim().toUpperCase() : '';
+  if (!code) {
+    showToast('Please enter a 6-character space code.', 'warning');
+    return;
+  }
+
+  showToast('Locating space...', 'info', 1200);
+  const foundSpace = await findSpaceByCode(code);
+  if (!foundSpace) {
+    showToast('No Space found matching this code.', 'error');
+    return;
+  }
+
+  const currentStatus = await getMembershipState(foundSpace.id, state.currentUser?.uid);
+  if (currentStatus === 'member' || currentStatus === 'admin') {
+    showToast(`Entering "${foundSpace.name}"...`, 'success', 1000);
+    openSpace(foundSpace.id);
+  } else {
+    openJoinSpacePage();
+    const joinInput = document.getElementById('page-join-code-input');
+    if (joinInput) joinInput.value = code;
+    await handleJoinPageCodeSearch(code);
+  }
+}
+
+export async function handleJoinPageCodeSearch(code) {
+  if (!code || !code.trim()) {
+    showToast('Please enter a Space code.', 'warning');
+    return;
+  }
+  const cleanCode = code.trim().toUpperCase();
+  showToast('Locating Space...', 'info', 1200);
+  const foundSpace = await findSpaceByCode(cleanCode);
+  const resultBox = document.getElementById('join-page-result-box');
+
+  if (!foundSpace) {
+    showToast('No Space found matching this code.', 'error');
+    if (resultBox) resultBox.style.display = 'none';
+    return;
+  }
+
+  const nameEl = document.getElementById('page-preview-space-name');
+  const descEl = document.getElementById('page-preview-space-desc');
+  const metaEl = document.getElementById('page-preview-space-meta');
+  const btn = document.getElementById('page-btn-request-join');
+
+  if (nameEl) nameEl.textContent = foundSpace.name;
+  if (descEl) descEl.textContent = foundSpace.description || 'Welcome to this private space.';
+  if (metaEl) {
+    metaEl.textContent = `${foundSpace.category} · ${foundSpace.memberCount || 1} members · ${foundSpace.type === 'temporary' ? 'Temporary' : 'Permanent'}`;
+  }
+
+  const currentStatus = await getMembershipState(foundSpace.id, state.currentUser?.uid);
+  if (btn) {
+    if (currentStatus === 'member' || currentStatus === 'admin') {
+      btn.textContent = 'Enter Space';
+      btn.disabled = false;
+      btn.onclick = () => openSpace(foundSpace.id);
+    } else if (currentStatus === 'pending') {
+      btn.textContent = 'Request Pending';
+      btn.disabled = true;
+    } else {
+      btn.textContent = 'Request to Join';
+      btn.disabled = false;
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = 'Requesting...';
+        await requestToJoinSpace(foundSpace.id, state.userProfile);
+        btn.textContent = 'Request Pending';
+      };
+    }
+  }
+
+  if (resultBox) {
+    resultBox.style.display = 'block';
+    resultBox.scrollIntoView({ behavior: 'smooth' });
+  }
+}
+
+/* ==========================================================================
+   16. PROFILE & SETTINGS PAGE (NO POPUPS)
+   ========================================================================== */
+
+export function openProfilePage() {
+  state.currentView = 'profile';
+  unsubscribeFromChat();
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-profile')?.classList.add('active-view');
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-profile')?.classList.add('active');
+
+  if (!state.userProfile) return;
+  const nameInput = document.getElementById('page-profile-name');
+  const handleInput = document.getElementById('page-profile-handle');
+  const bioInput = document.getElementById('page-profile-bio');
+  const avatarEl = document.getElementById('page-profile-avatar-preview');
+  const statusEl = document.getElementById('page-profile-photo-status');
+
+  if (nameInput) nameInput.value = state.userProfile.displayName || '';
+  if (handleInput) handleInput.value = `@${state.userProfile.username || 'user'}`;
+  if (bioInput) bioInput.value = state.userProfile.bio || '';
+  if (avatarEl) avatarEl.src = getAvatarUrl(state.userProfile.photoURL, state.userProfile.displayName);
+  if (statusEl) {
+    statusEl.textContent = 'Click to upload a new picture';
+    statusEl.style.color = 'var(--text-muted)';
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export async function handleSaveProfileFromPage() {
+  const name = document.getElementById('page-profile-name')?.value;
+  const bio = document.getElementById('page-profile-bio')?.value;
+  const { updateUserProfile } = await import('./profile.js');
+  await updateUserProfile(state.currentUser.uid, { displayName: name, bio });
+  state.userProfile.displayName = name;
+  state.userProfile.bio = bio;
+  setupAuthenticatedUI();
+  showToast('Profile updated successfully!', 'success');
+}
+
+export async function handleProfilePhotoUploadPage(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('page-profile-photo-status');
+  const previewImg = document.getElementById('page-profile-avatar-preview');
+  if (statusEl) statusEl.textContent = 'Uploading picture...';
+
+  try {
+    const photoURL = await uploadProfilePhoto(file, (percent, status) => {
+      if (statusEl) statusEl.textContent = `${status}`;
+    });
+
+    if (previewImg) previewImg.src = photoURL;
+    if (statusEl) {
+      statusEl.textContent = 'Picture uploaded ✓';
+      statusEl.style.color = 'var(--status-success)';
+    }
+
+    await updateUserProfile(state.currentUser.uid, { photoURL });
+    state.userProfile.photoURL = photoURL;
+    const topbarAvatar = document.getElementById('user-avatar-topbar');
+    if (topbarAvatar) topbarAvatar.src = photoURL;
+    const heroAvatar = document.getElementById('dash-hero-avatar');
+    if (heroAvatar) heroAvatar.src = photoURL;
+
+    showToast('Profile picture updated!', 'success');
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'Upload failed. Try again.';
+      statusEl.style.color = 'var(--status-danger)';
+    }
+    showToast('Failed to upload picture.', 'error');
+  }
+}
+
+/* ==========================================================================
+   17. GLOBAL SEARCH
    ========================================================================== */
 
 export async function handleSearchInput(term) {
@@ -1371,13 +2211,56 @@ export async function handleSearchInput(term) {
    ========================================================================== */
 
 window.HubbleNest = {
-  // Navigation
+  // Navigation & Pages (No Popups!)
+  showLandingPage,
+  openAuth: (mode) => showAuthView(mode),
+  scrollToSection: (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  },
   loadDashboard,
   openSpace,
   switchSpaceTab,
   openDirectMessagesView,
+  openPeopleView,
 
-  // Auth & Signup
+  // Dedicated Pages (Replacing intrusive popups)
+  openCreateSpacePage,
+  openJoinSpacePage,
+  openProfilePage,
+  openMemberProfilePage,
+  goBackFromMemberProfile,
+  handleQuickCodeJoin,
+  handleJoinPageCodeSearch,
+  handleCreateSpaceFromPage,
+  handleSaveProfileFromPage,
+  handleProfilePhotoUploadPage,
+
+  // Backward compatibility aliases
+  openCreateSpaceModal: openCreateSpacePage,
+  openJoinModal: openJoinSpacePage,
+  openProfileModal: openProfilePage,
+  openUserCardModal: openMemberProfilePage,
+  openAdminSettingsModal: () => switchSpaceTab('settings'),
+  openQrModal: () => switchSpaceTab('invite'),
+  openNewAnnouncementModal: () => toggleAnnouncementComposer(true),
+
+  // People Directory & Chat Requests
+  loadPeopleDirectory,
+  handlePeopleSearch,
+  handleSendChatRequest,
+  handleAcceptRequest,
+  handleDeclineRequest,
+  cancelSentRequest,
+  openDirectChatWithPeer,
+  handleProfilePhotoUpload,
+
+  // Landing Page & Auth
+  showLandingPage,
+  showAuthView,
+  handleHeroCodeJoin,
+  handleLandingCodeJoin,
+  setupAuthenticatedUI,
   showLoginCard,
   showSignupCard,
   nextSignupStep,
@@ -1395,40 +2278,43 @@ window.HubbleNest = {
   logoutUser,
 
   // Spaces
-  openCreateSpaceModal: () => openModal('modal-create-space'),
   handleCreateSpaceSubmit,
-  openJoinModal: () => openModal('modal-join-space'),
   handleCodeSearch,
-  openQrModal,
   downloadSpaceQr,
   copySpaceJoinLink,
   handleUpdateSpaceCover,
+  handleSaveSpaceSettingsFromTab,
 
-  // Chat
+  // Chat & Message Deletion
   handleSendMessage,
   startReply,
   cancelReply,
   toggleReaction: (msgId, emoji) => toggleMessageReaction(state.activeSpace.id, msgId, emoji, state.currentUser.uid),
   deleteMessage: (msgId) => deleteSpaceMessage(state.activeSpace.id, msgId),
+  deleteDirectMessage,
   triggerChatAttachmentUpload,
 
   // Direct Messages
   selectConversation,
   handleSendDirectMessage,
-  startDirectChatWithUser,
+
+  // Notifications
+  handleNotificationClick,
 
   // Files
   handleSpaceFileUpload,
   deleteFile: (fileId) => deleteSpaceFile(state.activeSpace.id, fileId),
 
-  // Announcements
-  openNewAnnouncementModal: () => openModal('modal-create-announcement'),
+  // Announcements (Inline)
+  toggleAnnouncementComposer,
+  handleCreateAnnouncementInline,
   handleCreateAnnouncement: async () => {
-    const title = document.getElementById('ann-title-input').value;
-    const content = document.getElementById('ann-content-input').value;
-    const pinned = document.getElementById('ann-pinned-input').checked;
+    const title = document.getElementById('ann-title-input')?.value || document.getElementById('ann-title-input-inline')?.value;
+    const content = document.getElementById('ann-content-input')?.value || document.getElementById('ann-content-input-inline')?.value;
+    const pinned = document.getElementById('ann-pinned-input')?.checked || document.getElementById('ann-pinned-input-inline')?.checked;
     await createAnnouncement(state.activeSpace.id, state.userProfile, { title, content, isPinned: pinned });
     closeModal('modal-create-announcement');
+    toggleAnnouncementComposer(false);
   },
   togglePin: (id, curr) => togglePinAnnouncement(state.activeSpace.id, id, curr),
   deleteAnn: (id) => deleteAnnouncement(state.activeSpace.id, id),
@@ -1446,15 +2332,9 @@ window.HubbleNest = {
   },
 
   // Space Admin Controls
-  openAdminSettingsModal: () => {
-    if (!state.activeSpace) return;
-    document.getElementById('edit-space-name').value = state.activeSpace.name || '';
-    document.getElementById('edit-space-desc').value = state.activeSpace.description || '';
-    openModal('modal-space-settings');
-  },
   handleSaveSpaceSettings: async () => {
-    const name = document.getElementById('edit-space-name').value;
-    const desc = document.getElementById('edit-space-desc').value;
+    const name = document.getElementById('edit-space-name')?.value || document.getElementById('edit-space-name-tab')?.value;
+    const desc = document.getElementById('edit-space-desc')?.value || document.getElementById('edit-space-desc-tab')?.value;
     await updateSpaceSettings(state.activeSpace.id, { name, description: desc });
     state.activeSpace.name = name;
     state.activeSpace.description = desc;
@@ -1483,7 +2363,7 @@ window.HubbleNest = {
   handleSelectSearchResult: (type, id) => {
     closeModal('modal-global-search');
     if (type === 'space') openSpace(id);
-    else if (type === 'user') startDirectChatWithUser(id);
+    else if (type === 'user') openMemberProfilePage(id);
   },
 
   // Profile & Theme
@@ -1496,27 +2376,11 @@ window.HubbleNest = {
     const menu = document.getElementById('notifications-dropdown-menu');
     if (menu) menu.classList.toggle('menu-active');
   },
-  openProfileModal: () => {
-    if (!state.userProfile) return;
-    document.getElementById('profile-edit-name').value = state.userProfile.displayName || '';
-    document.getElementById('profile-edit-bio').value = state.userProfile.bio || '';
-    document.getElementById('profile-fingerprint-display').textContent = getPublicKeyFingerprint(state.userProfile.publicKeyJwk);
-    openModal('modal-user-profile');
-  },
-  handleSaveProfile: async () => {
-    const name = document.getElementById('profile-edit-name').value;
-    const bio = document.getElementById('profile-edit-bio').value;
-    const { updateUserProfile } = await import('./profile.js');
-    await updateUserProfile(state.currentUser.uid, { displayName: name, bio });
-    state.userProfile.displayName = name;
-    state.userProfile.bio = bio;
-    setupAuthenticatedUI();
-    closeModal('modal-user-profile');
-  },
+  handleSaveProfile: handleSaveProfileFromPage,
 
-  // Modals
+  // Modals / Helpers
   closeModal: (id) => closeModal(id),
-  copyLinkUrl: (url) => copyToClipboard(url, 'Link copied'),
+  copyLinkUrl: (url) => copyToClipboard(url, 'Copied to clipboard'),
   copySpaceCode: () => {
     if (state.activeSpace?.code) copyToClipboard(state.activeSpace.code, 'Space code copied');
   }

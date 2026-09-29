@@ -17,6 +17,7 @@ import {
   setDoc, 
   addDoc, 
   updateDoc, 
+  deleteDoc,
   query, 
   where, 
   orderBy, 
@@ -191,13 +192,13 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
   }
 
   if (!peerPubJwk) {
-    throw new Error(`${peerUser.displayName || 'This member'} has not yet generated their encryption keys. Once they sign in, you can message them securely.`);
+    throw new Error(`${peerUser.displayName || 'This member'} has not set up secure messaging yet. You can chat once they sign in.`);
   }
 
   // 3. Encrypt payload locally in browser
   const payloadToEncrypt = {
     text: text ? text.trim() : '',
-    attachments: attachments, // Cloudinary URLs
+    attachments: attachments,
     replyTo: replyTo,
     timestamp: Date.now()
   };
@@ -238,8 +239,8 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
     await addDoc(collection(db, 'notifications'), {
       userId: peerUser.uid,
       type: 'private_message',
-      title: 'New Encrypted Message',
-      body: `You received an encrypted message from ${currentUser.displayName}.`,
+      title: 'New Private Message',
+      body: `You received a private message from ${currentUser.displayName || 'a member'}.`,
       senderId: currentUser.uid,
       conversationId: convId,
       isRead: false,
@@ -251,3 +252,18 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
 
   return messageDoc;
 }
+
+/**
+ * Delete a Private Message (Sender action)
+ */
+export async function deletePrivateMessage(convId, messageId) {
+  try {
+    const msgRef = doc(db, 'conversations', convId, 'messages', messageId);
+    await deleteDoc(msgRef);
+    showToast('Message deleted', 'info');
+  } catch (err) {
+    console.error('Delete private message error:', err);
+    showToast('Could not delete message', 'error');
+  }
+}
+
