@@ -11,8 +11,18 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isSupportSpace(spaceId) {
+      return (exists(/databases/$(database)/documents/spaces/$(spaceId)) &&
+        (get(/databases/$(database)/documents/spaces/$(spaceId)).data.codeUpper == 'HN-JM96Q7' ||
+         get(/databases/$(database)/documents/spaces/$(spaceId)).data.isOfficialSupport == true ||
+         spaceId == 'hubblenest-support'));
+    }
+
     function isSpaceMember(spaceId) {
-      return isAuthenticated() && exists(/databases/$(database)/documents/spaces/$(spaceId)/members/$(request.auth.uid));
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/spaces/$(spaceId)/members/$(request.auth.uid)) ||
+        isSupportSpace(spaceId)
+      );
     }
 
     function isSpaceAdmin(spaceId) {
@@ -36,14 +46,15 @@ service cloud.firestore {
     match /spaces/{spaceId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update: if isSpaceAdmin(spaceId);
+      allow update: if isSpaceAdmin(spaceId) || (isSupportSpace(spaceId) && isAuthenticated());
       allow delete: if isSpaceAdmin(spaceId);
 
       // Members subcollection
       match /members/{memberId} {
         allow read: if isAuthenticated();
-        // Space admin can add/modify/remove members, or user can remove themselves (leave)
-        allow create, update: if isSpaceAdmin(spaceId);
+        // Space admin can add/modify/remove members, or authenticated user can add their own membership for the support space
+        allow create: if isSpaceAdmin(spaceId) || (isUser(memberId) && isSupportSpace(spaceId));
+        allow update: if isSpaceAdmin(spaceId);
         allow delete: if isSpaceAdmin(spaceId) || isUser(memberId);
       }
 

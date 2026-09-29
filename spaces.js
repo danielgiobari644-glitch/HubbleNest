@@ -86,31 +86,184 @@ export async function createSpace(user, spaceData) {
   return newSpace;
 }
 
+export const OFFICIAL_SUPPORT_CODE = 'HN-JM96Q7';
+export const OFFICIAL_SUPPORT_SPACE_ID = 'hubblenest-support';
+
+/**
+ * Ensures the official HubbleNest Support & Community Space exists in Firestore.
+ */
+export async function ensureOfficialSupportSpace() {
+  try {
+    const spaceRef = doc(db, 'spaces', OFFICIAL_SUPPORT_SPACE_ID);
+    const snap = await getDoc(spaceRef);
+    if (snap.exists()) {
+      return snap.data();
+    }
+
+    // Also check if any space already has this code
+    const q = query(collection(db, 'spaces'), where('codeUpper', '==', OFFICIAL_SUPPORT_CODE));
+    const codeSnap = await getDocs(q);
+    if (!codeSnap.empty) {
+      return codeSnap.docs[0].data();
+    }
+
+    // Create the official support space
+    const officialSpace = {
+      id: OFFICIAL_SUPPORT_SPACE_ID,
+      name: 'HubbleNest Help & Community',
+      nameLower: 'hubblenest help & community',
+      description: 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.',
+      imageURL: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+      category: 'Official Support',
+      type: 'permanent',
+      expiresAt: null,
+      code: OFFICIAL_SUPPORT_CODE,
+      codeUpper: OFFICIAL_SUPPORT_CODE,
+      isOfficialSupport: true,
+      createdBy: 'hubblenest-team',
+      createdAt: serverTimestamp(),
+      memberCount: 1,
+      settings: {
+        whoCanPost: 'all',
+        whoCanUpload: 'all',
+        maxFileSizeMB: 100
+      }
+    };
+
+    await setDoc(spaceRef, officialSpace);
+    return officialSpace;
+  } catch (err) {
+    console.warn('ensureOfficialSupportSpace warning:', err);
+    return {
+      id: OFFICIAL_SUPPORT_SPACE_ID,
+      name: 'HubbleNest Help & Community',
+      description: 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.',
+      imageURL: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+      category: 'Official Support',
+      type: 'permanent',
+      code: OFFICIAL_SUPPORT_CODE,
+      codeUpper: OFFICIAL_SUPPORT_CODE,
+      isOfficialSupport: true,
+      memberCount: 1
+    };
+  }
+}
+
+/**
+ * Automatically & idempotently ensures a user is a member of the compulsory HubbleNest Support space.
+ * If user is not already a member -> creates membership.
+ * If user is already a member -> does nothing.
+ */
+export async function ensureUserSupportMembership(user) {
+  if (!user || (!user.uid && !user.id)) return null;
+  const uid = user.uid || user.id;
+
+  try {
+    const space = await ensureOfficialSupportSpace();
+    const spaceId = space?.id || OFFICIAL_SUPPORT_SPACE_ID;
+
+    const memberRef = doc(db, 'spaces', spaceId, 'members', uid);
+    const memberSnap = await getDoc(memberRef);
+
+    if (!memberSnap.exists()) {
+      await setDoc(memberRef, {
+        userId: uid,
+        displayName: user.displayName || 'HubbleNest Member',
+        username: user.username || 'member',
+        photoURL: user.photoURL || '',
+        role: 'member',
+        isOfficialSupport: true,
+        joinedAt: serverTimestamp()
+      });
+
+      try {
+        await updateDoc(doc(db, 'spaces', spaceId), {
+          memberCount: increment(1)
+        });
+      } catch (e) {}
+    }
+
+    return space;
+  } catch (err) {
+    console.warn('ensureUserSupportMembership warning:', err);
+    return null;
+  }
+}
+
 /**
  * Query spaces where the user is an approved member
  */
-export async function fetchUserSpaces(userId) {
+export async function fetchUserSpaces(userId, userProfile) {
   try {
-    // In Firestore, get all spaces and check membership subcollections
-    // For small-medium collections, query spaces
+    // Automatically ensure the compulsory support space membership
+    if (userId) {
+      await ensureUserSupportMembership(userProfile || { uid: userId });
+    }
+
     const q = query(collection(db, 'spaces'), orderBy('createdAt', 'desc'));
     const snap = await getDocs(q);
     const spaces = [];
+    let hasOfficialSupport = false;
 
     for (const d of snap.docs) {
       const sp = d.data();
-      const memberDoc = await getDoc(doc(db, 'spaces', sp.id, 'members', userId));
-      if (memberDoc.exists()) {
+      const isOfficial = sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.isOfficialSupport === true || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
+
+      if (isOfficial) {
+        hasOfficialSupport = true;
         spaces.push({
           ...sp,
-          userRole: memberDoc.data().role || 'member'
+          isOfficialSupport: true,
+          userRole: sp.createdBy === userId ? 'admin' : 'member'
         });
+        continue;
+      }
+
+      if (userId) {
+        const memberDoc = await getDoc(doc(db, 'spaces', sp.id, 'members', userId));
+        if (memberDoc.exists()) {
+          spaces.push({
+            ...sp,
+            userRole: memberDoc.data().role || 'member'
+          });
+        }
       }
     }
+
+    // If official support space was not found in spaces collection snapshot, ensure and prepend it
+    if (!hasOfficialSupport) {
+      const officialSp = await ensureOfficialSupportSpace();
+      spaces.unshift({
+        ...officialSp,
+        isOfficialSupport: true,
+        userRole: 'member'
+      });
+    } else {
+      // Sort so official support space is ALWAYS at the very top
+      spaces.sort((a, b) => {
+        if (a.isOfficialSupport || a.codeUpper === OFFICIAL_SUPPORT_CODE) return -1;
+        if (b.isOfficialSupport || b.codeUpper === OFFICIAL_SUPPORT_CODE) return 1;
+        return 0;
+      });
+    }
+
     return spaces;
   } catch (err) {
     console.error('Fetch user spaces error:', err);
-    return [];
+    // Return at least the official support space so the user never gets an empty/broken dashboard
+    return [{
+      id: OFFICIAL_SUPPORT_SPACE_ID,
+      name: 'HubbleNest Help & Community',
+      description: 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.',
+      imageURL: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+      category: 'Official Support',
+      type: 'permanent',
+      code: OFFICIAL_SUPPORT_CODE,
+      codeUpper: OFFICIAL_SUPPORT_CODE,
+      isOfficialSupport: true,
+      userRole: 'member',
+      memberCount: 1
+    }];
   }
 }
 
@@ -119,6 +272,13 @@ export async function fetchUserSpaces(userId) {
  */
 export async function findSpaceByCode(code) {
   const cleanCode = code.trim().toUpperCase();
+
+  // If looking for the compulsory support space, ensure it exists
+  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
+    const supportSpace = await ensureOfficialSupportSpace();
+    return supportSpace;
+  }
+
   const q = query(collection(db, 'spaces'), where('codeUpper', '==', cleanCode));
   const snap = await getDocs(q);
   if (snap.empty) {
@@ -133,6 +293,20 @@ export async function findSpaceByCode(code) {
 export async function getMembershipState(spaceId, userId) {
   if (!userId) return 'none';
   try {
+    // Check if this space is the compulsory official support space
+    if (spaceId === OFFICIAL_SUPPORT_SPACE_ID) {
+      return 'member';
+    }
+
+    const spaceRef = doc(db, 'spaces', spaceId);
+    const spaceSnap = await getDoc(spaceRef);
+    if (spaceSnap.exists()) {
+      const spData = spaceSnap.data();
+      if (spData.codeUpper === OFFICIAL_SUPPORT_CODE || spData.isOfficialSupport === true) {
+        return spData.createdBy === userId ? 'admin' : 'member';
+      }
+    }
+
     const memberDoc = await getDoc(doc(db, 'spaces', spaceId, 'members', userId));
     if (memberDoc.exists()) {
       return memberDoc.data().role === 'admin' ? 'admin' : 'member';

@@ -33,7 +33,10 @@ import {
   extendSpaceExpiration, 
   updateSpaceSettings, 
   updateSpaceCover,
-  deleteSpace 
+  deleteSpace,
+  ensureUserSupportMembership,
+  OFFICIAL_SUPPORT_CODE,
+  OFFICIAL_SUPPORT_SPACE_ID
 } from './spaces.js';
 
 import { 
@@ -187,6 +190,14 @@ onAuthStateChanged(auth, async (user) => {
         photoURL: user.photoURL || ''
       };
     }
+
+    // Compulsory official support space auto-membership
+    try {
+      await ensureUserSupportMembership(state.userProfile);
+    } catch (err) {
+      console.warn('Support space membership sync:', err);
+    }
+
     setupAuthenticatedUI();
     loadDashboard();
     subscribeNotifications();
@@ -267,7 +278,7 @@ export function showLandingPage() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-export function showAuthView(mode = 'signup') {
+export function showAuthView(mode = 'entry') {
   const topbar = document.getElementById('main-topbar');
   const appContainer = document.getElementById('app-container');
   const authContainer = document.getElementById('auth-container');
@@ -280,10 +291,22 @@ export function showAuthView(mode = 'signup') {
 
   if (mode === 'signup') {
     showSignupCard();
-  } else {
+  } else if (mode === 'login') {
     showLoginCard();
+  } else {
+    showAuthEntryCard();
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function showAuthEntryCard() {
+  const entryCard = document.getElementById('card-auth-entry');
+  const loginCard = document.getElementById('card-login');
+  const signupCard = document.getElementById('card-signup');
+
+  if (entryCard) entryCard.style.display = 'block';
+  if (loginCard) loginCard.style.display = 'none';
+  if (signupCard) signupCard.style.display = 'none';
 }
 
 export function handleHeroCodeJoin() {
@@ -305,27 +328,59 @@ function processLandingCode(rawCode) {
   }
   const cleanCode = rawCode.startsWith('HN-') ? rawCode : `HN-${rawCode}`;
   
+  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
+    if (state.currentUser) {
+      ensureUserSupportMembership(state.currentUser).then(() => {
+        openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+      });
+    } else {
+      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
+      showToast('Official HubbleNest Space! Sign in or create an account to enter.', 'info', 5000);
+      showAuthView('entry');
+    }
+    return;
+  }
+
   if (state.currentUser) {
     handleCodeSearch(cleanCode);
   } else {
     sessionStorage.setItem('pendingJoinCode', cleanCode);
     showToast(`Code ${cleanCode} saved! Sign in or create an account to enter this Space.`, 'info', 5000);
-    showAuthView('signup');
+    showAuthView('entry');
   }
 }
 
-function checkUrlJoinParam() {
+async function checkUrlJoinParam() {
   const pendingCode = sessionStorage.getItem('pendingJoinCode');
   if (pendingCode) {
     sessionStorage.removeItem('pendingJoinCode');
+    const clean = pendingCode.trim().toUpperCase();
+    if (clean === OFFICIAL_SUPPORT_CODE) {
+      if (state.currentUser) {
+        await ensureUserSupportMembership(state.currentUser);
+        openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+        return;
+      }
+    }
     handleCodeSearch(pendingCode);
     return;
   }
 
   const path = window.location.pathname;
   if (path.startsWith('/join/')) {
-    const code = path.replace('/join/', '').trim();
+    const code = path.replace('/join/', '').trim().toUpperCase();
     if (code) {
+      if (code === OFFICIAL_SUPPORT_CODE) {
+        if (state.currentUser) {
+          await ensureUserSupportMembership(state.currentUser);
+          openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+          return;
+        } else {
+          sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
+          showAuthView('entry');
+          return;
+        }
+      }
       handleCodeSearch(code);
     }
   }
@@ -421,14 +476,22 @@ export function prevSignupStep() {
   }
 }
 
-function showLoginCard() {
-  document.getElementById('card-signup').style.display = 'none';
-  document.getElementById('card-login').style.display = 'block';
+export function showLoginCard() {
+  const entry = document.getElementById('card-auth-entry');
+  const signup = document.getElementById('card-signup');
+  const login = document.getElementById('card-login');
+  if (entry) entry.style.display = 'none';
+  if (signup) signup.style.display = 'none';
+  if (login) login.style.display = 'block';
 }
 
-function showSignupCard() {
-  document.getElementById('card-login').style.display = 'none';
-  document.getElementById('card-signup').style.display = 'block';
+export function showSignupCard() {
+  const entry = document.getElementById('card-auth-entry');
+  const login = document.getElementById('card-login');
+  const signup = document.getElementById('card-signup');
+  if (entry) entry.style.display = 'none';
+  if (login) login.style.display = 'none';
+  if (signup) signup.style.display = 'block';
   resetSignupSteps();
 }
 
@@ -537,9 +600,44 @@ function renderSpacesGrid() {
   }
 
   container.innerHTML = filtered.map(sp => {
+    const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
     const expInfo = sp.type === 'temporary' ? formatExpiration(sp.expiresAt) : null;
     const coverUrl = sp.imageURL || '';
     const isAdmin = sp.userRole === 'admin';
+
+    if (isOfficial) {
+      return `
+        <div class="space-card official-space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
+          <div class="space-card-cover" style="position: relative;">
+            ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name || 'HubbleNest Help & Community')}"/>` : `
+              <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, #3b82f6 0%, #1e1b4b 100%); color: #ffffff; font-size: 2.2rem; font-weight: 800;">
+                HN
+              </div>
+            `}
+            <div style="position: absolute; bottom: 8px; left: 12px; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); padding: 3px 10px; border-radius: var(--radius-full); border: 1px solid rgba(59, 130, 246, 0.4); font-size: 0.72rem; font-weight: 700; color: #93c5fd; display: flex; align-items: center; gap: 6px;">
+              <span style="color: #60a5fa;">✦</span> Official Community & Support
+            </div>
+          </div>
+          <div class="space-card-body">
+            <div class="space-card-meta">
+              <span class="official-pill">✦ HubbleNest Official</span>
+              <span>·</span>
+              <span>Questions & Help</span>
+              <span>·</span>
+              <span>${sp.memberCount || 1} members</span>
+            </div>
+            <h4 class="space-card-title">${escapeHtml(sp.name || 'HubbleNest Help & Community')}</h4>
+            <p class="space-card-desc">${escapeHtml(sp.description || 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.')}</p>
+            <div class="space-card-footer">
+              <span class="code-chip official-code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)}')">${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)} 📋</span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="space-card-btn-enter official-btn-enter">Open Community →</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
 
     return `
       <div class="space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
@@ -582,11 +680,18 @@ export async function openSpace(spaceId) {
   document.getElementById('view-space-detail').classList.add('active-view');
 
   // Find space details
-  const spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
+  let spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
   if (!spaceSnap.exists()) {
-    showToast('Space not found', 'error');
-    loadDashboard();
-    return;
+    // If opening official support space, ensure it
+    if (spaceId === OFFICIAL_SUPPORT_SPACE_ID) {
+      await ensureOfficialSupportSpace();
+      spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
+    }
+    if (!spaceSnap.exists()) {
+      showToast('Space not found', 'error');
+      loadDashboard();
+      return;
+    }
   }
 
   state.activeSpace = { id: spaceSnap.id, ...spaceSnap.data() };
@@ -598,6 +703,7 @@ export async function openSpace(spaceId) {
 
 function renderSpaceHeader() {
   const sp = state.activeSpace;
+  const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
   const titleEl = document.getElementById('space-detail-name');
   const descEl = document.getElementById('space-detail-desc');
   const metaEl = document.getElementById('space-detail-meta');
@@ -611,13 +717,23 @@ function renderSpaceHeader() {
 
   const exp = sp.type === 'temporary' ? formatExpiration(sp.expiresAt) : null;
   if (metaEl) {
-    metaEl.innerHTML = `
-      <span>${escapeHtml(sp.category)}</span>
-      <span>·</span>
-      <span>${sp.memberCount || 1} members</span>
-      <span>·</span>
-      ${exp ? `<span style="color: ${exp.urgent ? 'var(--status-danger)' : 'inherit'}; font-weight: 500;">${exp.text}</span>` : `<span>Permanent</span>`}
-    `;
+    if (isOfficial) {
+      metaEl.innerHTML = `
+        <span class="official-pill">✦ HubbleNest Official</span>
+        <span>·</span>
+        <span>Questions, Help & Feedback</span>
+        <span>·</span>
+        <span>${sp.memberCount || 1} members</span>
+      `;
+    } else {
+      metaEl.innerHTML = `
+        <span>${escapeHtml(sp.category)}</span>
+        <span>·</span>
+        <span>${sp.memberCount || 1} members</span>
+        <span>·</span>
+        ${exp ? `<span style="color: ${exp.urgent ? 'var(--status-danger)' : 'inherit'}; font-weight: 500;">${exp.text}</span>` : `<span>Permanent</span>`}
+      `;
+    }
   }
 
   if (coverEl) {
@@ -1836,6 +1952,20 @@ export async function handleCodeSearch(code) {
     return;
   }
 
+  const cleanCode = code.trim().toUpperCase();
+  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
+    closeModal('modal-join-space');
+    closeModal('modal-space-preview');
+    if (state.currentUser) {
+      await ensureUserSupportMembership(state.currentUser);
+      openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+    } else {
+      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
+      showAuthView('entry');
+    }
+    return;
+  }
+
   showToast('Locating Space...', 'info', 1500);
   const foundSpace = await findSpaceByCode(code);
 
@@ -2041,6 +2171,18 @@ export async function handleJoinPageCodeSearch(code) {
     return;
   }
   const cleanCode = code.trim().toUpperCase();
+
+  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
+    if (state.currentUser) {
+      await ensureUserSupportMembership(state.currentUser);
+      openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+    } else {
+      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
+      showAuthView('entry');
+    }
+    return;
+  }
+
   showToast('Locating Space...', 'info', 1200);
   const foundSpace = await findSpaceByCode(cleanCode);
   const resultBox = document.getElementById('join-page-result-box');
@@ -2258,6 +2400,7 @@ window.HubbleNest = {
   // Landing Page & Auth
   showLandingPage,
   showAuthView,
+  showAuthEntryCard,
   handleHeroCodeJoin,
   handleLandingCodeJoin,
   setupAuthenticatedUI,

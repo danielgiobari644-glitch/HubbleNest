@@ -3516,6 +3516,62 @@ img, video {
   }
 }
 
+/* Official HubbleNest Compulsory Support Space Styling */
+.official-space-card {
+  border: 1px solid rgba(59, 130, 246, 0.4) !important;
+  background: linear-gradient(145deg, rgba(30, 41, 59, 0.85), rgba(15, 23, 42, 0.95)) !important;
+  box-shadow: 0 4px 20px -2px rgba(59, 130, 246, 0.18), 0 0 0 1px rgba(99, 102, 241, 0.12) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.official-space-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
+  z-index: 2;
+}
+
+.official-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.official-code-chip {
+  background: rgba(59, 130, 246, 0.15) !important;
+  color: #93c5fd !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+.official-btn-enter {
+  color: #60a5fa !important;
+  font-weight: 700 !important;
+}
+
+/* Authentication Choice Entry Screen */
+.auth-choice-card {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.auth-choice-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.25);
+}
+
 
 
 

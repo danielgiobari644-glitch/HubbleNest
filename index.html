@@ -120,8 +120,6 @@
             <a href="#sanctuaries" class="landing-nav-link">Sanctuaries</a>
             <a href="#showcase" class="landing-nav-link">Connectivity</a>
             <a href="#how-it-works" class="landing-nav-link">How It Works</a>
-            <a href="#architecture" class="landing-nav-link">Architecture</a>
-            <a href="#security" class="landing-nav-link">Privacy & E2EE</a>
             <a href="#join-space-section" class="landing-nav-link">Have a Code?</a>
           </div>
 
@@ -132,7 +130,7 @@
             <button class="btn btn-secondary btn-landing-signin" onclick="window.HubbleNest.showAuthView('login')">
               Sign In
             </button>
-            <button class="btn btn-primary btn-landing-getstarted" onclick="window.HubbleNest.showAuthView('signup')">
+            <button class="btn btn-primary btn-landing-getstarted" onclick="window.HubbleNest.showAuthView('entry')">
               Get Started
             </button>
           </div>
@@ -162,7 +160,7 @@
 
         <!-- Hero Actions -->
         <div class="hero-actions">
-          <button class="btn btn-primary btn-hero-cta" onclick="window.HubbleNest.showAuthView('signup')">
+          <button class="btn btn-primary btn-hero-cta" onclick="window.HubbleNest.showAuthView('entry')">
             <span>Get Started</span>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
           </button>
@@ -590,65 +588,6 @@
         </div>
       </section>
 
-      <!-- Section: Architecture & Security -->
-      <section class="landing-section" id="architecture">
-        <div class="section-header">
-          <span class="section-eyebrow">✦ Principled Engineering</span>
-          <h2 class="section-title">The anti-platform by design.</h2>
-          <p class="section-subtitle">
-            Most modern communication platforms monetize your attention through algorithmic feeds and background telemetry. HubbleNest rejects that paradigm completely.
-          </p>
-        </div>
-
-        <div class="features-container">
-          
-          <div class="feature-spotlight-row">
-            <div class="feature-content-side">
-              <span class="feature-tag-chip">Zero Algorithmic Intrusion</span>
-              <h3 class="feature-heading">No engagement algorithms. No doomscrolling. No advertisements.</h3>
-              <p class="feature-description">
-                HubbleNest spaces display messages in pure chronological order. There are no recommendation algorithms trying to manipulate your emotions, no engagement metrics to distract you, and zero tracking pixels. Just your people and your work.
-              </p>
-              <div class="feature-checklist">
-                <div class="check-item">✓ 100% chronological discussion streams</div>
-                <div class="check-item">✓ Completely free of surveillance advertising</div>
-                <div class="check-item">✓ Zero telemetry profiling on community members</div>
-              </div>
-            </div>
-            <div class="feature-visual-side" style="display: flex; align-items: center; justify-content: center; min-height: 240px; background: radial-gradient(circle, rgba(59, 130, 246, 0.15), transparent 70%);">
-              <div style="text-align: center; padding: 24px;">
-                <div style="font-size: 3rem; margin-bottom: 12px;">🛡️</div>
-                <div style="font-family: var(--font-display); font-size: 1.25rem; font-weight: 700;">Protected Sanctuary</div>
-                <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 280px; margin: 8px auto 0;">Your space is closed to public web scrapers and unauthorized lurkers.</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="feature-spotlight-row reverse-row" id="security">
-            <div class="feature-content-side">
-              <span class="feature-tag-chip">End-to-End Cryptography</span>
-              <h3 class="feature-heading">Genuine Web Crypto client-side encryption for private 1:1 messaging.</h3>
-              <p class="feature-description">
-                When you converse privately with another member, your browser generates standard NIST P-256 elliptic curve keys and derives shared secrets using ECDH. The plaintext is encrypted using AES-GCM 256-bit ciphers before ever leaving your device.
-              </p>
-              <div class="feature-checklist">
-                <div class="check-item">✓ Web Crypto SubtleCrypto W3C Standard</div>
-                <div class="check-item">✓ Plaintext never stored or transmitted to server</div>
-                <div class="check-item">✓ Unique 96-bit cryptographic IV generated per message</div>
-              </div>
-            </div>
-            <div class="feature-visual-side" style="display: flex; align-items: center; justify-content: center; min-height: 240px; background: radial-gradient(circle, rgba(168, 85, 247, 0.15), transparent 70%);">
-              <div style="text-align: center; padding: 24px;">
-                <div style="font-size: 3rem; margin-bottom: 12px;">🔐</div>
-                <div style="font-family: var(--font-display); font-size: 1.25rem; font-weight: 700;">P-256 ECDH + AES-256</div>
-                <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 280px; margin: 8px auto 0;">Mathematical privacy guaranteed directly in your browser.</p>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </section>
-
       <!-- Section: Interactive Quick Space Joiner -->
       <section class="landing-section" id="join-space-section" style="padding-top: 20px;">
         <div class="landing-cta-banner" style="background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.25) 0%, rgba(15, 23, 42, 0.9) 75%);">
@@ -669,7 +608,7 @@
           </div>
 
           <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
-            <button class="btn btn-primary" onclick="window.HubbleNest.showAuthView('signup')">
+            <button class="btn btn-primary" onclick="window.HubbleNest.showAuthView('entry')">
               Create a Space Instead
             </button>
             <button class="btn btn-secondary" onclick="window.HubbleNest.showAuthView('login')">
@@ -689,10 +628,10 @@
 
           <div class="footer-links">
             <a href="#sanctuaries" class="footer-link">Sanctuaries</a>
+            <a href="#showcase" class="footer-link">Connectivity</a>
             <a href="#how-it-works" class="footer-link">How It Works</a>
-            <a href="#architecture" class="footer-link">Architecture</a>
-            <a href="#security" class="footer-link">Privacy & E2EE</a>
-            <span class="footer-link" onclick="window.HubbleNest.showAuthView('signup')">Create Space</span>
+            <a href="#join-space-section" class="footer-link">Have a Code?</a>
+            <span class="footer-link" onclick="window.HubbleNest.showAuthView('entry')">Create Space</span>
             <span class="footer-link" onclick="window.HubbleNest.showAuthView('login')">Sign In</span>
           </div>
 
@@ -707,11 +646,60 @@
     <!-- Authentication Screen (When Not Logged In and User Clicks Auth) -->
     <main class="auth-wrapper" id="auth-container" style="display: none;">
       
-      <!-- Login Card -->
-      <div class="auth-card" id="card-login">
+      <!-- Welcome Choice Card (Requirement 3: First screen upon entering HubbleNest) -->
+      <div class="auth-card" id="card-auth-entry">
         <button type="button" class="back-home-btn" onclick="window.HubbleNest.showLandingPage()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
           <span>Back to HubbleNest</span>
+        </button>
+
+        <div class="auth-header" style="text-align: center; margin-top: 8px; margin-bottom: 28px;">
+          <div class="brand-zone" style="justify-content: center; margin-bottom: 16px;">
+            <div class="brand-icon" style="width: 44px; height: 44px; font-size: 1.5rem;">H</div>
+            <span style="font-size: 1.75rem;">HubbleNest</span>
+          </div>
+          <h1 class="auth-title" style="font-size: 1.85rem; margin-bottom: 8px;">Welcome to HubbleNest</h1>
+          <p class="auth-subtitle" style="font-size: 0.95rem; max-width: 360px; margin: 0 auto; line-height: 1.5;">
+            A beautiful, private space for your communities, teams, classrooms, and conversations.
+          </p>
+        </div>
+
+        <div class="auth-choices-container" style="display: flex; flex-direction: column; gap: 16px;">
+          
+          <div class="auth-choice-card" style="padding: 22px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); text-align: left; transition: all 0.2s ease;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+              <span style="font-size: 1.3rem;">✨</span>
+              <h3 style="font-family: var(--font-display); font-size: 1.15rem; font-weight: 700; margin: 0;">New to HubbleNest?</h3>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0 0 16px 0; line-height: 1.45;">
+              Create an account to launch spaces, join discussions, and start collaborating.
+            </p>
+            <button type="button" class="btn btn-primary btn-full" onclick="window.HubbleNest.showSignupCard()">
+              Create an Account
+            </button>
+          </div>
+
+          <div class="auth-choice-card" style="padding: 22px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); text-align: left; transition: all 0.2s ease;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+              <span style="font-size: 1.3rem;">👋</span>
+              <h3 style="font-family: var(--font-display); font-size: 1.15rem; font-weight: 700; margin: 0;">Already have an account?</h3>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0 0 16px 0; line-height: 1.45;">
+              Sign in to your private spaces, discussions, and client-encrypted messaging channels.
+            </p>
+            <button type="button" class="btn btn-secondary btn-full" onclick="window.HubbleNest.showLoginCard()">
+              Sign In
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Login Card -->
+      <div class="auth-card" id="card-login" style="display: none;">
+        <button type="button" class="back-home-btn" onclick="window.HubbleNest.showAuthEntryCard()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          <span>Back</span>
         </button>
         <div class="auth-header">
           <div class="brand-zone" style="justify-content: center; margin-bottom: 12px;">
