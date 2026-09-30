@@ -197,7 +197,7 @@ export async function copyToClipboard(text, successMessage = 'Copied to clipboar
 export function getAvatarUrl(photoUrl, name = 'User') {
   if (photoUrl && photoUrl.trim()) return photoUrl;
   const initials = (name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
-  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="54%" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="38" fill="%2394a3b8" text-anchor="middle" dominant-baseline="middle">${initials}</text></svg>`;
+  return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><rect width='100%25' height='100%25' fill='%231e293b'/><text x='50%25' y='54%25' font-family='system-ui, -apple-system, sans-serif' font-weight='600' font-size='38' fill='%2394a3b8' text-anchor='middle' dominant-baseline='middle'>${initials}</text></svg>`;
 }
 
 /**

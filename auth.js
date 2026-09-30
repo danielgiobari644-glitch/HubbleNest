@@ -70,8 +70,42 @@ export async function checkUsernameAvailability(username) {
 
 /**
  * Complete user profile document in Firestore
+ * (Concurrent calls for the same user share one creation task so the
+ *  gradual-signup data is never overwritten by the auth-state listener race.)
  */
+const _profileCreationTasks = {};
+
 export async function createOrUpdateUserProfile(user, additionalData = {}) {
+  if (!additionalData.fullName && !additionalData.username && _profileCreationTasks[user.uid]) {
+    // A profile creation is already in flight for this user — reuse its result
+    return _profileCreationTasks[user.uid];
+  }
+
+  const task = _doCreateOrUpdateUserProfile(user, additionalData);
+  _profileCreationTasks[user.uid] = task;
+  try {
+    return await task;
+  } finally {
+    delete _profileCreationTasks[user.uid];
+  }
+}
+
+/**
+ * Gradual-signup intent: registered right BEFORE createUserWithEmailAndPassword
+ * so that whichever path creates the profile first (finalizeSignup here, or the
+ * onAuthStateChanged listener firing during account creation) writes the real
+ * signup data instead of defaults. Never let the auth-listener race win.
+ */
+let _pendingSignupIntent = null;
+
+async function _doCreateOrUpdateUserProfile(user, additionalData = {}) {
+  // Merge the pending signup intent (matched by email) into this call's data
+  const intent = (_pendingSignupIntent && user.email &&
+    _pendingSignupIntent.email &&
+    _pendingSignupIntent.email.toLowerCase() === String(user.email).toLowerCase())
+    ? _pendingSignupIntent : {};
+  const data = { ...intent, ...additionalData };
+
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);
 
@@ -85,12 +119,12 @@ export async function createOrUpdateUserProfile(user, additionalData = {}) {
   if (!snap.exists()) {
     const profile = {
       uid: user.uid,
-      email: user.email || additionalData.email || '',
-      displayName: additionalData.fullName || user.displayName || 'HubbleNest Member',
-      username: additionalData.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5)),
-      usernameLower: (additionalData.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5))).toLowerCase(),
-      photoURL: additionalData.photoURL || user.photoURL || '',
-      bio: additionalData.bio || 'HubbleNest community member',
+      email: user.email || data.email || '',
+      displayName: data.fullName || user.displayName || 'HubbleNest Member',
+      username: data.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5)),
+      usernameLower: (data.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5))).toLowerCase(),
+      photoURL: data.photoURL || user.photoURL || '',
+      bio: data.bio || 'HubbleNest community member',
       publicKeyJwk: keyData ? keyData.publicKeyJwk : null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -104,6 +138,20 @@ export async function createOrUpdateUserProfile(user, additionalData = {}) {
     if (!existing.publicKeyJwk && keyData) {
       await setDoc(userRef, { publicKeyJwk: keyData.publicKeyJwk }, { merge: true });
     }
+    // Signup race recovery: the listener may have created this doc with
+    // defaults moments ago — apply the real gradual-signup data now.
+    const patch = {};
+    if (data.fullName && data.fullName !== existing.displayName) patch.displayName = data.fullName;
+    if (data.username && data.username.toLowerCase() !== existing.usernameLower) {
+      patch.username = data.username;
+      patch.usernameLower = data.username.toLowerCase();
+    }
+    if (data.photoURL && !existing.photoURL) patch.photoURL = data.photoURL;
+    if (Object.keys(patch).length > 0) {
+      patch.updatedAt = serverTimestamp();
+      await setDoc(userRef, patch, { merge: true });
+      return { ...existing, ...patch };
+    }
     return existing;
   }
 }
@@ -113,15 +161,21 @@ export async function createOrUpdateUserProfile(user, additionalData = {}) {
  */
 export async function finalizeSignup(onSuccess, onError) {
   try {
-    const cred = await createUserWithEmailAndPassword(auth, signupState.email, signupState.password);
-    const user = cred.user;
-
-    const profile = await createOrUpdateUserProfile(user, {
+    const intended = {
       fullName: signupState.fullName,
       username: signupState.username,
       photoURL: signupState.photoURL,
       email: signupState.email
-    });
+    };
+    // Register BEFORE account creation so the auth-state listener (which can
+    // fire while createUserWithEmailAndPassword is still awaiting) creates the
+    // profile with the real signup data, never with defaults.
+    _pendingSignupIntent = intended;
+
+    const cred = await createUserWithEmailAndPassword(auth, signupState.email, signupState.password);
+    const user = cred.user;
+
+    const profile = await createOrUpdateUserProfile(user, intended);
 
     showToast(`Welcome to HubbleNest, ${signupState.fullName}!`, 'success');
     if (onSuccess) onSuccess(user, profile);
@@ -137,6 +191,8 @@ export async function finalizeSignup(onSuccess, onError) {
     }
     showToast(message, 'error');
     if (onError) onError(message);
+  } finally {
+    _pendingSignupIntent = null;
   }
 }
 

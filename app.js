@@ -38,6 +38,7 @@ import {
   updateSpaceCover,
   deleteSpace,
   ensureUserSupportMembership,
+  ensureOfficialSupportSpace,
   OFFICIAL_SUPPORT_CODE,
   OFFICIAL_SUPPORT_SPACE_ID
 } from './spaces.js';
@@ -139,10 +140,20 @@ import {
   linkify 
 } from './utils.js';
 
-import { 
-  getPublicKeyFingerprint, 
-  ensureUserKeyPair 
+import {
+  getPublicKeyFingerprint,
+  ensureUserKeyPair
 } from './encryption.js';
+
+// Home community feed (reuses the Space chat system for the official community Space)
+import {
+  startHomeFeed,
+  stopHomeFeed,
+  handleHomePost,
+  stageHomeAttachment as stageHomeFile,
+  removeHomeAttachment,
+  clearAllHomeAttachments
+} from './home.js';
 
 // Application State
 const state = {
@@ -228,10 +239,30 @@ function setupAuthenticatedUI() {
   if (topbar) topbar.style.display = 'flex';
   if (appContainer) appContainer.style.display = 'flex';
 
+  // Mobile bottom nav (Home/People/Direct/Join/Profile) belongs to the APP only —
+  // never render it on the landing or auth pages.
+  document.body.classList.add('hn-app-active');
+
   // Update topbar avatar
   const avatarImg = document.getElementById('user-avatar-topbar');
   if (avatarImg) {
     avatarImg.src = getAvatarUrl(state.userProfile.photoURL, state.userProfile.displayName);
+  }
+
+  // Update sidebar user card
+  const sidebarAvatar = document.getElementById('sidebar-user-avatar');
+  if (sidebarAvatar) {
+    sidebarAvatar.src = getAvatarUrl(state.userProfile.photoURL, state.userProfile.displayName);
+  }
+  const sidebarName = document.getElementById('sidebar-user-name');
+  if (sidebarName) sidebarName.textContent = state.userProfile.displayName || 'Member';
+  const sidebarHandle = document.getElementById('sidebar-user-handle');
+  if (sidebarHandle) sidebarHandle.textContent = `@${state.userProfile.username || 'user'}`;
+
+  // Update home composer avatar
+  const composerAvatar = document.getElementById('home-composer-avatar');
+  if (composerAvatar) {
+    composerAvatar.src = getAvatarUrl(state.userProfile.photoURL, state.userProfile.displayName);
   }
 
   // Update menu info
@@ -277,6 +308,9 @@ export function showLandingPage() {
   if (authContainer) authContainer.style.display = 'none';
   if (landingContainer) landingContainer.style.display = 'block';
 
+  // Landing page must never show the app's mobile bottom nav.
+  document.body.classList.remove('hn-app-active');
+
   if (state.currentUser && userBanner) {
     userBanner.style.display = 'flex';
   } else if (userBanner) {
@@ -296,6 +330,9 @@ export function showAuthView(mode = 'entry') {
   if (appContainer) appContainer.style.display = 'none';
   if (landingContainer) landingContainer.style.display = 'none';
   if (authContainer) authContainer.style.display = 'flex';
+
+  // Auth pages must never show the app's mobile bottom nav.
+  document.body.classList.remove('hn-app-active');
 
   if (mode === 'signup') {
     showSignupCard();
@@ -564,6 +601,138 @@ async function loadDashboard() {
   });
 
   renderSpacesGrid();
+  renderSidebarSpaces();
+  renderDashRail();
+  startHomeCommunityFeed();
+}
+
+/**
+ * Render real user Spaces into the left sidebar ("YOUR SPACES")
+ */
+function renderSidebarSpaces() {
+  const list = document.getElementById('sidebar-spaces-list');
+  if (!list) return;
+
+  if (!state.userSpaces || state.userSpaces.length === 0) {
+    list.innerHTML = `<div class="sidebar-spaces-empty">No spaces yet — create one!</div>`;
+    return;
+  }
+
+  const palette = [
+    'linear-gradient(135deg, #5a5df0, #8b5cf6)',
+    'linear-gradient(135deg, #0ea5e9, #6366f1)',
+    'linear-gradient(135deg, #8b5cf6, #d946ef)',
+    'linear-gradient(135deg, #34d399, #0ea5e9)',
+    'linear-gradient(135deg, #f59e0b, #ef4444)',
+    'linear-gradient(135deg, #64748b, #334155)'
+  ];
+
+  const hashStr = (s) => {
+    let h = 0;
+    for (let i = 0; i < (s || '').length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  };
+
+  list.innerHTML = state.userSpaces.map((sp, idx) => {
+    const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
+    const grad = isOfficial ? palette[0] : palette[hashStr(sp.id || sp.name) % palette.length];
+    const icon = isOfficial
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/></svg>`;
+    return `
+      <div class="sidebar-space-item ${state.currentView === 'space' && state.activeSpace?.id === sp.id ? 'active' : ''}"
+           style="animation-delay: ${Math.min(idx * 0.03, 0.3)}s;"
+           onclick="window.HubbleNest.openSpace('${sp.id}')" title="${escapeHtml(sp.name)}">
+        <span class="sidebar-space-icon" style="background: ${grad};">${icon}</span>
+        <span class="sidebar-space-name">${escapeHtml(sp.name || 'Space')}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+/**
+ * Fill the dashboard right rail with REAL data (members, featured space, activity)
+ */
+function renderDashRail() {
+  // Featured space = official community space when available
+  const featured = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID) || state.userSpaces[0];
+  const featName = document.getElementById('rail-featured-name');
+  const featDesc = document.getElementById('rail-featured-desc');
+  const featBtn = document.getElementById('rail-featured-btn');
+  if (featured) {
+    if (featName) featName.textContent = featured.name || 'HubbleNest Community';
+    if (featDesc) featDesc.textContent = featured.description || 'Have a question about HubbleNest? This is the place to ask.';
+    if (featBtn) featBtn.onclick = () => openSpace(featured.id);
+  }
+
+  // Members card: fetch real directory (also feeds the People stat)
+  if (state.currentUser) {
+    fetchPeopleDirectory(state.currentUser.uid).then(people => {
+      state.people = people || [];
+      const statPeople = document.getElementById('dash-stat-people');
+      if (statPeople) statPeople.textContent = state.people.length;
+
+      const stack = document.getElementById('rail-members-avatars');
+      const count = document.getElementById('rail-members-count');
+      if (count) count.textContent = `${state.people.length} member${state.people.length === 1 ? '' : 's'}`;
+      if (stack) {
+        const top = state.people.slice(0, 7);
+        stack.innerHTML = top.map(p => `
+          <span class="stack-avatar" title="${escapeHtml(p.displayName)}">
+            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" />
+          </span>
+        `).join('') + (state.people.length > 7 ? `<span class="stack-more">+${state.people.length - 7}</span>` : '');
+        if (state.people.length === 0) {
+          stack.innerHTML = `<div class="rail-activity-empty">No members found yet.</div>`;
+        }
+      }
+    }).catch(err => console.warn('People directory fetch:', err));
+  }
+}
+
+/**
+ * Start the community feed on Home (official support Space via existing chat system)
+ */
+function startHomeCommunityFeed() {
+  const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
+  const spaceId = official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
+  startHomeFeed(
+    spaceId,
+    state.userProfile,
+    state.currentUser?.uid,
+    state.activeSpaceRole === 'admin' || official?.userRole === 'admin'
+  );
+  window.HubbleNest._homeSpaceId = spaceId;
+}
+
+/**
+ * Render Recent Activity rail from REAL notifications
+ */
+function renderRailActivity() {
+  const list = document.getElementById('rail-activity-list');
+  if (!list) return;
+
+  if (!state.notifications || state.notifications.length === 0) {
+    list.innerHTML = `<div class="rail-activity-empty">No recent activity yet.</div>`;
+    return;
+  }
+
+  list.innerHTML = state.notifications.slice(0, 6).map(n => {
+    const icon = n.type === 'chat_request'
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
+      : n.type === 'private_message'
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
+    return `
+      <div class="rail-activity-item" onclick="window.HubbleNest.handleNotificationClick('${n.id}', '${n.spaceId || ''}')">
+        <span class="rail-activity-icon">${icon}</span>
+        <span class="rail-activity-text">
+          <b>${escapeHtml(n.title || 'Notification')}</b> ${escapeHtml(n.body || '')}
+          <span class="rail-activity-time">${formatTimeAgo(n.createdAt)}</span>
+        </span>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderSpacesGridLoading() {
@@ -599,8 +768,8 @@ function renderSpacesGrid() {
         <h3 class="empty-state-title">Your spaces will appear here</h3>
         <p class="empty-state-desc">Create your own private sanctuary or join an existing group with a code or QR invite.</p>
         <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpacePage()">+ Create a Space</button>
-          <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinSpacePage()">🔑 Join with Code</button>
+          <button class="btn btn-primary" onclick="window.HubbleNest.openCreateSpacePage()">Create a Space</button>
+          <button class="btn btn-secondary" onclick="window.HubbleNest.openJoinSpacePage()">Join with Code</button>
         </div>
       </div>
     `;
@@ -637,7 +806,7 @@ function renderSpacesGrid() {
             <h4 class="space-card-title">${escapeHtml(sp.name || 'HubbleNest Help & Community')}</h4>
             <p class="space-card-desc">${escapeHtml(sp.description || 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.')}</p>
             <div class="space-card-footer">
-              <span class="code-chip official-code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)}')">${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)} 📋</span>
+              <span class="code-chip official-code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)}')">${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)} <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span class="space-card-btn-enter official-btn-enter">Open Community →</span>
               </div>
@@ -666,7 +835,7 @@ function renderSpacesGrid() {
           <h4 class="space-card-title">${escapeHtml(sp.name)}</h4>
           <p class="space-card-desc">${escapeHtml(sp.description || 'Private collaborative workspace.')}</p>
           <div class="space-card-footer">
-            <span class="code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code)}')">${escapeHtml(sp.code || 'HN-SPACE')} 📋</span>
+            <span class="code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code)}')">${escapeHtml(sp.code || 'HN-SPACE')} <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span>
             <div style="display: flex; align-items: center; gap: 8px;">
               ${expInfo ? `<span style="color: ${expInfo.urgent ? 'var(--status-danger)' : 'var(--text-muted)'}; font-size: 0.75rem;">${expInfo.text}</span>` : `<span style="color: var(--text-muted); font-size: 0.75rem;">Permanent</span>`}
               <span class="space-card-btn-enter">Enter →</span>
@@ -905,14 +1074,29 @@ function initChatListener() {
 function getFileIcon(type, filename = '') {
   const t = (type || '').toLowerCase();
   const ext = (filename.split('.').pop() || '').toLowerCase();
-  if (t.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'image', 'images'].includes(ext) || t === 'image' || t === 'images') return '🖼️';
-  if (t.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'video', 'videos'].includes(ext) || t === 'video' || t === 'videos') return '🎬';
-  if (t.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'audio'].includes(ext) || t === 'audio') return '🎵';
-  if (['pdf'].includes(ext) || t.includes('pdf')) return '📕';
-  if (['doc', 'docx'].includes(ext) || t.includes('word')) return '📘';
-  if (['xls', 'xlsx', 'csv'].includes(ext) || t.includes('sheet') || t.includes('excel')) return '📊';
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || t.includes('zip')) return '📦';
-  return '📄';
+  const svg = (paths) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  if (t.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'image', 'images'].includes(ext) || t === 'image' || t === 'images') {
+    return svg('<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>');
+  }
+  if (t.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'video', 'videos'].includes(ext) || t === 'video' || t === 'videos') {
+    return svg('<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>');
+  }
+  if (t.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'audio'].includes(ext) || t === 'audio') {
+    return svg('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>');
+  }
+  if (['pdf'].includes(ext) || t.includes('pdf')) {
+    return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9.5 13h5"/><path d="M9.5 17h5"/>');
+  }
+  if (['doc', 'docx'].includes(ext) || t.includes('word')) {
+    return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9.5 13h5"/>');
+  }
+  if (['xls', 'xlsx', 'csv'].includes(ext) || t.includes('sheet') || t.includes('excel')) {
+    return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01M16 17h.01"/>');
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || t.includes('zip')) {
+    return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M12 7v4"/><path d="M12 15h.01"/>');
+  }
+  return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/>');
 }
 
 function renderChatMessages() {
@@ -922,7 +1106,7 @@ function renderChatMessages() {
   if (state.spaceMessages.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="padding: 40px 0;">
-        <div class="empty-state-icon">💬</div>
+        <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
         <h4 class="empty-state-title">Start the conversation</h4>
         <p class="empty-state-desc">Say hello or share an update with the members of this Space.</p>
       </div>
@@ -988,7 +1172,7 @@ function renderChatMessages() {
           return `
             <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-                <span>📄</span>
+                <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg></span>
                 <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   ${escapeHtml(att.originalFilename || 'Document')}
                 </a>
@@ -1016,7 +1200,7 @@ function renderChatMessages() {
             ${msg.replyTo ? (
               msg.replyTo.isFileReply || msg.replyTo.fileUrl ? `
                 <div class="file-reply-snippet">
-                  <span style="font-size: 1.1rem;">${getFileIcon(msg.replyTo.fileType, msg.replyTo.fileName || msg.replyTo.text)}</span>
+                  <span style="color: var(--accent-primary); flex-shrink: 0; display: inline-flex;">${getFileIcon(msg.replyTo.fileType, msg.replyTo.fileName || msg.replyTo.text)}</span>
                   <div style="min-width: 0; flex: 1;">
                     <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
                     <div>
@@ -1039,7 +1223,7 @@ function renderChatMessages() {
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '👍')" title="Thumbs up">👍</button>
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '❤️')" title="Heart">❤️</button>
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '🔥')" title="Fire">🔥</button>
-              ${canDelete ? `<button class="btn-ghost" style="padding: 2px 6px; color: var(--status-danger);" onclick="window.HubbleNest.deleteMessage('${msg.id}')" title="Delete">🗑</button>` : ''}
+              ${canDelete ? `<button class="btn-ghost" style="padding: 2px 6px; color: var(--status-danger);" onclick="window.HubbleNest.deleteMessage('${msg.id}')" title="Delete"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>` : ''}
             </div>
           </div>
           ${reactionChips ? `<div class="msg-reactions-bar">${reactionChips}</div>` : ''}
@@ -1112,7 +1296,7 @@ function renderChatPendingAttachments() {
         const url = URL.createObjectURL(f);
         thumbHtml = `<img src="${url}" class="pending-thumb-img" alt="preview" />`;
       } else {
-        thumbHtml = `<span style="font-size: 1.1rem;">${getFileIcon(f.type, f.name)}</span>`;
+        thumbHtml = `<span style="color: var(--accent-primary);">${getFileIcon(f.type, f.name)}</span>`;
       }
 
       return `
@@ -1146,7 +1330,7 @@ export function replyToFile(fileId, fileName, fileUrl, fileType = 'document') {
   const bar = document.getElementById('chat-replying-bar');
   const textEl = document.getElementById('replying-to-text');
   const iconEl = document.getElementById('replying-icon');
-  if (iconEl) iconEl.textContent = getFileIcon(fileType, fileName);
+  if (iconEl) iconEl.innerHTML = getFileIcon(fileType, fileName);
   if (bar && textEl) {
     textEl.innerHTML = `<span style="color: var(--accent-primary); font-weight: 700;">Replying to file:</span> <a href="${fileUrl || '#'}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; margin-left: 4px;" onclick="event.stopPropagation();">${escapeHtml(fileName)}</a>`;
     bar.style.display = 'flex';
@@ -1276,7 +1460,7 @@ function renderFilesLibrary() {
   if (state.spaceFiles.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1; padding: 48px 0;">
-        <div class="empty-state-icon">📁</div>
+        <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></div>
         <h4 class="empty-state-title">No files shared yet</h4>
         <p class="empty-state-desc">Files shared in this Space will appear here for easy access and organization.</p>
         <button class="btn btn-primary" onclick="document.getElementById('file-upload-input').click()">Upload File</button>
@@ -1291,7 +1475,7 @@ function renderFilesLibrary() {
       <div class="file-card">
         <div class="file-header">
           <div class="file-icon-box">
-            ${f.category === 'images' ? '🖼️' : f.category === 'videos' ? '🎬' : f.category === 'audio' ? '🎵' : '📄'}
+            ${f.category === 'images' ? '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>' : f.category === 'videos' ? '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>' : f.category === 'audio' ? '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>' : '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>'}
           </div>
           <div style="flex: 1; min-width: 0;">
             <div class="file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
@@ -1364,7 +1548,7 @@ function renderAnnouncementsList() {
   if (state.spaceAnnouncements.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="padding: 48px 0;">
-        <div class="empty-state-icon">📢</div>
+        <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div>
         <h4 class="empty-state-title">No announcements yet</h4>
         <p class="empty-state-desc">Administrators can post important news, guidelines, and updates here.</p>
         ${state.activeSpaceRole === 'admin' ? `<button class="btn btn-primary" onclick="window.HubbleNest.openNewAnnouncementModal()">Create Announcement</button>` : ''}
@@ -1526,7 +1710,7 @@ function initLinksListener() {
       if (links.length === 0) {
         container.innerHTML = `
           <div class="empty-state" style="padding: 48px 0;">
-            <div class="empty-state-icon">🔗</div>
+            <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
             <h4 class="empty-state-title">No links saved yet</h4>
             <p class="empty-state-desc">Any URLs shared in chat or added directly will appear here.</p>
             <button class="btn btn-secondary" onclick="window.HubbleNest.openAddLinkModal()">Add Link</button>
@@ -1539,7 +1723,7 @@ function initLinksListener() {
         return `
           <div class="file-card">
             <div class="file-header">
-              <div class="file-icon-box">🔗</div>
+              <div class="file-icon-box"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
               <div style="flex: 1; min-width: 0;">
                 <div class="file-name">${escapeHtml(l.title || l.domain)}</div>
                 <div class="file-meta">${escapeHtml(l.domain)} · Shared by ${escapeHtml(l.senderName)}</div>
@@ -1599,7 +1783,7 @@ function renderPeopleGrid(peopleList) {
   if (!peopleList || peopleList.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1; padding: 60px 0;">
-        <div class="empty-state-icon">👥</div>
+        <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
         <h3 class="empty-state-title">No members found</h3>
         <p class="empty-state-desc">Try searching with a different name or invite members with a Space code.</p>
       </div>
@@ -1909,7 +2093,7 @@ function renderConversationsList() {
             ${escapeHtml(peerData.displayName)}
           </div>
           <div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            ${conv.lastMessage ? '🔒 Private message' : 'Protected conversation'}
+            ${conv.lastMessage ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Private message' : 'Protected conversation'}
           </div>
         </div>
       </div>
@@ -1957,7 +2141,7 @@ function renderDirectMessages() {
   if (state.directMessages.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="padding: 40px 0;">
-        <div class="empty-state-icon">🔒</div>
+        <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
         <h4 class="empty-state-title">This conversation is private</h4>
         <p class="empty-state-desc">Messages sent here are end-to-end encrypted between you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}.</p>
       </div>
@@ -2034,7 +2218,7 @@ function renderDirectMessages() {
       if (decrypted.replyTo.isFileReply || decrypted.replyTo.fileUrl) {
         replySnippetHtml = `
           <div class="file-reply-snippet">
-            <span style="font-size: 1.1rem;">${getFileIcon(decrypted.replyTo.fileType, decrypted.replyTo.fileName || decrypted.replyTo.text)}</span>
+            <span style="color: var(--accent-primary); flex-shrink: 0; display: inline-flex;">${getFileIcon(decrypted.replyTo.fileType, decrypted.replyTo.fileName || decrypted.replyTo.text)}</span>
             <div style="min-width: 0; flex: 1;">
               <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
               <div>
@@ -2074,7 +2258,7 @@ function renderDirectMessages() {
             </div>
           </div>
           <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; text-align: ${isOwn ? 'right' : 'left'};">
-            ${formatTimeAgo(msg.createdAt)} · 🔒 Private
+            ${formatTimeAgo(msg.createdAt)} · <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Private
           </div>
         </div>
       </div>
@@ -2144,7 +2328,7 @@ function renderDirectPendingAttachments() {
         const url = URL.createObjectURL(f);
         thumbHtml = `<img src="${url}" class="pending-thumb-img" alt="preview" />`;
       } else {
-        thumbHtml = `<span style="font-size: 1.1rem;">${getFileIcon(f.type, f.name)}</span>`;
+        thumbHtml = `<span style="color: var(--accent-primary);">${getFileIcon(f.type, f.name)}</span>`;
       }
 
       return `
@@ -2190,7 +2374,7 @@ export function replyToDirectFile(fileId, fileName, fileUrl, fileType = 'documen
   const bar = document.getElementById('direct-replying-bar');
   const textEl = document.getElementById('direct-replying-to-text');
   const iconEl = document.getElementById('direct-replying-icon');
-  if (iconEl) iconEl.textContent = getFileIcon(fileType, fileName);
+  if (iconEl) iconEl.innerHTML = getFileIcon(fileType, fileName);
   if (bar && textEl) {
     textEl.innerHTML = `<span style="color: var(--accent-primary); font-weight: 700;">Replying to file:</span> <a href="${fileUrl || '#'}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; margin-left: 4px;" onclick="event.stopPropagation();">${escapeHtml(fileName)}</a>`;
     bar.style.display = 'flex';
@@ -2340,10 +2524,24 @@ function subscribeNotifications() {
     state.notifications = notifs;
     state.unreadNotifications = unread;
 
+    const countText = unread > 9 ? '9+' : String(unread);
+
+    // Topbar bell count badge
     const badge = document.getElementById('notif-badge-dot');
-    if (badge) badge.style.display = unread > 0 ? 'block' : 'none';
+    if (badge) {
+      badge.textContent = countText;
+      badge.style.display = unread > 0 ? 'inline-flex' : 'none';
+    }
+
+    // Sidebar Notifications badge
+    const sideBadge = document.getElementById('sidebar-notif-badge');
+    if (sideBadge) {
+      sideBadge.textContent = countText;
+      sideBadge.style.display = unread > 0 ? 'inline-flex' : 'none';
+    }
 
     renderNotificationsPanel();
+    renderRailActivity();
   });
 }
 
@@ -2784,7 +2982,7 @@ export async function handleSearchInput(term) {
     html += `<div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); padding: 8px 12px; font-weight: 600;">Spaces</div>`;
     html += results.spaces.map(s => `
       <div class="menu-item" onclick="window.HubbleNest.handleSelectSearchResult('space', '${s.id}')">
-        📁 <span>${escapeHtml(s.name)}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">${escapeHtml(s.code || '')}</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg> <span>${escapeHtml(s.name)}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">${escapeHtml(s.code || '')}</span>
       </div>
     `).join('');
   }
@@ -2793,7 +2991,7 @@ export async function handleSearchInput(term) {
     html += `<div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); padding: 8px 12px; font-weight: 600;">People</div>`;
     html += results.people.map(p => `
       <div class="menu-item" onclick="window.HubbleNest.handleSelectSearchResult('user', '${p.uid}')">
-        👤 <span>${escapeHtml(p.displayName)}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">@${escapeHtml(p.username)}</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg> <span>${escapeHtml(p.displayName)}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">@${escapeHtml(p.username)}</span>
       </div>
     `).join('');
   }
@@ -2995,6 +3193,86 @@ window.HubbleNest = {
   copyLinkUrl: (url) => copyToClipboard(url, 'Copied to clipboard'),
   copySpaceCode: () => {
     if (state.activeSpace?.code) copyToClipboard(state.activeSpace.code, 'Space code copied');
+  },
+
+  // Home community feed (official Space via existing chat system)
+  resolveHomeSpaceId: () => {
+    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
+    return official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
+  },
+  handleHomePost: () => {
+    if (!state.userProfile || !state.currentUser) return;
+    handleHomePost(
+      window.HubbleNest.resolveHomeSpaceId(),
+      state.userProfile,
+      state.currentUser.uid,
+      state.activeSpaceRole === 'admin' || state.userSpaces.some(sp => (sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID) && sp.userRole === 'admin')
+    );
+  },
+  stageHomeAttachment: (file) => stageHomeFile(file, 100),
+  removeHomeAttachment,
+  clearAllHomeAttachments,
+  toggleHomeReaction: (msgId, emoji) => {
+    toggleMessageReaction(window.HubbleNest.resolveHomeSpaceId(), msgId, emoji, state.currentUser.uid);
+  },
+  deleteHomeMessage: (msgId) => {
+    deleteSpaceMessage(window.HubbleNest.resolveHomeSpaceId(), msgId);
+  },
+
+  // Sidebar "Spaces" shortcut: go home and scroll to the Spaces grid
+  openSpacesSection: () => {
+    const goToSpaces = () => {
+      setTimeout(() => {
+        document.getElementById('dash-spaces-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+    };
+    if (state.currentView === 'dashboard') {
+      goToSpaces();
+    } else {
+      loadDashboard();
+      goToSpaces();
+    }
+  },
+
+  // Official HubbleNest Community Space (real Get Help / Featured Space targets)
+  getOfficialSpaceId: () => {
+    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
+    return official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
+  },
+  openCommunitySpace: async () => {
+    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
+    if (official) {
+      await openSpace(official.id);
+      return;
+    }
+    try {
+      await ensureUserSupportMembership(state.currentUser);
+    } catch (e) { /* membership already ensured at auth */ }
+    await openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+  },
+  openCommunityMembers: async () => {
+    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
+    if (official) {
+      await openSpace(official.id);
+      switchSpaceTab('members');
+      return;
+    }
+    try {
+      await ensureUserSupportMembership(state.currentUser);
+    } catch (e) { /* membership already ensured at auth */ }
+    await openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+    switchSpaceTab('members');
+  },
+
+  // Inline links panel (fixes previously broken Add Link button in empty state)
+  openAddLinkModal: () => {
+    const form = document.getElementById('inline-link-adder');
+    if (form) {
+      form.style.display = (form.style.display === 'none' || !form.style.display) ? 'block' : 'none';
+      if (form.style.display === 'block') document.getElementById('inline-link-url')?.focus();
+    } else {
+      switchSpaceTab('links');
+    }
   }
 };
 

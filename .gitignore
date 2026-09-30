@@ -1,8 +1,7 @@
 node_modules/
-build/
-dist/
-coverage/
+.env
+.env.local
+vapid-keys.json
 .DS_Store
+Thumbs.db
 *.log
-.env*
-!.env.example

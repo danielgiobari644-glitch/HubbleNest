@@ -2,7 +2,7 @@
  * HubbleNest Progressive Web App & Web Push Service Worker
  */
 
-const CACHE_NAME = 'hubblenest-v2';
+const CACHE_NAME = 'hubblenest-v4';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -25,11 +25,18 @@ const PRECACHE_ASSETS = [
   '/search.js',
   '/settings.js',
   '/utils.js',
+  '/home.js',
   '/icon.svg',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
   '/apple-touch-icon.png',
-  '/manifest.webmanifest'
+  '/manifest.webmanifest',
+  '/hero-cosmic.png',
+  '/usecase-school.png',
+  '/usecase-team.png',
+  '/usecase-faith.png',
+  '/usecase-community.png',
+  '/welcome-scenic.svg'
 ];
 
 // Install: Pre-cache core shell
