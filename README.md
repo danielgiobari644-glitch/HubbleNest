@@ -9,28 +9,38 @@ real-time conversations, private messaging, file sharing, QR access and more.
 
 </div>
 
-Pure **HTML + CSS + vanilla JavaScript**. No frameworks, no build step.
+Pure **HTML + CSS + vanilla JavaScript** — no frameworks, no build step, no server.
 **Firebase** is the backend (Auth · Firestore · Cloud Messaging) and **Cloudinary** is the file storage.
+
+Every file sits at the root — deploy the folder as-is to any static host.
 
 ---
 
 ## Run Locally
 
-**Prerequisites:** Node.js 18+
+Any tiny static server works (this is a plain static site):
 
-1. Install dependencies (the Express + Web-Push notification server):
-   ```bash
-   npm install
-   ```
-2. Start the app:
-   ```bash
-   npm start
-   ```
-3. Open **http://localhost:3000**
+```bash
+# Python (built-in, no install)
+python3 -m http.server 3000
+```
 
-The same `server.js` serves the static site **and** the push-notification API
-(`/api/push-public-key`, `/api/send-push`, `/api/send-batch-push`), so this single
-command runs the complete application.
+Then open **http://localhost:3000**
+
+Or skip the server entirely and host it online:
+
+### Deploy to Firebase Hosting (recommended — same backend)
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase init hosting     # choose your Firebase project, public root = this folder, SPA rewrite = Yes
+firebase deploy
+```
+
+`firebase init hosting` with **single-page app rewrite = Yes** also enables the
+pretty deep links (`/join/CODE`). Without a rewrite, share invite links using the
+query-string form instead: `https://your-site/?join=CODE` — both work.
 
 ## Configuration
 
@@ -38,8 +48,18 @@ command runs the complete application.
 |------|-------|
 | Firebase config (apiKey, projectId, …) | `firebase.js` |
 | Cloudinary cloud / upload preset | `cloudinary.js` |
-| Firestore security rules | `firestore.rules` → deploy via Firebase Console or CLI |
-| VAPID keys (push) | auto-generated into `vapid-keys.json` on first start |
+| Firestore security rules | `firestore.rules` → paste into Firebase Console → Firestore → Rules |
+| Background push (optional) | Firebase Console → Cloud Messaging → Web Push certificate → save the public key in Firestore at `config/push` (`publicKey` field) |
+
+## Notifications
+
+- **In-app notifications, badges and toasts** run entirely on Firestore realtime
+  listeners — they work out of the box, with zero servers.
+- **Background push** (device notifications while the tab is closed) is optional:
+  register subscriptions client-side once the `config/push` public key exists in
+  Firestore. *Sending* pushes to devices requires a trusted sender holding the
+  private key — e.g. a small Firebase Cloud Function — which is intentionally not
+  part of this pure front-end package.
 
 ## What's Inside
 
@@ -49,7 +69,7 @@ command runs the complete application.
   reactions, attachments (images via Cloudinary), files, links and announcements
 - **People directory** with search, member profiles and private chat requests
 - **Realtime private messaging** with E2E-encrypted payloads (Web Crypto)
-- **Notification center** + Web Push (FCM) with unread badges
+- **Notification center** with unread badges (Firestore realtime)
 - **PWA** — installable, offline shell via service worker, Firestore local persistence
 - **Dark / light theme**, responsive layout with mobile bottom navigation
 
@@ -60,9 +80,6 @@ index.html · style.css · app.js · home.js
 firebase.js · auth.js · spaces.js · chat.js · private-chat.js · chat-requests.js
 people.js · profile.js · files.js · links.js · announcements.js · members.js
 notifications.js · cloudinary.js · encryption.js · qr.js · search.js · settings.js · utils.js
-service-worker.js · firebase-messaging-sw.js · manifest.webmanifest
-server.js · package.json · firestore.rules · generate-icons.js
+service-worker.js · firebase-messaging-sw.js · manifest.webmanifest · firestore.rules
 + icons & illustrations (PNG / SVG at root)
 ```
-
-> Re-generate PWA icons anytime with `node generate-icons.js`.

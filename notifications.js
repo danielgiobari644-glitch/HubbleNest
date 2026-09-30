@@ -6,7 +6,7 @@ import {
   db, 
   collection, 
   doc, 
-  getDocs,
+  getDoc,
   setDoc,
   updateDoc, 
   deleteDoc, 
@@ -105,6 +105,13 @@ function urlBase64ToUint8Array(base64String) {
 
 /**
  * Initialize Web Push Notifications & Register Service Worker
+ *
+ * 100% Firebase / client-side. The VAPID PUBLIC key is read from the
+ * Firestore document `config/push` (field: `publicKey`). Anyone can generate
+ * a Web Push certificate in Firebase Console → Project settings →
+ * Cloud Messaging → Web Push certificates and store the public key there.
+ * If the document is absent, the app silently skips background-push
+ * registration — in-app (Firestore realtime) notifications always work.
  */
 export async function initWebPushNotifications(userId) {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -114,17 +121,19 @@ export async function initWebPushNotifications(userId) {
 
   try {
     const registration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
-    
+
     // Check current permission
     if (Notification.permission !== 'granted') {
       return false;
     }
 
-    // Fetch VAPID public key
-    const res = await fetch('/api/push-public-key');
-    if (!res.ok) return false;
-    const { publicKey } = await res.json();
-    if (!publicKey) return false;
+    // Fetch VAPID public key from Firestore (no server required)
+    const configSnap = await getDoc(doc(db, 'config', 'push'));
+    const publicKey = configSnap.exists() ? configSnap.data().publicKey : null;
+    if (!publicKey) {
+      console.log('Background push not configured: add the Web Push certificate public key to Firestore at config/push { publicKey }.');
+      return false;
+    }
 
     // Check existing or create subscription
     let subscription = await registration.pushManager.getSubscription();
@@ -192,39 +201,19 @@ export async function requestPushPermission(userId) {
 }
 
 /**
- * Dispatch an off-app real Web Push Notification to a recipient user
+ * Dispatch an off-app background push to a recipient user.
+ *
+ * Background push delivery requires a TRUSTED SENDER holding the VAPID
+ * private key (e.g. Firebase Cloud Functions with the Admin SDK) — it can
+ * never be done safely from client code. This app therefore keeps all
+ * notification delivery inside Firebase Firestore, which drives the
+ * realtime in-app notification center, badges and toasts with zero servers.
+ *
+ * Kept as a stable no-op so any caller remains safe.
  */
-export async function sendPushToUser(recipientUserId, { title, body, icon = '/pwa-192x192.png', url = '/' }) {
+export async function sendPushToUser(recipientUserId, { title, body, icon = '/pwa-192x192.png', url = '/' } = {}) {
   if (!recipientUserId) return;
-
-  try {
-    const subsSnap = await getDocs(collection(db, 'users', recipientUserId, 'pushSubscriptions'));
-    const subscriptions = [];
-    subsSnap.forEach(d => {
-      const data = d.data();
-      if (data && data.subscription) {
-        subscriptions.push(data.subscription);
-      }
-    });
-
-    if (subscriptions.length === 0) return;
-
-    // Send via server.js web push batch endpoint
-    await fetch('/api/send-batch-push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subscriptions: subscriptions,
-        payload: {
-          title: title,
-          body: body,
-          icon: icon,
-          badge: '/pwa-192x192.png',
-          data: { url: url }
-        }
-      })
-    });
-  } catch (e) {
-    console.warn('Could not dispatch push notification:', e);
-  }
+  // No-op: background push dispatch intentionally removed — pure Firebase
+  // architecture. Firestore notifications still reach the recipient live.
+  return;
 }
