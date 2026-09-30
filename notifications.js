@@ -1,24 +1,28 @@
 /**
- * HubbleNest Realtime Notifications System
+ * HubbleNest Realtime Notifications System & Real Web Push Notifications
  */
 
 import { 
   db, 
   collection, 
   doc, 
+  getDocs,
+  setDoc,
   updateDoc, 
   deleteDoc, 
   query, 
   where, 
-  orderBy, 
   limit, 
-  onSnapshot 
+  onSnapshot,
+  serverTimestamp,
+  getFcmMessaging,
+  getToken
 } from './firebase.js';
 
 let activeNotifUnsubscribe = null;
 
 /**
- * Subscribe to user's notifications
+ * Subscribe to user's notifications in Firestore
  */
 export function subscribeToNotifications(userId, onNotificationsUpdate) {
   if (activeNotifUnsubscribe) {
@@ -80,5 +84,147 @@ export async function markAllNotificationsAsRead(notifications) {
     } catch (e) {
       console.warn(e);
     }
+  }
+}
+
+// Convert VAPID key URL base64 to Uint8Array
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+/**
+ * Initialize Web Push Notifications & Register Service Worker
+ */
+export async function initWebPushNotifications(userId) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.log('Push notifications are not supported in this browser.');
+    return false;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+    
+    // Check current permission
+    if (Notification.permission !== 'granted') {
+      return false;
+    }
+
+    // Fetch VAPID public key
+    const res = await fetch('/api/push-public-key');
+    if (!res.ok) return false;
+    const { publicKey } = await res.json();
+    if (!publicKey) return false;
+
+    // Check existing or create subscription
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const convertedVapidKey = urlBase64ToUint8Array(publicKey);
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: convertedVapidKey
+      });
+    }
+
+    // Save subscription in Firestore under users/{userId}/pushSubscriptions
+    if (subscription && userId) {
+      const subJson = subscription.toJSON();
+      const endpointHash = btoa(subscription.endpoint).slice(-30).replace(/[/+=]/g, '_');
+      await setDoc(doc(db, 'users', userId, 'pushSubscriptions', endpointHash), {
+        subscription: subJson,
+        userAgent: navigator.userAgent,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // Also attempt FCM token registration if supported
+    try {
+      const messaging = await getFcmMessaging();
+      if (messaging) {
+        const token = await getToken(messaging, {
+          vapidKey: publicKey,
+          serviceWorkerRegistration: registration
+        });
+        if (token && userId) {
+          const tokenHash = btoa(token).slice(-30).replace(/[/+=]/g, '_');
+          await setDoc(doc(db, 'users', userId, 'pushTokens', tokenHash), {
+            token: token,
+            userAgent: navigator.userAgent,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
+      }
+    } catch (fcmErr) {
+      // Standard Web Push already active
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Web push setup error:', err);
+    return false;
+  }
+}
+
+/**
+ * Prompt user for Push Notification Permission
+ */
+export async function requestPushPermission(userId) {
+  if (!('Notification' in window)) {
+    throw new Error('This browser does not support notifications.');
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission === 'granted') {
+    await initWebPushNotifications(userId);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Dispatch an off-app real Web Push Notification to a recipient user
+ */
+export async function sendPushToUser(recipientUserId, { title, body, icon = '/pwa-192x192.png', url = '/' }) {
+  if (!recipientUserId) return;
+
+  try {
+    const subsSnap = await getDocs(collection(db, 'users', recipientUserId, 'pushSubscriptions'));
+    const subscriptions = [];
+    subsSnap.forEach(d => {
+      const data = d.data();
+      if (data && data.subscription) {
+        subscriptions.push(data.subscription);
+      }
+    });
+
+    if (subscriptions.length === 0) return;
+
+    // Send via server.js web push batch endpoint
+    await fetch('/api/send-batch-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscriptions: subscriptions,
+        payload: {
+          title: title,
+          body: body,
+          icon: icon,
+          badge: '/pwa-192x192.png',
+          data: { url: url }
+        }
+      })
+    });
+  } catch (e) {
+    console.warn('Could not dispatch push notification:', e);
   }
 }

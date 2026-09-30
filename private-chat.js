@@ -172,7 +172,7 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
  */
 export async function sendPrivateMessage(currentUser, peerUser, { text, attachments = [], replyTo = null }) {
   if (!currentUser || !peerUser) throw new Error('Invalid participants.');
-  if ((!text || !text.trim()) && attachments.length === 0) {
+  if ((!text || !text.trim()) && attachments.length === 0 && !replyTo) {
     throw new Error('Message cannot be empty.');
   }
 

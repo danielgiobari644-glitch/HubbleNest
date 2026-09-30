@@ -8,7 +8,10 @@ import {
   db,
   onAuthStateChanged, 
   doc, 
-  getDoc 
+  getDoc,
+  collection,
+  addDoc,
+  serverTimestamp 
 } from './firebase.js';
 
 import { 
@@ -166,6 +169,11 @@ const state = {
   notifications: [],
   unreadNotifications: 0,
   replyingTo: null,
+  pendingAttachment: null,
+  pendingAttachments: [],
+  directPendingAttachment: null,
+  directPendingAttachments: [],
+  directReplyingTo: null,
   previousView: 'dashboard'
 };
 
@@ -894,6 +902,19 @@ function initChatListener() {
   });
 }
 
+function getFileIcon(type, filename = '') {
+  const t = (type || '').toLowerCase();
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (t.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'image', 'images'].includes(ext) || t === 'image' || t === 'images') return '🖼️';
+  if (t.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm', 'video', 'videos'].includes(ext) || t === 'video' || t === 'videos') return '🎬';
+  if (t.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'audio'].includes(ext) || t === 'audio') return '🎵';
+  if (['pdf'].includes(ext) || t.includes('pdf')) return '📕';
+  if (['doc', 'docx'].includes(ext) || t.includes('word')) return '📘';
+  if (['xls', 'xlsx', 'csv'].includes(ext) || t.includes('sheet') || t.includes('excel')) return '📊';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || t.includes('zip')) return '📦';
+  return '📄';
+}
+
 function renderChatMessages() {
   const container = document.getElementById('chat-messages-container');
   if (!container) return;
@@ -934,27 +955,47 @@ function renderChatMessages() {
               <a href="${att.url}" target="_blank" rel="noopener noreferrer">
                 <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image"/>
               </a>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Image')}', '${escapeHtml(att.url)}', 'image')">
+                  ↩ Reply to this image
+                </button>
+              </div>
             </div>
           `;
         } else if (att.resourceType === 'video' || att.resourceType === 'videos') {
           return `
             <div class="msg-attachment-preview">
               <video src="${att.url}" controls style="max-height: 220px; width: 100%; border-radius: 6px;"></video>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Video')}', '${escapeHtml(att.url)}', 'video')">
+                  ↩ Reply to this video
+                </button>
+              </div>
             </div>
           `;
         } else if (att.resourceType === 'audio') {
           return `
             <div class="msg-attachment-preview">
               <audio src="${att.url}" controls style="width: 100%;"></audio>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Audio')}', '${escapeHtml(att.url)}', 'audio')">
+                  ↩ Reply to this audio
+                </button>
+              </div>
             </div>
           `;
         } else {
           return `
-            <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; gap: 8px;">
-              <span>📄</span>
-              <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary);">
-                ${escapeHtml(att.originalFilename || 'Document')}
-              </a>
+            <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                <span>📄</span>
+                <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  ${escapeHtml(att.originalFilename || 'Document')}
+                </a>
+              </div>
+              <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Document')}', '${escapeHtml(att.url)}', '${att.resourceType || 'document'}')">
+                ↩ Reply
+              </button>
             </div>
           `;
         }
@@ -972,15 +1013,29 @@ function renderChatMessages() {
             <span class="msg-time">${formatTimeAgo(msg.createdAt)}</span>
           </div>
           <div class="msg-bubble">
-            ${msg.replyTo ? `
-              <div class="msg-reply-snippet">
-                <strong>${escapeHtml(msg.replyTo.senderName)}</strong>: ${escapeHtml(msg.replyTo.text)}
-              </div>
-            ` : ''}
+            ${msg.replyTo ? (
+              msg.replyTo.isFileReply || msg.replyTo.fileUrl ? `
+                <div class="file-reply-snippet">
+                  <span style="font-size: 1.1rem;">${getFileIcon(msg.replyTo.fileType, msg.replyTo.fileName || msg.replyTo.text)}</span>
+                  <div style="min-width: 0; flex: 1;">
+                    <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
+                    <div>
+                      <a href="${msg.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">
+                        ${escapeHtml(msg.replyTo.fileName || msg.replyTo.text)} ↗
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ` : `
+                <div class="msg-reply-snippet">
+                  <strong>${escapeHtml(msg.replyTo.senderName)}</strong>: ${escapeHtml(msg.replyTo.text)}
+                </div>
+              `
+            ) : ''}
             <div>${linkify(msg.text)}</div>
             ${attachmentsHtml}
             <div class="msg-actions-hover">
-              <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.startReply('${msg.id}', '${escapeHtml(msg.senderName)}', '${escapeHtml(msg.text || 'Attachment')}')" title="Reply">↩</button>
+              <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.startReply('${msg.id}', '${escapeHtml(msg.senderName)}', '${escapeHtml(msg.text || (msg.attachments && msg.attachments[0] ? msg.attachments[0].originalFilename : 'Attachment'))}')" title="Reply">↩</button>
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '👍')" title="Thumbs up">👍</button>
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '❤️')" title="Heart">❤️</button>
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.toggleReaction('${msg.id}', '🔥')" title="Fire">🔥</button>
@@ -997,24 +1052,181 @@ function renderChatMessages() {
   container.scrollTop = container.scrollHeight;
 }
 
+export function stageChatAttachment(file) {
+  if (!file) return;
+  const maxMB = state.activeSpace?.settings?.maxFileSizeMB || 100;
+  if (file.size > maxMB * 1024 * 1024) {
+    showToast(`File exceeds maximum size of ${maxMB}MB`, 'error');
+    return;
+  }
+
+  if (!state.pendingAttachments) state.pendingAttachments = [];
+  state.pendingAttachments.push(file);
+  state.pendingAttachment = state.pendingAttachments[0];
+
+  renderChatPendingAttachments();
+  document.getElementById('chat-input-text')?.focus();
+  showToast(`Attached: ${file.name}`, 'info', 2000);
+}
+
+export function removeChatAttachment(index) {
+  if (!state.pendingAttachments) return;
+  state.pendingAttachments.splice(index, 1);
+  state.pendingAttachment = state.pendingAttachments[0] || null;
+  renderChatPendingAttachments();
+}
+
+export function clearAllChatAttachments() {
+  state.pendingAttachments = [];
+  state.pendingAttachment = null;
+  renderChatPendingAttachments();
+  const imgInput = document.getElementById('chat-image-input');
+  const docInput = document.getElementById('chat-doc-input');
+  if (imgInput) imgInput.value = '';
+  if (docInput) docInput.value = '';
+}
+
+export function cancelPendingAttachment() {
+  clearAllChatAttachments();
+}
+
+function renderChatPendingAttachments() {
+  const area = document.getElementById('chat-pending-attachments-area');
+  const grid = document.getElementById('chat-pending-attachments-grid');
+  const legacyBar = document.getElementById('chat-pending-attachment-bar');
+
+  if (!state.pendingAttachments || state.pendingAttachments.length === 0) {
+    if (area) area.style.display = 'none';
+    if (grid) grid.innerHTML = '';
+    if (legacyBar) legacyBar.style.display = 'none';
+    return;
+  }
+
+  if (legacyBar) legacyBar.style.display = 'none';
+
+  if (grid) {
+    grid.innerHTML = state.pendingAttachments.map((f, idx) => {
+      const isImg = f.type && f.type.startsWith('image/');
+      let thumbHtml = '';
+      if (isImg) {
+        const url = URL.createObjectURL(f);
+        thumbHtml = `<img src="${url}" class="pending-thumb-img" alt="preview" />`;
+      } else {
+        thumbHtml = `<span style="font-size: 1.1rem;">${getFileIcon(f.type, f.name)}</span>`;
+      }
+
+      return `
+        <div class="pending-attachment-card">
+          <div class="pending-card-thumb">${thumbHtml}</div>
+          <div class="pending-card-info">
+            <div class="pending-card-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+            <div class="pending-card-size">${formatBytes(f.size)}</div>
+          </div>
+          <button type="button" class="pending-card-remove" onclick="window.HubbleNest.removeChatAttachment(${idx})" title="Remove attachment">✕</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (area) area.style.display = 'block';
+}
+
+export function replyToFile(fileId, fileName, fileUrl, fileType = 'document') {
+  state.replyingTo = {
+    id: fileId,
+    senderName: 'File',
+    text: fileName,
+    fileName: fileName,
+    fileUrl: fileUrl,
+    fileType: fileType,
+    isFileReply: true
+  };
+
+  switchSpaceTab('chat');
+  const bar = document.getElementById('chat-replying-bar');
+  const textEl = document.getElementById('replying-to-text');
+  const iconEl = document.getElementById('replying-icon');
+  if (iconEl) iconEl.textContent = getFileIcon(fileType, fileName);
+  if (bar && textEl) {
+    textEl.innerHTML = `<span style="color: var(--accent-primary); font-weight: 700;">Replying to file:</span> <a href="${fileUrl || '#'}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; margin-left: 4px;" onclick="event.stopPropagation();">${escapeHtml(fileName)}</a>`;
+    bar.style.display = 'flex';
+  }
+  document.getElementById('chat-input-text')?.focus();
+  showToast(`Replying to "${fileName}" — add text or attach a document/image to send`, 'info', 2500);
+}
+
 export async function handleSendMessage() {
   const input = document.getElementById('chat-input-text');
   const text = input ? input.value : '';
+  const pendingFiles = (state.pendingAttachments && state.pendingAttachments.length > 0)
+    ? state.pendingAttachments
+    : (state.pendingAttachment ? [state.pendingAttachment] : []);
 
-  if (!text.trim()) return;
+  if (!text.trim() && pendingFiles.length === 0 && !state.replyingTo) {
+    showToast('Please type a message, attach a file, or reply to a file.', 'warning');
+    return;
+  }
+
+  const sendBtn = document.getElementById('btn-send-chat-msg');
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = pendingFiles.length > 0 ? 'Uploading...' : 'Sending...';
+  }
 
   try {
-    input.value = '';
+    let attachments = [];
+    if (pendingFiles.length > 0) {
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const file = pendingFiles[i];
+        showToast(`Uploading ${file.name} (${i + 1}/${pendingFiles.length})...`, 'info', 2500);
+        const result = await uploadToCloudinary(file, () => {}, state.activeSpace?.settings?.maxFileSizeMB || 100);
+        attachments.push({
+          url: result.url,
+          resourceType: result.resourceType,
+          originalFilename: result.originalFilename || file.name,
+          size: result.bytes || file.size
+        });
+
+        // Also record in space files library for quick archival
+        try {
+          await addDoc(collection(db, 'spaces', state.activeSpace.id, 'files'), {
+            spaceId: state.activeSpace.id,
+            name: result.originalFilename || file.name,
+            size: result.bytes || file.size,
+            type: file.type || 'application/octet-stream',
+            extension: (file.name.split('.').pop() || '').toLowerCase(),
+            category: getFileCategory(file),
+            cloudinaryUrl: result.url,
+            publicId: result.publicId,
+            resourceType: result.resourceType,
+            uploadedBy: state.userProfile.uid,
+            uploaderName: state.userProfile.displayName || 'Member',
+            uploaderPhoto: state.userProfile.photoURL || '',
+            createdAt: serverTimestamp()
+          });
+        } catch (e) {
+          console.warn('Could not record to space files collection', e);
+        }
+      }
+    }
+
     const reply = state.replyingTo;
     cancelReply();
+    clearAllChatAttachments();
+    if (input) input.value = '';
 
     await sendSpaceMessage(state.activeSpace.id, state.userProfile, {
       text: text,
-      attachments: [],
+      attachments: attachments,
       replyTo: reply
     });
   } catch (err) {
     showToast(err.message || 'Failed to send message', 'error');
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+    }
   }
 }
 
@@ -1022,8 +1234,10 @@ export function startReply(id, senderName, text) {
   state.replyingTo = { id, senderName, text };
   const bar = document.getElementById('chat-replying-bar');
   const textEl = document.getElementById('replying-to-text');
+  const iconEl = document.getElementById('replying-icon');
+  if (iconEl) iconEl.textContent = '↩';
   if (bar && textEl) {
-    textEl.textContent = `Replying to ${senderName}: "${text.slice(0, 40)}..."`;
+    textEl.textContent = `Replying to ${senderName}: "${text.slice(0, 45)}..."`;
     bar.style.display = 'flex';
   }
   document.getElementById('chat-input-text')?.focus();
@@ -1041,27 +1255,7 @@ export function cancelReply() {
 
 export async function triggerChatAttachmentUpload(file) {
   if (!file) return;
-
-  showToast(`Uploading ${file.name}...`, 'info');
-  try {
-    const result = await uploadToCloudinary(file, (percent, status) => {
-      // Progress reporting
-    }, state.activeSpace.settings?.maxFileSizeMB || 100);
-
-    await sendSpaceMessage(state.activeSpace.id, state.userProfile, {
-      text: '',
-      attachments: [{
-        url: result.url,
-        resourceType: result.resourceType,
-        originalFilename: result.originalFilename,
-        size: result.bytes
-      }]
-    });
-
-    showToast('File sent to chat', 'success');
-  } catch (err) {
-    showToast(err.message || 'Failed to upload attachment', 'error');
-  }
+  stageChatAttachment(file);
 }
 
 /* ==========================================================================
@@ -1108,6 +1302,9 @@ function renderFilesLibrary() {
           <a href="${f.cloudinaryUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">
             Open
           </a>
+          <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${f.id}', '${escapeHtml(f.name)}', '${escapeHtml(f.cloudinaryUrl)}', '${f.category || 'document'}')">
+            ↩ Reply in Chat
+          </button>
           ${canDelete ? `
             <button class="btn btn-sm btn-ghost" style="color: var(--status-danger);" onclick="window.HubbleNest.deleteFile('${f.id}')">
               Delete
@@ -1191,6 +1388,17 @@ function renderAnnouncementsList() {
         </div>
         <div class="announcement-content">${escapeHtml(ann.content)}</div>
         ${ann.imageURL ? `<img src="${ann.imageURL}" class="announcement-img" alt=""/>` : ''}
+        <div style="display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
+          ${ann.imageURL ? `
+            <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${ann.id}', '${escapeHtml(ann.title)} (Image)', '${escapeHtml(ann.imageURL)}', 'image')">
+              ↩ Reply to this image in Chat
+            </button>
+          ` : `
+            <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${ann.id}', '${escapeHtml(ann.title)} (Announcement)', '', 'announcement')">
+              ↩ Reply in Chat
+            </button>
+          `}
+        </div>
         ${isAdmin ? `
           <div style="display: flex; gap: 8px; margin-top: 12px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
             <button class="btn btn-sm btn-ghost" onclick="window.HubbleNest.togglePin('${ann.id}', ${ann.isPinned})">
@@ -1751,7 +1959,7 @@ function renderDirectMessages() {
       <div class="empty-state" style="padding: 40px 0;">
         <div class="empty-state-icon">🔒</div>
         <h4 class="empty-state-title">This conversation is private</h4>
-        <p class="empty-state-desc">Messages sent here can only be seen and read by you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}.</p>
+        <p class="empty-state-desc">Messages sent here are end-to-end encrypted between you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}.</p>
       </div>
     `;
     return;
@@ -1763,6 +1971,89 @@ function renderDirectMessages() {
     const senderPhoto = isOwn ? state.userProfile.photoURL : state.activeDirectPeer?.photoURL;
     const senderName = isOwn ? state.userProfile.displayName : state.activeDirectPeer?.displayName;
 
+    // Attachments render
+    let attachmentsHtml = '';
+    if (decrypted.attachments && decrypted.attachments.length > 0) {
+      attachmentsHtml = decrypted.attachments.map(att => {
+        if (att.resourceType === 'image' || att.resourceType === 'images') {
+          return `
+            <div class="msg-attachment-preview">
+              <a href="${att.url}" target="_blank" rel="noopener noreferrer">
+                <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image"/>
+              </a>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Image')}', '${escapeHtml(att.url)}', 'image')">
+                  ↩ Reply to this image
+                </button>
+              </div>
+            </div>
+          `;
+        } else if (att.resourceType === 'video' || att.resourceType === 'videos') {
+          return `
+            <div class="msg-attachment-preview">
+              <video src="${att.url}" controls style="max-height: 220px; width: 100%; border-radius: 6px;"></video>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Video')}', '${escapeHtml(att.url)}', 'video')">
+                  ↩ Reply to this video
+                </button>
+              </div>
+            </div>
+          `;
+        } else if (att.resourceType === 'audio') {
+          return `
+            <div class="msg-attachment-preview">
+              <audio src="${att.url}" controls style="width: 100%;"></audio>
+              <div style="margin-top: 4px;">
+                <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Audio')}', '${escapeHtml(att.url)}', 'audio')">
+                  ↩ Reply to this audio
+                </button>
+              </div>
+            </div>
+          `;
+        } else {
+          return `
+            <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                <span>${getFileIcon(att.resourceType, att.originalFilename)}</span>
+                <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  ${escapeHtml(att.originalFilename || 'Document')}
+                </a>
+              </div>
+              <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Document')}', '${escapeHtml(att.url)}', '${att.resourceType || 'document'}')">
+                ↩ Reply
+              </button>
+            </div>
+          `;
+        }
+      }).join('');
+    }
+
+    // Reply context snippet render
+    let replySnippetHtml = '';
+    if (decrypted.replyTo) {
+      if (decrypted.replyTo.isFileReply || decrypted.replyTo.fileUrl) {
+        replySnippetHtml = `
+          <div class="file-reply-snippet">
+            <span style="font-size: 1.1rem;">${getFileIcon(decrypted.replyTo.fileType, decrypted.replyTo.fileName || decrypted.replyTo.text)}</span>
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
+              <div>
+                <a href="${decrypted.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">
+                  ${escapeHtml(decrypted.replyTo.fileName || decrypted.replyTo.text)} ↗
+                </a>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        replySnippetHtml = `
+          <div class="msg-reply-snippet">
+            <strong>${escapeHtml(decrypted.replyTo.senderName || 'Member')}</strong>: ${escapeHtml(decrypted.replyTo.text || '')}
+          </div>
+        `;
+      }
+    }
+
     return `
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
         <div class="msg-avatar" style="width: 32px; height: 32px;">
@@ -1770,14 +2061,17 @@ function renderDirectMessages() {
         </div>
         <div class="msg-bubble-box">
           <div class="msg-bubble">
-            ${escapeHtml(decrypted.text || '[Attachment]')}
-            ${isOwn ? `
-              <div class="msg-actions-hover">
+            ${replySnippetHtml}
+            ${decrypted.text ? `<div>${linkify(decrypted.text)}</div>` : ''}
+            ${attachmentsHtml}
+            <div class="msg-actions-hover">
+              <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.replyToDirectMessage('${msg.id}', '${escapeHtml(senderName)}', '${escapeHtml(decrypted.text || (decrypted.attachments && decrypted.attachments[0] ? decrypted.attachments[0].originalFilename : 'Attachment'))}')" title="Reply">↩</button>
+              ${isOwn ? `
                 <button class="btn-ghost msg-delete-action" style="padding: 2px 6px; color: var(--status-danger);" onclick="window.HubbleNest.deleteDirectMessage('${msg.id}')" title="Delete message">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                 </button>
-              </div>
-            ` : ''}
+              ` : ''}
+            </div>
           </div>
           <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; text-align: ${isOwn ? 'right' : 'left'};">
             ${formatTimeAgo(msg.createdAt)} · 🔒 Private
@@ -1788,6 +2082,127 @@ function renderDirectMessages() {
   }).join('');
 
   container.scrollTop = container.scrollHeight;
+}
+
+export function stageDirectAttachment(file) {
+  if (!file) return;
+  const maxMB = 100;
+  if (file.size > maxMB * 1024 * 1024) {
+    showToast(`File exceeds maximum size of ${maxMB}MB`, 'error');
+    return;
+  }
+
+  if (!state.directPendingAttachments) state.directPendingAttachments = [];
+  state.directPendingAttachments.push(file);
+  state.directPendingAttachment = state.directPendingAttachments[0];
+
+  renderDirectPendingAttachments();
+  document.getElementById('direct-message-input')?.focus();
+  showToast(`Attached: ${file.name}`, 'info', 2000);
+}
+
+export function removeDirectAttachment(index) {
+  if (!state.directPendingAttachments) return;
+  state.directPendingAttachments.splice(index, 1);
+  state.directPendingAttachment = state.directPendingAttachments[0] || null;
+  renderDirectPendingAttachments();
+}
+
+export function clearAllDirectAttachments() {
+  state.directPendingAttachments = [];
+  state.directPendingAttachment = null;
+  renderDirectPendingAttachments();
+  const imgInput = document.getElementById('direct-image-input');
+  const docInput = document.getElementById('direct-doc-input');
+  if (imgInput) imgInput.value = '';
+  if (docInput) docInput.value = '';
+}
+
+export function cancelDirectPendingAttachment() {
+  clearAllDirectAttachments();
+}
+
+function renderDirectPendingAttachments() {
+  const area = document.getElementById('direct-pending-attachments-area');
+  const grid = document.getElementById('direct-pending-attachments-grid');
+  const legacyBar = document.getElementById('direct-pending-attachment-bar');
+
+  if (!state.directPendingAttachments || state.directPendingAttachments.length === 0) {
+    if (area) area.style.display = 'none';
+    if (grid) grid.innerHTML = '';
+    if (legacyBar) legacyBar.style.display = 'none';
+    return;
+  }
+
+  if (legacyBar) legacyBar.style.display = 'none';
+
+  if (grid) {
+    grid.innerHTML = state.directPendingAttachments.map((f, idx) => {
+      const isImg = f.type && f.type.startsWith('image/');
+      let thumbHtml = '';
+      if (isImg) {
+        const url = URL.createObjectURL(f);
+        thumbHtml = `<img src="${url}" class="pending-thumb-img" alt="preview" />`;
+      } else {
+        thumbHtml = `<span style="font-size: 1.1rem;">${getFileIcon(f.type, f.name)}</span>`;
+      }
+
+      return `
+        <div class="pending-attachment-card">
+          <div class="pending-card-thumb">${thumbHtml}</div>
+          <div class="pending-card-info">
+            <div class="pending-card-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+            <div class="pending-card-size">${formatBytes(f.size)}</div>
+          </div>
+          <button type="button" class="pending-card-remove" onclick="window.HubbleNest.removeDirectAttachment(${idx})" title="Remove attachment">✕</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (area) area.style.display = 'block';
+}
+
+export function replyToDirectMessage(id, senderName, text) {
+  state.directReplyingTo = { id, senderName, text };
+  const bar = document.getElementById('direct-replying-bar');
+  const textEl = document.getElementById('direct-replying-to-text');
+  const iconEl = document.getElementById('direct-replying-icon');
+  if (iconEl) iconEl.textContent = '↩';
+  if (bar && textEl) {
+    textEl.textContent = `Replying to ${senderName}: "${(text || '').slice(0, 45)}..."`;
+    bar.style.display = 'flex';
+  }
+  document.getElementById('direct-message-input')?.focus();
+}
+
+export function replyToDirectFile(fileId, fileName, fileUrl, fileType = 'document') {
+  state.directReplyingTo = {
+    id: fileId,
+    senderName: 'File',
+    text: fileName,
+    fileName: fileName,
+    fileUrl: fileUrl,
+    fileType: fileType,
+    isFileReply: true
+  };
+
+  const bar = document.getElementById('direct-replying-bar');
+  const textEl = document.getElementById('direct-replying-to-text');
+  const iconEl = document.getElementById('direct-replying-icon');
+  if (iconEl) iconEl.textContent = getFileIcon(fileType, fileName);
+  if (bar && textEl) {
+    textEl.innerHTML = `<span style="color: var(--accent-primary); font-weight: 700;">Replying to file:</span> <a href="${fileUrl || '#'}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; margin-left: 4px;" onclick="event.stopPropagation();">${escapeHtml(fileName)}</a>`;
+    bar.style.display = 'flex';
+  }
+  document.getElementById('direct-message-input')?.focus();
+  showToast(`Replying to "${fileName}" — add text or attach a document/image to send`, 'info', 2500);
+}
+
+export function cancelDirectReply() {
+  state.directReplyingTo = null;
+  const bar = document.getElementById('direct-replying-bar');
+  if (bar) bar.style.display = 'none';
 }
 
 export async function deleteDirectMessage(msgId) {
@@ -1801,18 +2216,60 @@ export async function deleteDirectMessage(msgId) {
 
 export async function handleSendDirectMessage() {
   const input = document.getElementById('direct-message-input');
-  if (!input || !input.value.trim() || !state.activeDirectPeer) return;
+  const text = input ? input.value : '';
+  const pendingFiles = (state.directPendingAttachments && state.directPendingAttachments.length > 0)
+    ? state.directPendingAttachments
+    : (state.directPendingAttachment ? [state.directPendingAttachment] : []);
 
-  const text = input.value.trim();
-  input.value = '';
+  if (!state.activeDirectPeer) {
+    showToast('No active peer selected for direct chat.', 'error');
+    return;
+  }
+
+  if (!text.trim() && pendingFiles.length === 0 && !state.directReplyingTo) {
+    showToast('Please type a message, attach a file, or reply to a file.', 'warning');
+    return;
+  }
+
+  const sendBtn = document.getElementById('btn-send-direct-msg');
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = pendingFiles.length > 0 ? 'Uploading...' : 'Sending...';
+  }
 
   try {
+    let attachments = [];
+    if (pendingFiles.length > 0) {
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const file = pendingFiles[i];
+        showToast(`Uploading ${file.name}...`, 'info', 2500);
+        const result = await uploadToCloudinary(file, () => {}, 100);
+        attachments.push({
+          url: result.url,
+          resourceType: result.resourceType,
+          originalFilename: result.originalFilename || file.name,
+          size: result.bytes || file.size
+        });
+      }
+    }
+
+    const reply = state.directReplyingTo;
+    cancelDirectReply();
+    clearAllDirectAttachments();
+    if (input) input.value = '';
+
     await sendPrivateMessage(state.userProfile, state.activeDirectPeer, {
       text: text,
-      attachments: []
+      attachments: attachments,
+      replyTo: reply
     });
   } catch (err) {
     showToast(err.message || 'Unable to send message right now', 'error');
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+    }
   }
 }
 
@@ -2432,6 +2889,11 @@ window.HubbleNest = {
   handleSendMessage,
   startReply,
   cancelReply,
+  replyToFile,
+  stageChatAttachment,
+  removeChatAttachment,
+  clearAllChatAttachments,
+  cancelPendingAttachment,
   toggleReaction: (msgId, emoji) => toggleMessageReaction(state.activeSpace.id, msgId, emoji, state.currentUser.uid),
   deleteMessage: (msgId) => deleteSpaceMessage(state.activeSpace.id, msgId),
   deleteDirectMessage,
@@ -2440,6 +2902,13 @@ window.HubbleNest = {
   // Direct Messages
   selectConversation,
   handleSendDirectMessage,
+  stageDirectAttachment,
+  removeDirectAttachment,
+  clearAllDirectAttachments,
+  cancelDirectPendingAttachment,
+  replyToDirectMessage,
+  replyToDirectFile,
+  cancelDirectReply,
 
   // Notifications
   handleNotificationClick,

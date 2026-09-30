@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 320" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Sky Gradient -->
+    <linearGradient id="twilightSky" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14133b"/>
+      <stop offset="40%" stop-color="#2a1f5d"/>
+      <stop offset="75%" stop-color="#552f7a"/>
+      <stop offset="100%" stop-color="#b4537c"/>
+    </linearGradient>
+
+    <!-- Warm Horizon Glow -->
+    <radialGradient id="sunGlow" cx="80%" cy="75%" r="60%">
+      <stop offset="0%" stop-color="#ff8e72" stop-opacity="0.8"/>
+      <stop offset="35%" stop-color="#d946ef" stop-opacity="0.4"/>
+      <stop offset="70%" stop-color="#4f46e5" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#14133b" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Rolling Hills Gradients -->
+    <linearGradient id="hillBack" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b2064"/>
+      <stop offset="100%" stop-color="#1c113b"/>
+    </linearGradient>
+    <linearGradient id="hillMid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#241b4e"/>
+      <stop offset="100%" stop-color="#0f0c29"/>
+    </linearGradient>
+    <linearGradient id="hillFront" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1847"/>
+      <stop offset="100%" stop-color="#0b0a1f"/>
+    </linearGradient>
+
+    <!-- Window Light Glow -->
+    <filter id="windowGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Sky Background -->
+  <rect width="540" height="320" fill="url(#twilightSky)"/>
+  <rect width="540" height="320" fill="url(#sunGlow)"/>
+
+  <!-- Stars -->
+  <g fill="#ffffff" opacity="0.75">
+    <circle cx="45" cy="40" r="1"/>
+    <circle cx="120" cy="25" r="1.5"/>
+    <circle cx="180" cy="65" r="1"/>
+    <circle cx="260" cy="30" r="1.2"/>
+    <circle cx="340" cy="50" r="1.5"/>
+    <circle cx="410" cy="20" r="1"/>
+    <circle cx="480" cy="45" r="1.2"/>
+    <circle cx="90" cy="90" r="1.2"/>
+    <circle cx="210" cy="110" r="1.5"/>
+    <circle cx="310" cy="95" r="1"/>
+    <circle cx="460" cy="85" r="1.5"/>
+    <circle cx="510" cy="60" r="1"/>
+  </g>
+
+  <!-- Distant Mountain/Hill -->
+  <path d="M 0 250 Q 140 180 320 210 T 540 190 L 540 320 L 0 320 Z" fill="url(#hillBack)"/>
+
+  <!-- Mid Ground Hill -->
+  <path d="M 0 270 Q 180 190 380 230 Q 470 245 540 220 L 540 320 L 0 320 Z" fill="url(#hillMid)"/>
+
+  <!-- Foreground Hill with House -->
+  <path d="M 0 320 Q 220 230 420 235 Q 490 238 540 270 L 540 320 Z" fill="url(#hillFront)"/>
+
+  <!-- Cozy House on the Hill -->
+  <g transform="translate(375, 178)">
+    <!-- House Shadow/Base -->
+    <ellipse cx="38" cy="74" rx="42" ry="8" fill="#080714" opacity="0.6"/>
+
+    <!-- House Body -->
+    <path d="M 12 40 L 64 40 L 64 74 L 12 74 Z" fill="#201a44"/>
+    
+    <!-- Roof with Overhang -->
+    <path d="M 4 42 L 38 12 L 72 42 Z" fill="#2d225a"/>
+    <path d="M 38 12 L 44 8 L 74 38 L 72 42 Z" fill="#1b143a"/>
+
+    <!-- Chimney -->
+    <rect x="50" y="16" width="8" height="16" fill="#1e1840"/>
+
+    <!-- Warm Glowing Window -->
+    <!-- Window Light Bloom on ground -->
+    <ellipse cx="36" cy="66" rx="20" ry="12" fill="#f59e0b" opacity="0.3" filter="url(#windowGlow)"/>
+    <!-- Window Frame -->
+    <rect x="26" y="48" width="20" height="20" rx="3" fill="#fef08a" filter="url(#windowGlow)"/>
+    <rect x="28" y="50" width="16" height="16" rx="2" fill="#fbbf24"/>
+    <!-- Window Panes -->
+    <line x1="36" y1="50" x2="36" y2="66" stroke="#b45309" stroke-width="1.5"/>
+    <line x1="28" y1="58" x2="44" y2="58" stroke="#b45309" stroke-width="1.5"/>
+
+    <!-- Soft Light Beam -->
+    <polygon points="26,58 46,58 64,88 12,88" fill="#f59e0b" opacity="0.15"/>
+  </g>
+
+  <!-- Solitary Tree on Right Hill -->
+  <g transform="translate(468, 175)">
+    <!-- Tree Trunk -->
+    <path d="M 12 55 Q 11 35 14 25" stroke="#100c26" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M 14 32 Q 18 24 22 20" stroke="#100c26" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <!-- Foliage -->
+    <circle cx="16" cy="18" r="16" fill="#140f30"/>
+    <circle cx="24" cy="14" r="12" fill="#1d1544"/>
+    <circle cx="10" cy="14" r="10" fill="#19123b"/>
+  </g>
+</svg>

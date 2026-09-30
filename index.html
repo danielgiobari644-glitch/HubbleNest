@@ -11,7 +11,21 @@
   <meta name="twitter:card" content="summary_large_image" />
   
   <link rel="stylesheet" href="./style.css" />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%233b82f6'/%3E%3Ctext x='50' y='68' font-size='56' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='white'%3EH%3C/text%3E%3C/svg%3E" />
+  
+  <!-- PWA Manifest & App Compliance -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0b0f19" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="HubbleNest" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+
+  <!-- Modern Icon System (Lucide) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
@@ -1099,17 +1113,50 @@
               <div class="chat-messages" id="chat-messages-container"></div>
               
               <div class="chat-composer">
+                <!-- Reply Context Bar -->
                 <div class="replying-bar" id="chat-replying-bar" style="display: none;">
-                  <span id="replying-to-text">Replying...</span>
-                  <button type="button" class="btn-ghost" style="padding: 0 4px;" onclick="window.HubbleNest.cancelReply()">✕</button>
+                  <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+                    <span id="replying-icon">↩</span>
+                    <span id="replying-to-text" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">Replying...</span>
+                  </div>
+                  <button type="button" class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.cancelReply()">✕</button>
                 </div>
+
+                <!-- Staged Pending Attachments Area (Images, Documents, Media) -->
+                <div class="pending-attachments-area" id="chat-pending-attachments-area" style="display: none;">
+                  <div class="pending-attachments-header">
+                    <span class="pending-attachments-title">📎 Attached Media & Documents</span>
+                    <button type="button" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" onclick="window.HubbleNest.clearAllChatAttachments()">Remove all</button>
+                  </div>
+                  <div class="pending-attachments-grid" id="chat-pending-attachments-grid"></div>
+                </div>
+
+                <!-- Legacy Staged Bar for backwards compatibility -->
+                <div class="pending-attachment-bar" id="chat-pending-attachment-bar" style="display: none;">
+                  <div class="pending-attachment-info">
+                    <div id="chat-pending-preview-thumb" class="pending-preview-thumb">📄</div>
+                    <div style="min-width: 0; flex: 1;">
+                      <div id="chat-pending-file-name" class="pending-file-name">file.pdf</div>
+                      <div id="chat-pending-file-size" class="pending-file-size">0 KB</div>
+                    </div>
+                  </div>
+                  <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.9rem;" onclick="window.HubbleNest.cancelPendingAttachment()" title="Remove attachment">✕</button>
+                </div>
+
                 <div class="composer-row">
-                  <input type="file" id="chat-attachment-input" style="display: none;" onchange="window.HubbleNest.triggerChatAttachmentUpload(this.files[0])" />
-                  <button type="button" class="icon-btn" onclick="document.getElementById('chat-attachment-input').click()" title="Attach image, video, audio, or document">
+                  <!-- File Selectors -->
+                  <input type="file" id="chat-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageChatAttachment(this.files[0])" />
+                  <input type="file" id="chat-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageChatAttachment(this.files[0])" />
+
+                  <button type="button" class="composer-icon-btn" onclick="document.getElementById('chat-image-input').click()" title="Add an image to your message">
+                    🖼️
+                  </button>
+                  <button type="button" class="composer-icon-btn" onclick="document.getElementById('chat-doc-input').click()" title="Add any document, PDF, audio or file">
                     📎
                   </button>
-                  <input type="text" id="chat-input-text" class="composer-input" placeholder="Type a message... (Press Enter to send)" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendMessage()" />
-                  <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleSendMessage()">
+
+                  <input type="text" id="chat-input-text" class="composer-input" placeholder="Type a message or reply... (Press Enter to send)" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendMessage()" />
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-send-chat-msg" onclick="window.HubbleNest.handleSendMessage()">
                     Send
                   </button>
                 </div>
@@ -1367,9 +1414,50 @@
                 <div class="chat-messages" id="direct-messages-feed"></div>
 
                 <div class="chat-composer">
+                  <!-- Direct Reply Context Bar -->
+                  <div class="replying-bar" id="direct-replying-bar" style="display: none;">
+                    <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+                      <span id="direct-replying-icon">↩</span>
+                      <span id="direct-replying-to-text" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">Replying...</span>
+                    </div>
+                    <button type="button" class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.cancelDirectReply()">✕</button>
+                  </div>
+
+                  <!-- Direct Staged Pending Attachments Area -->
+                  <div class="pending-attachments-area" id="direct-pending-attachments-area" style="display: none;">
+                    <div class="pending-attachments-header">
+                      <span class="pending-attachments-title">📎 Attached Media & Documents</span>
+                      <button type="button" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" onclick="window.HubbleNest.clearAllDirectAttachments()">Remove all</button>
+                    </div>
+                    <div class="pending-attachments-grid" id="direct-pending-attachments-grid"></div>
+                  </div>
+
+                  <!-- Legacy Staged Pending Attachment Bar for Direct Chat -->
+                  <div class="pending-attachment-bar" id="direct-pending-attachment-bar" style="display: none;">
+                    <div class="pending-attachment-info">
+                      <div id="direct-pending-preview-thumb" class="pending-preview-thumb">📄</div>
+                      <div style="min-width: 0; flex: 1;">
+                        <div id="direct-pending-file-name" class="pending-file-name">file.pdf</div>
+                        <div id="direct-pending-file-size" class="pending-file-size">0 KB</div>
+                      </div>
+                    </div>
+                    <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.9rem;" onclick="window.HubbleNest.cancelDirectPendingAttachment()" title="Remove attachment">✕</button>
+                  </div>
+
                   <div class="composer-row">
-                    <input type="text" id="direct-message-input" class="composer-input" placeholder="Type a private message..." onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendDirectMessage()" />
-                    <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleSendDirectMessage()">
+                    <!-- File Selectors for Direct Chat -->
+                    <input type="file" id="direct-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageDirectAttachment(this.files[0])" />
+                    <input type="file" id="direct-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageDirectAttachment(this.files[0])" />
+
+                    <button type="button" class="composer-icon-btn" onclick="document.getElementById('direct-image-input').click()" title="Add an image to private message">
+                      🖼️
+                    </button>
+                    <button type="button" class="composer-icon-btn" onclick="document.getElementById('direct-doc-input').click()" title="Add any document, PDF, audio or file">
+                      📎
+                    </button>
+
+                    <input type="text" id="direct-message-input" class="composer-input" placeholder="Type a private message or reply..." onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendDirectMessage()" />
+                    <button type="button" class="btn btn-primary btn-sm" id="btn-send-direct-msg" onclick="window.HubbleNest.handleSendDirectMessage()">
                       Send
                     </button>
                   </div>

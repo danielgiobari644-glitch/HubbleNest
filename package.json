@@ -10,6 +10,8 @@
     "lint": "node -e 'console.log(\"Lint passed\")'"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "sharp": "^0.35.5",
+    "web-push": "^3.6.7"
   }
 }

@@ -77,7 +77,7 @@ export function unsubscribeFromChat() {
  */
 export async function sendSpaceMessage(spaceId, userProfile, { text, attachments = [], replyTo = null }) {
   if (!userProfile) throw new Error('Must be signed in to send messages.');
-  if ((!text || !text.trim()) && attachments.length === 0) {
+  if ((!text || !text.trim()) && attachments.length === 0 && !replyTo) {
     throw new Error('Message cannot be empty.');
   }
 
@@ -93,9 +93,13 @@ export async function sendSpaceMessage(spaceId, userProfile, { text, attachments
     text: cleanText,
     attachments: attachments, // Cloudinary URLs and metadata
     replyTo: replyTo ? {
-      id: replyTo.id,
-      text: replyTo.text ? (replyTo.text.length > 80 ? replyTo.text.slice(0, 80) + '...' : replyTo.text) : 'Attachment',
-      senderName: replyTo.senderName
+      id: replyTo.id || null,
+      text: replyTo.text ? (replyTo.text.length > 100 ? replyTo.text.slice(0, 100) + '...' : replyTo.text) : (replyTo.fileName || 'Attachment'),
+      senderName: replyTo.senderName || 'File',
+      fileName: replyTo.fileName || null,
+      fileUrl: replyTo.fileUrl || null,
+      fileType: replyTo.fileType || null,
+      isFileReply: !!replyTo.isFileReply
     } : null,
     reactions: {},
     links: detectedLinks,
