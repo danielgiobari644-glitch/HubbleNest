@@ -132,7 +132,10 @@
             <div class="brand-icon" aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
             </div>
-            <span class="brand-name">HubbleNest</span>
+            <span class="brand-text">
+              <span class="brand-name">HubbleNest</span>
+              <span class="brand-credit">Created by Giobari Daniel</span>
+            </span>
           </div>
 
           <div class="landing-nav-links">
@@ -753,7 +756,10 @@
           <div class="brand-icon" aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
           </div>
-          <span class="brand-name">HubbleNest</span>
+          <span class="brand-text">
+            <span class="brand-name">HubbleNest</span>
+            <span class="brand-credit">Created by Giobari Daniel</span>
+          </span>
         </div>
 
         <nav class="sidebar-nav">
@@ -807,8 +813,6 @@
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
-
-        <div class="hn-credit hn-credit-sidebar" aria-hidden="true">Created by Giobari Daniel</div>
       </aside>
 
       <!-- Main Content Viewport -->
@@ -866,53 +870,20 @@
               <!-- Community Feed (Real official community Space messages) -->
               <div class="home-feed" id="home-feed" aria-live="polite"></div>
 
-              <!-- Your Spaces Section -->
-              <div class="dash-spaces-section" id="dash-spaces-section">
-                <div class="dash-section-head">
-                  <div class="dash-section-titles">
-                    <h2 class="dash-title">Your Spaces</h2>
-                    <p class="dash-subtitle">Spaces you own or participate in as an approved member.</p>
-                  </div>
-                  <div class="dash-actions">
-                    <input type="text" id="dash-quick-join-input" class="form-input quick-join-inline" placeholder="HN-XXXXXX" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleQuickCodeJoin()" />
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.handleQuickCodeJoin()" title="Join with a code">
-                      Join with Code
-                    </button>
-                    <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.openCreateSpacePage()">
-                      Create Space
-                    </button>
-                  </div>
+              <!-- Real-time stats (clickable) -->
+              <div class="dash-stats-row">
+                <div class="dash-stat-item" onclick="window.HubbleNest.openMySpacesPage()" title="Open Your Spaces">
+                  <span class="dash-stat-num" id="dash-stat-spaces">0</span>
+                  <span class="dash-stat-label">My Spaces</span>
                 </div>
-
-                <!-- Real-time stats (clickable) -->
-                <div class="dash-stats-row">
-                  <div class="dash-stat-item" onclick="window.HubbleNest.loadDashboard()" title="View all your active spaces">
-                    <span class="dash-stat-num" id="dash-stat-spaces">0</span>
-                    <span class="dash-stat-label">My Spaces</span>
-                  </div>
-                  <div class="dash-stat-item" onclick="window.HubbleNest.openPeopleView()" title="Browse all HubbleNest members">
-                    <span class="dash-stat-num" id="dash-stat-people">0</span>
-                    <span class="dash-stat-label">People</span>
-                  </div>
-                  <div class="dash-stat-item" onclick="window.HubbleNest.openDirectMessagesView()" title="View private conversations">
-                    <span class="dash-stat-num" id="dash-stat-dms">0</span>
-                    <span class="dash-stat-label">Private Chats</span>
-                  </div>
+                <div class="dash-stat-item" onclick="window.HubbleNest.openPeopleView()" title="Browse all HubbleNest members">
+                  <span class="dash-stat-num" id="dash-stat-people">0</span>
+                  <span class="dash-stat-label">People</span>
                 </div>
-
-                <!-- Category Filter Bar -->
-                <div class="category-tabs">
-                  <button class="tab-btn tab-active" data-category="All">All Spaces (<span id="cat-count-All">0</span>)</button>
-                  <button class="tab-btn" data-category="Classroom">Classroom (<span id="cat-count-Classroom">0</span>)</button>
-                  <button class="tab-btn" data-category="Study Group">Study Group (<span id="cat-count-StudyGroup">0</span>)</button>
-                  <button class="tab-btn" data-category="Church & Fellowship">Fellowship (<span id="cat-count-Fellowship">0</span>)</button>
-                  <button class="tab-btn" data-category="Team & Project">Team &amp; Project (<span id="cat-count-Team">0</span>)</button>
-                  <button class="tab-btn" data-category="Community">Community (<span id="cat-count-Community">0</span>)</button>
-                  <button class="tab-btn" data-category="Workshop">Workshop (<span id="cat-count-Workshop">0</span>)</button>
+                <div class="dash-stat-item" onclick="window.HubbleNest.openDirectMessagesView()" title="View private conversations">
+                  <span class="dash-stat-num" id="dash-stat-dms">0</span>
+                  <span class="dash-stat-label">Private Chats</span>
                 </div>
-
-                <!-- Grid of Spaces -->
-                <div class="spaces-grid" id="spaces-grid"></div>
               </div>
             </div>
 
@@ -970,6 +941,45 @@
             </aside>
 
           </div>
+        </div>
+
+        <!-- VIEW: MY SPACES (dedicated page) -->
+        <div class="view-section" id="view-my-spaces">
+          <div class="dash-header">
+            <div class="dash-section-titles">
+              <h1 class="dash-title">Your Spaces</h1>
+              <p class="dash-subtitle">Spaces you own or participate in as an approved member.</p>
+            </div>
+            <div class="dash-actions">
+              <input type="text" id="dash-quick-join-input" class="form-input quick-join-inline" placeholder="HN-XXXXXX" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleQuickCodeJoin()" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.handleQuickCodeJoin()" title="Join with a code">
+                Join with Code
+              </button>
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.openCreateSpacePage()">
+                Create Space
+              </button>
+            </div>
+          </div>
+
+          <!-- Toolbar: search + category filters -->
+          <div class="spaces-page-toolbar">
+            <div class="search-field spaces-search-field">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" id="spaces-search-input" class="form-input bare" placeholder="Search your spaces by name, code or topic..." oninput="window.HubbleNest.handleSpacesSearch(this.value)" />
+            </div>
+            <div class="category-tabs spaces-page-tabs">
+              <button class="tab-btn tab-active" data-category="All">All Spaces (<span id="cat-count-All">0</span>)</button>
+              <button class="tab-btn" data-category="Classroom">Classroom (<span id="cat-count-Classroom">0</span>)</button>
+              <button class="tab-btn" data-category="Study Group">Study Group (<span id="cat-count-StudyGroup">0</span>)</button>
+              <button class="tab-btn" data-category="Church & Fellowship">Fellowship (<span id="cat-count-Fellowship">0</span>)</button>
+              <button class="tab-btn" data-category="Team & Project">Team &amp; Project (<span id="cat-count-Team">0</span>)</button>
+              <button class="tab-btn" data-category="Community">Community (<span id="cat-count-Community">0</span>)</button>
+              <button class="tab-btn" data-category="Workshop">Workshop (<span id="cat-count-Workshop">0</span>)</button>
+            </div>
+          </div>
+
+          <!-- Grid of Spaces -->
+          <div class="spaces-grid spaces-grid-page" id="spaces-grid"></div>
         </div>
 
         <!-- VIEW: SPACE DETAIL -->

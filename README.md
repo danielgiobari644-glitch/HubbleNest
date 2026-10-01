@@ -91,6 +91,40 @@ members' browsers (no server needed). One-time setup by the project owner:
 > Authentication → delete the user, and Firestore → `users` → delete its
 > profile document.
 
+## Troubleshooting
+
+**Push activation fails with a 401 / "token-subscribe-failed" /
+"Request is missing required authentication credential"
+(`fcmregistrations.googleapis.com`):**
+the project's **Firebase Cloud Messaging API** is not enabled. This is
+project-side config, not an app bug. Fix (2 minutes, owner only):
+
+1. Open <https://console.cloud.google.com/apis/library/fcm.googleapis.com>
+   (select the **hubblenest** project).
+2. Click **Enable** on *Firebase Cloud Messaging API*.
+3. While there, also enable *Firebase Installations API* if it isn't already
+   (<https://console.cloud.google.com/apis/library/firebaseinstallations.googleapis.com>).
+4. In the app, press **Turn on notifications** again — the device now registers
+   successfully.
+
+If it still fails after enabling the API, the Web Push certificate (VAPID key)
+may belong to a different project: Firebase Console → Project settings →
+**Cloud Messaging** → Web Push certificates, and either set that key in the
+Firestore `config/push` document as `publicKey` or use the embedded default.
+
+**Google Sign-In popup closes instantly or logs
+"Cross-Origin-Opener-Policy policy would block the window.closed call":**
+GitHub Pages (and some hosts) send restrictive COOP headers. HubbleNest
+automatically falls back to the full-page redirect sign-in, so this is handled.
+Also make sure your domain is authorized: Firebase Console → Authentication →
+Settings → **Authorized domains** → add `danielgiobari644-glitch.github.io`.
+
+**"Banner not shown: beforeinstallpromptevent.preventDefault() called"
+in the console:** this is Chrome's standard informational note for sites with a
+custom install button (Twitter, Spotify and GitHub show it too). It is not an
+error — the native install banner appears when the **Download App** button in
+the hero is clicked, which calls `prompt()` on the captured event.
+
 ## What's Inside
 
 - **Landing page** with hero (incl. **Download App** PWA install button),

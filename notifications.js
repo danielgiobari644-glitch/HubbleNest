@@ -36,6 +36,7 @@ import {
 } from './firebase.js';
 
 import { sendFcmMessage } from './fcm-sender.js';
+import { showToast } from './utils.js';
 
 let activeNotifUnsubscribe = null;
 
@@ -190,6 +191,18 @@ export async function initWebPushNotifications(userId) {
     return true;
   } catch (err) {
     console.warn('Web push setup error:', err);
+    const code = err?.code || '';
+    const msg = String(err?.message || '');
+    if (code === 'messaging/token-subscribe-failed' ||
+        code === 'messaging/failed-service-worker-registration' ||
+        msg.includes('token-subscribe-failed') ||
+        msg.includes('missing required authentication credential') ||
+        msg.includes('Requested entity was not found')) {
+      // 401 on fcmregistrations.googleapis.com = the project's Firebase Cloud
+      // Messaging API is disabled (or the VAPID key belongs to another
+      // project). Nothing the app can do — this needs project-side config.
+      showToast('Push could not be activated: the Firebase Cloud Messaging API is not enabled for this Firebase project. The project owner must enable it in Google Cloud Console → APIs & Services → “Firebase Cloud Messaging API” (see README → Troubleshooting).', 'error', 10000);
+    }
     return false;
   }
 }

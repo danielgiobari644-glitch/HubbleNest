@@ -263,11 +263,16 @@ export async function handleInstallClick() {
     const { outcome } = await deferredInstallPrompt.userChoice;
     if (outcome === 'accepted') {
       showToast('Installing HubbleNest…', 'success');
+    } else {
+      showToast('No problem — you can install anytime from the Download App button.', 'info', 4000);
     }
     deferredInstallPrompt = null;
     refreshHeroInstallButton();
   } catch (err) {
     console.warn('Install prompt failed:', err);
+    deferredInstallPrompt = null;
+    refreshHeroInstallButton();
+    showToast('The install banner is unavailable right now. Use your browser menu → “Install app”.', 'info', 6000);
   }
 }
 
@@ -728,7 +733,22 @@ async function loadDashboard() {
   const statDms = document.getElementById('dash-stat-dms');
   if (statDms) statDms.textContent = state.conversations ? state.conversations.length : 0;
 
-  // Update dynamic category badge counts
+  // Mobile bottom nav: Home tab active
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mob-nav-spaces')?.classList.add('active');
+
+  updateCategoryCounts();
+
+  renderSpacesGrid();
+  renderSidebarSpaces();
+  renderDashRail();
+  startHomeCommunityFeed();
+}
+
+/**
+ * Refresh the category badge counts on the Your Spaces page.
+ */
+function updateCategoryCounts() {
   const categories = ['All', 'Classroom', 'Study Group', 'Church & Fellowship', 'Team & Project', 'Community', 'Workshop'];
   const catKeyMap = {
     'All': 'All',
@@ -747,11 +767,45 @@ async function loadDashboard() {
       badge.textContent = count;
     }
   });
+}
 
+/**
+ * Dedicated "Your Spaces" page — opened from the sidebar, the dashboard
+ * "My Spaces" stat, or anywhere else spaces need to be browsed.
+ */
+export async function openMySpacesPage() {
+  state.currentView = 'my-spaces';
+  unsubscribeFromChat();
+
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-my-spaces')?.classList.add('active-view');
+
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('sidebar-nav-spaces')?.classList.add('active');
+
+  // Mobile bottom nav has no Spaces tab — clear stale highlights
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+
+  // Reset search each visit for a clean slate
+  state.spaceSearchQuery = '';
+  const searchInput = document.getElementById('spaces-search-input');
+  if (searchInput) searchInput.value = '';
+
+  renderSpacesGridLoading();
+  state.userSpaces = await fetchUserSpaces(state.currentUser.uid);
+  updateCategoryCounts();
   renderSpacesGrid();
   renderSidebarSpaces();
-  renderDashRail();
-  startHomeCommunityFeed();
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/**
+ * Live search filter for the Your Spaces page (name, code, description).
+ */
+export function handleSpacesSearch(rawQuery) {
+  state.spaceSearchQuery = (rawQuery || '').trim().toLowerCase();
+  renderSpacesGrid();
 }
 
 /**
@@ -898,9 +952,14 @@ function renderSpacesGrid() {
   const container = document.getElementById('spaces-grid');
   if (!container) return;
 
+  const searchQ = (state.spaceSearchQuery || '').trim().toLowerCase();
   const filtered = state.userSpaces.filter(sp => {
-    if (state.activeCategory === 'All') return true;
-    return sp.category === state.activeCategory;
+    if (state.activeCategory !== 'All' && sp.category !== state.activeCategory) return false;
+    if (searchQ) {
+      const haystack = `${sp.name || ''} ${sp.description || ''} ${sp.code || ''} ${sp.category || ''}`.toLowerCase();
+      if (!haystack.includes(searchQ)) return false;
+    }
+    return true;
   });
 
   if (filtered.length === 0) {
@@ -3174,6 +3233,8 @@ window.HubbleNest = {
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   },
   loadDashboard,
+  openMySpacesPage,
+  handleSpacesSearch,
   openSpace,
   switchSpaceTab,
   openDirectMessagesView,
@@ -3390,20 +3451,8 @@ window.HubbleNest = {
     deleteSpaceMessage(window.HubbleNest.resolveHomeSpaceId(), msgId);
   },
 
-  // Sidebar "Spaces" shortcut: go home and scroll to the Spaces grid
-  openSpacesSection: () => {
-    const goToSpaces = () => {
-      setTimeout(() => {
-        document.getElementById('dash-spaces-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 120);
-    };
-    if (state.currentView === 'dashboard') {
-      goToSpaces();
-    } else {
-      loadDashboard();
-      goToSpaces();
-    }
-  },
+  // Sidebar "Spaces" shortcut: open the dedicated Your Spaces page
+  openSpacesSection: () => openMySpacesPage(),
 
   // Official HubbleNest Community Space (real Get Help / Featured Space targets)
   getOfficialSpaceId: () => {
