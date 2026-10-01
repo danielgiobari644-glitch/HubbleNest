@@ -9,6 +9,8 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithRedirect, 
+  getRedirectResult, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut, 
@@ -92,6 +94,8 @@ export async function getFcmMessaging() {
 
 export {
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,

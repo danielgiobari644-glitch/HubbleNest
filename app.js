@@ -3233,7 +3233,13 @@ window.HubbleNest = {
     const p = document.getElementById('login-password').value;
     await loginWithEmail(e, p);
   },
-  loginWithGoogle,
+  loginWithGoogle: async () => {
+    try {
+      return await loginWithGoogle();
+    } catch {
+      // Error already surfaced to the user via toast; avoid unhandled rejection noise.
+    }
+  },
   resetPassword: () => {
     const e = prompt('Enter your account email for password reset:');
     if (e) resetPassword(e);
