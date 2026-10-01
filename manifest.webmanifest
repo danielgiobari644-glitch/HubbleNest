@@ -1,10 +1,10 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "HubbleNest",
   "short_name": "HubbleNest",
   "description": "A modern digital sanctuary for private groups, communities, teams, and real-time conversations.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#0b0f19",
@@ -12,19 +12,19 @@
   "categories": ["social", "productivity", "utilities"],
   "icons": [
     {
-      "src": "/pwa-192x192.png",
+      "src": "./pwa-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/pwa-512x512.png",
+      "src": "./pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/pwa-maskable-512x512.png",
+      "src": "./pwa-maskable-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -33,12 +33,12 @@
   "shortcuts": [
     {
       "name": "Spaces",
-      "url": "/#spaces",
+      "url": "./index.html#spaces",
       "description": "View your HubbleNest spaces"
     },
     {
       "name": "Messages",
-      "url": "/#messages",
+      "url": "./index.html#messages",
       "description": "Open private direct messages"
     }
   ]

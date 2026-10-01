@@ -42,6 +42,23 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // FCM device tokens — used to deliver background Web Push notifications.
+    // Owners manage their own devices; any signed-in member may read tokens
+    // in order to send them a push via Firebase Cloud Messaging (HTTP v1).
+    match /users/{userId}/pushTokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isUser(userId);
+      // Any member may prune dead device tokens discovered while sending pushes
+      allow delete: if isAuthenticated();
+    }
+
+    // App configuration (push sender credentials: clientEmail / privateKey /
+    // optional publicKey). Writable ONLY from the Firebase Console / Admin SDK.
+    match /config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
     // Spaces
     match /spaces/{spaceId} {
       allow read: if isAuthenticated();

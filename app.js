@@ -103,7 +103,9 @@ import {
 import { 
   subscribeToNotifications, 
   markNotificationAsRead, 
-  markAllNotificationsAsRead 
+  markAllNotificationsAsRead,
+  requestPushPermission,
+  initWebPushNotifications
 } from './notifications.js';
 
 import { 
@@ -187,6 +189,135 @@ const state = {
   directReplyingTo: null,
   previousView: 'dashboard'
 };
+
+/* ==========================================================================
+   PWA INSTALL (hero "Download App" button) & EARLY SERVICE WORKER
+   ========================================================================== */
+
+let deferredInstallPrompt = null;
+
+// Register the service worker as early as possible so the PWA is
+// installable even on the public landing page (and works offline there).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+  });
+}
+
+function isStandaloneDisplay() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function isIosSafari() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent)
+    && !/crios|fxios|edgiOS/i.test(navigator.userAgent);
+}
+
+function refreshHeroInstallButton() {
+  const btn = document.getElementById('hero-install-btn');
+  if (!btn) return;
+
+  // Already installed / running as an app → no need for the button.
+  if (isStandaloneDisplay()) {
+    btn.style.display = 'none';
+    return;
+  }
+
+  const installable = !!deferredInstallPrompt;
+  const iosGuided = isIosSafari();
+  if (installable || iosGuided) {
+    const label = document.getElementById('hero-install-label');
+    if (label) label.textContent = iosGuided && !installable ? 'Add to Home Screen' : 'Download App';
+    btn.style.display = 'inline-flex';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Capture the native install prompt so the hero button can trigger it.
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  refreshHeroInstallButton();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  refreshHeroInstallButton();
+  showToast('HubbleNest installed! Find it on your home screen.', 'success', 5000);
+});
+
+export async function handleInstallClick() {
+  if (isIosSafari() && !deferredInstallPrompt) {
+    // iOS Safari has no programmatic install prompt — show guided steps.
+    const sheet = document.getElementById('modal-install-ios');
+    if (sheet) sheet.style.display = 'flex';
+    return;
+  }
+  if (!deferredInstallPrompt) {
+    showToast('Your browser will offer installation shortly — or use its menu → “Install app”.', 'info', 6000);
+    return;
+  }
+  try {
+    deferredInstallPrompt.prompt();
+    const { outcome } = await deferredInstallPrompt.userChoice;
+    if (outcome === 'accepted') {
+      showToast('Installing HubbleNest…', 'success');
+    }
+    deferredInstallPrompt = null;
+    refreshHeroInstallButton();
+  } catch (err) {
+    console.warn('Install prompt failed:', err);
+  }
+}
+
+export function closeInstallIosSheet() {
+  const sheet = document.getElementById('modal-install-ios');
+  if (sheet) sheet.style.display = 'none';
+}
+
+/* ==========================================================================
+   PUSH NOTIFICATION OPT-IN NUDGE
+   ========================================================================== */
+
+function maybeShowPushNudge() {
+  const nudge = document.getElementById('push-nudge');
+  if (!nudge) return;
+
+  const supported = ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
+  const dismissed = localStorage.getItem('hn-push-nudge-dismissed') === '1';
+
+  if (supported && Notification.permission === 'default' && !dismissed) {
+    nudge.style.display = 'flex';
+  } else if (supported && Notification.permission === 'granted' && state.currentUser) {
+    // Silently (re)register the FCM token for this device.
+    initWebPushNotifications(state.currentUser.uid);
+  }
+}
+
+export async function enablePushFromNudge() {
+  const nudge = document.getElementById('push-nudge');
+  try {
+    if (!state.currentUser) return;
+    const ok = await requestPushPermission(state.currentUser.uid);
+    if (nudge) nudge.style.display = 'none';
+    if (ok) {
+      localStorage.setItem('hn-push-nudge-dismissed', '1');
+      showToast('Notifications enabled! You will be alerted even when the app is closed.', 'success', 6000);
+    } else {
+      showToast('Notifications could not be activated in this browser.', 'warning');
+    }
+  } catch (err) {
+    if (nudge) nudge.style.display = 'none';
+    console.warn('Push opt-in failed:', err);
+  }
+}
+
+export function dismissPushNudge() {
+  const nudge = document.getElementById('push-nudge');
+  if (nudge) nudge.style.display = 'none';
+  localStorage.setItem('hn-push-nudge-dismissed', '1');
+}
 
 // Initialize Theme
 initializeTheme();
@@ -294,6 +425,9 @@ function setupAuthenticatedUI() {
 
     renderDirectRequests();
   });
+
+  // Offer push notification opt-in (once, dismissible) or refresh device token
+  maybeShowPushNudge();
 }
 
 export function showLandingPage() {
@@ -408,6 +542,20 @@ async function checkUrlJoinParam() {
       }
     }
     handleCodeSearch(pendingCode);
+    return;
+  }
+
+  // Universal invite formats that work on ANY static host (including
+  // GitHub Pages project subpaths): #join=CODE or ?join=CODE
+  const hashMatch = window.location.hash.match(/^#join=([A-Za-z0-9]+)/);
+  const queryMatch = new URLSearchParams(window.location.search).get('join');
+  const deepLinkCode = (hashMatch && hashMatch[1]) || (queryMatch && queryMatch.trim());
+  if (deepLinkCode) {
+    // Clean the URL so refreshing doesn't re-trigger the join flow
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]join=[^&]+/, '') );
+    } catch (e) { /* non-fatal */ }
+    processLandingCode(deepLinkCode);
     return;
   }
 
@@ -988,7 +1136,7 @@ function initInviteTab() {
   const codeText = document.getElementById('qr-tab-code-display');
   const nameText = document.getElementById('invite-tab-space-name');
 
-  const joinUrl = `${window.location.origin}/join/${state.activeSpace.code}`;
+  const joinUrl = buildJoinLink(state.activeSpace.code);
 
   if (canvas) renderQrToCanvas(canvas, joinUrl, 260);
   if (codeText) codeText.textContent = state.activeSpace.code;
@@ -2569,13 +2717,23 @@ function renderNotificationsPanel() {
    12. QR CODE & SPACE CODE MODALS
    ========================================================================== */
 
+/**
+ * Build a shareable invite link that works on ANY static host — root domain,
+ * GitHub Pages project subpaths, Firebase Hosting — by using a #join= hash
+ * fragment relative to the current page instead of an absolute /join/ path.
+ */
+function buildJoinLink(code) {
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}#join=${code}`;
+}
+
 export function openQrModal() {
   if (!state.activeSpace) return;
   const canvas = document.getElementById('space-qr-canvas');
   const codeText = document.getElementById('qr-modal-code-display');
   const spaceNameText = document.getElementById('qr-modal-space-name');
 
-  const joinUrl = `${window.location.origin}/join/${state.activeSpace.code}`;
+  const joinUrl = buildJoinLink(state.activeSpace.code);
 
   if (canvas) renderQrToCanvas(canvas, joinUrl, 260);
   if (codeText) codeText.textContent = state.activeSpace.code;
@@ -2586,14 +2744,14 @@ export function openQrModal() {
 
 export async function downloadSpaceQr() {
   if (!state.activeSpace) return;
-  const joinUrl = `${window.location.origin}/join/${state.activeSpace.code}`;
+  const joinUrl = buildJoinLink(state.activeSpace.code);
   const dataUrl = await generateQrDataUrl(joinUrl, 400);
   downloadQrCode(dataUrl, state.activeSpace.name, state.activeSpace.code);
 }
 
 export function copySpaceJoinLink() {
   if (!state.activeSpace) return;
-  const joinUrl = `${window.location.origin}/join/${state.activeSpace.code}`;
+  const joinUrl = buildJoinLink(state.activeSpace.code);
   copyToClipboard(joinUrl, 'Join link copied to clipboard');
 }
 
@@ -3063,6 +3221,13 @@ window.HubbleNest = {
   showSignupCard,
   nextSignupStep,
   prevSignupStep,
+
+  // PWA Install & Push Opt-in
+  handleInstallClick,
+  closeInstallIosSheet,
+  enablePushFromNudge,
+  dismissPushNudge,
+
   loginWithEmail: async () => {
     const e = document.getElementById('login-email').value;
     const p = document.getElementById('login-password').value;

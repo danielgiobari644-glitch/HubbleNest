@@ -19,6 +19,7 @@ import {
 } from './firebase.js';
 
 import { showToast } from './utils.js';
+import { sendPushToUser } from './notifications.js';
 
 let activeAnnouncementsUnsubscribe = null;
 
@@ -92,6 +93,13 @@ export async function createAnnouncement(spaceId, userProfile, { title, content,
           isRead: false,
           createdAt: serverTimestamp()
         });
+
+        // Deliver a real background push (works even when HubbleNest is closed)
+        sendPushToUser(memId, {
+          title: 'New Announcement',
+          body: `Admin posted: "${title}"`,
+          tag: 'announcement'
+        }).catch(() => {});
       }
     });
   } catch (e) {

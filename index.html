@@ -8,7 +8,7 @@
   <meta property="og:title" content="HubbleNest" />
   <meta property="og:description" content="Your people. Your space. Everything connected." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="/hero-cosmic.png" />
+  <meta property="og:image" content="./hero-cosmic.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,16 +16,16 @@
   <link rel="stylesheet" href="./style.css" />
 
   <!-- PWA Manifest & App Compliance -->
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="manifest" href="./manifest.webmanifest" />
   <meta name="theme-color" content="#070a12" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="HubbleNest" />
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./pwa-192x192.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
 </head>
 <body>
 
@@ -107,6 +107,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
             <span>Sign Out</span>
           </div>
+          <div class="hn-credit hn-credit-menu" aria-hidden="true">Created by Giobari Daniel</div>
         </div>
       </div>
     </header>
@@ -188,6 +189,10 @@
               <button class="btn btn-secondary btn-hero-secondary" onclick="window.HubbleNest.showAuthView('login')">
                 Sign In
               </button>
+              <button class="btn btn-install" id="hero-install-btn" style="display: none;" onclick="window.HubbleNest.handleInstallClick()">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                <span id="hero-install-label">Download App</span>
+              </button>
             </div>
 
             <!-- Quick Space Code Join Chip in Hero (Working Feature) -->
@@ -223,7 +228,7 @@
                     <span class="mock-dot"></span><span class="mock-ava a2 sm"></span>
                   </div>
                   <div class="mock-banner">
-                    <img src="/welcome-scenic.svg" alt="" />
+                    <img src="./welcome-scenic.svg" alt="" />
                     <div class="mock-banner-copy">
                       <span class="mock-chip">HubbleNest Community</span>
                       <b>Welcome to the<br/>HubbleNest Community!</b>
@@ -348,7 +353,7 @@
 
         <div class="use-cases-grid">
           <div class="use-case-card">
-            <div class="use-case-media"><img src="/usecase-school.png" alt="Students studying together" loading="lazy" /></div>
+            <div class="use-case-media"><img src="./usecase-school.png" alt="Students studying together" loading="lazy" /></div>
             <div class="use-case-overlay">
               <div class="use-case-icon-chip tone-indigo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
               <h3 class="use-case-title">Schools &amp; Students</h3>
@@ -357,7 +362,7 @@
           </div>
 
           <div class="use-case-card">
-            <div class="use-case-media"><img src="/usecase-team.png" alt="Team collaborating" loading="lazy" /></div>
+            <div class="use-case-media"><img src="./usecase-team.png" alt="Team collaborating" loading="lazy" /></div>
             <div class="use-case-overlay">
               <div class="use-case-icon-chip tone-violet"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
               <h3 class="use-case-title">Teams &amp; Workgroups</h3>
@@ -366,7 +371,7 @@
           </div>
 
           <div class="use-case-card">
-            <div class="use-case-media"><img src="/usecase-faith.png" alt="Church on a hill at twilight" loading="lazy" /></div>
+            <div class="use-case-media"><img src="./usecase-faith.png" alt="Church on a hill at twilight" loading="lazy" /></div>
             <div class="use-case-overlay">
               <div class="use-case-icon-chip tone-blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 9h4v13h-4z"/><path d="M12 2v7"/><path d="M8 6h8"/><path d="m3 22 9-6 9 6"/></svg></div>
               <h3 class="use-case-title">Churches &amp; Faith Groups</h3>
@@ -375,7 +380,7 @@
           </div>
 
           <div class="use-case-card">
-            <div class="use-case-media"><img src="/usecase-community.png" alt="Community gathering around a fire" loading="lazy" /></div>
+            <div class="use-case-media"><img src="./usecase-community.png" alt="Community gathering around a fire" loading="lazy" /></div>
             <div class="use-case-overlay">
               <div class="use-case-icon-chip tone-indigo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
               <h3 class="use-case-title">Communities &amp; Interest Groups</h3>
@@ -441,7 +446,7 @@
             <span class="footer-link" onclick="window.HubbleNest.showAuthView('login')">Sign In</span>
           </div>
 
-          <div class="footer-copy">© 2026 HubbleNest. All rights reserved.</div>
+          <div class="footer-copy">© 2026 HubbleNest · Created by <span class="footer-credit-name">Giobari Daniel</span></div>
         </div>
       </footer>
 
@@ -733,6 +738,8 @@
 
       </div>
 
+      <div class="hn-credit hn-credit-auth">Created by Giobari Daniel</div>
+
     </main>
 
     <!-- ======================================================================
@@ -800,6 +807,8 @@
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
+
+        <div class="hn-credit hn-credit-sidebar" aria-hidden="true">Created by Giobari Daniel</div>
       </aside>
 
       <!-- Main Content Viewport -->
@@ -812,7 +821,7 @@
             <div class="dash-main">
               <!-- Welcome Community Card -->
               <div class="welcome-card">
-                <img src="/welcome-scenic.svg" alt="" class="welcome-card-bg" aria-hidden="true" />
+                <img src="./welcome-scenic.svg" alt="" class="welcome-card-bg" aria-hidden="true" />
                 <div class="welcome-card-scrim" aria-hidden="true"></div>
                 <div class="welcome-card-content">
                   <span class="welcome-badge">
@@ -1981,6 +1990,41 @@
         <div class="upload-track">
           <div id="upload-progress-bar" class="upload-bar"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Push Notification Opt-in Nudge -->
+  <div class="push-nudge" id="push-nudge" style="display: none;" role="dialog" aria-label="Enable notifications">
+    <div class="push-nudge-icon" aria-hidden="true">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+    </div>
+    <div class="push-nudge-copy">
+      <b>Never miss a message</b>
+      <span>Get notified about new messages and requests, even when HubbleNest is closed.</span>
+    </div>
+    <button type="button" class="push-nudge-enable" onclick="window.HubbleNest.enablePushFromNudge()">Turn on</button>
+    <button type="button" class="push-nudge-dismiss" onclick="window.HubbleNest.dismissPushNudge()" aria-label="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+
+  <!-- Modal: iOS Add to Home Screen Guidance -->
+  <div class="modal modal-overlay" id="modal-install-ios" style="display: none;">
+    <div class="modal-dialog narrow install-ios-dialog">
+      <button type="button" class="modal-close" onclick="window.HubbleNest.closeInstallIosSheet()" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+      <div class="modal-body install-ios-body">
+        <div class="install-ios-icon" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M12 18h.01"/></svg>
+        </div>
+        <h4 class="install-ios-title">Install HubbleNest on your iPhone</h4>
+        <ol class="install-ios-steps">
+          <li><b>Tap the Share button</b> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg> in the Safari toolbar</li>
+          <li><b>Scroll and tap “Add to Home Screen”</b></li>
+          <li><b>Tap Add</b> — HubbleNest will appear on your home screen like a real app.</li>
+        </ol>
       </div>
     </div>
   </div>

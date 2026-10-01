@@ -1,42 +1,45 @@
 /**
  * HubbleNest Progressive Web App & Web Push Service Worker
+ * Uses relative asset paths so the app works when hosted from ANY base path
+ * (domain root, GitHub Pages project subpath, Firebase Hosting, etc.)
  */
 
-const CACHE_NAME = 'hubblenest-v4';
+const CACHE_NAME = 'hubblenest-v5';
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
-  '/style.css',
-  '/app.js',
-  '/firebase.js',
-  '/auth.js',
-  '/spaces.js',
-  '/chat.js',
-  '/private-chat.js',
-  '/chat-requests.js',
-  '/people.js',
-  '/profile.js',
-  '/files.js',
-  '/announcements.js',
-  '/members.js',
-  '/notifications.js',
-  '/cloudinary.js',
-  '/qr.js',
-  '/search.js',
-  '/settings.js',
-  '/utils.js',
-  '/home.js',
-  '/icon.svg',
-  '/pwa-192x192.png',
-  '/pwa-512x512.png',
-  '/apple-touch-icon.png',
-  '/manifest.webmanifest',
-  '/hero-cosmic.png',
-  '/usecase-school.png',
-  '/usecase-team.png',
-  '/usecase-faith.png',
-  '/usecase-community.png',
-  '/welcome-scenic.svg'
+  './',
+  './index.html',
+  './style.css',
+  './app.js',
+  './firebase.js',
+  './auth.js',
+  './spaces.js',
+  './chat.js',
+  './private-chat.js',
+  './chat-requests.js',
+  './people.js',
+  './profile.js',
+  './files.js',
+  './announcements.js',
+  './members.js',
+  './notifications.js',
+  './fcm-sender.js',
+  './cloudinary.js',
+  './qr.js',
+  './search.js',
+  './settings.js',
+  './utils.js',
+  './home.js',
+  './icon.svg',
+  './pwa-192x192.png',
+  './pwa-512x512.png',
+  './apple-touch-icon.png',
+  './manifest.webmanifest',
+  './hero-cosmic.png',
+  './usecase-school.png',
+  './usecase-team.png',
+  './usecase-faith.png',
+  './usecase-community.png',
+  './welcome-scenic.svg'
 ];
 
 // Install: Pre-cache core shell
@@ -74,7 +77,8 @@ self.addEventListener('fetch', (event) => {
     url.hostname.includes('firestore.googleapis.com') ||
     url.hostname.includes('cloudinary.com') ||
     url.hostname.includes('identitytoolkit.googleapis.com') ||
-    url.hostname.includes('securetoken.googleapis.com')
+    url.hostname.includes('securetoken.googleapis.com') ||
+    url.hostname.includes('fcm.googleapis.com')
   ) {
     return;
   }
@@ -98,32 +102,43 @@ self.addEventListener('fetch', (event) => {
         }
         // Fallback to index.html for navigation requests when offline
         if (request.mode === 'navigate') {
-          return caches.match('/index.html') || caches.match('/');
+          return caches.match('./index.html') || caches.match('./');
         }
         return new Response('Offline', { status: 503, statusText: 'Offline' });
       })
   );
 });
 
-// Web Push Notification Handler (FCM & Web Push Standard)
+// Web Push Notification Handler
+// Receives messages sent through Firebase Cloud Messaging (FCM HTTP v1),
+// whether the app is open in a tab or fully closed.
 self.addEventListener('push', (event) => {
   let data = {};
   if (event.data) {
     try {
       data = event.data.json();
     } catch (e) {
-      data = { title: 'HubbleNest Notification', body: event.data.text() };
+      data = { title: 'HubbleNest', body: event.data.text() };
     }
   }
 
-  const title = data.title || (data.notification && data.notification.title) || 'HubbleNest';
+  // FCM v1 delivers { notification: {...}, data: {...}, fcmMessageId }
+  const payloadNotification = data.notification || {};
+  const payloadData = data.data || {};
+
+  const title = data.title || payloadNotification.title || 'HubbleNest';
+  const body = data.body || payloadNotification.body || 'You have new activity in HubbleNest';
+  const icon = payloadNotification.icon || data.icon || './pwa-192x192.png';
+  const image = payloadNotification.image || data.image || null;
+  const targetUrl = payloadData.url || data.url || './index.html';
+
   const options = {
-    body: data.body || (data.notification && data.notification.body) || 'You have new activity in HubbleNest',
-    icon: data.icon || '/pwa-192x192.png',
-    badge: data.badge || '/pwa-192x192.png',
-    image: data.image || null,
-    tag: data.tag || 'hubblenest-notification',
-    data: data.data || {},
+    body,
+    icon,
+    badge: './pwa-192x192.png',
+    image,
+    tag: payloadData.tag || data.tag || 'hubblenest-notification',
+    data: { url: targetUrl },
     renotify: true,
     vibrate: [100, 50, 100],
     actions: [
@@ -132,7 +147,23 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(title, options)
+    (async () => {
+      // If a window of this app is currently focused, forward the message to
+      // the page instead of raising a system notification (avoids duplicates —
+      // the in-app Firestore listener already renders live toasts).
+      try {
+        const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const focused = clientList.filter(
+          (c) => c.url.startsWith(self.location.origin) && c.visibilityState === 'visible'
+        );
+        if (focused.length > 0) {
+          focused.forEach((client) => client.postMessage({ type: 'push-received', payload: data }));
+          return;
+        }
+      } catch (e) { /* fall through to system notification */ }
+
+      await self.registration.showNotification(title, options);
+    })()
   );
 });
 
@@ -140,14 +171,18 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  let targetUrl = event.notification.data && event.notification.data.url
+    ? event.notification.data.url
+    : './index.html';
+  // Resolve relative URLs against the service worker location (works on any base path)
+  targetUrl = new URL(targetUrl, self.serviceWorker.scriptURL).href;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.navigate(targetUrl);
-          return client.focus();
+        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
+          client.focus();
+          return client.navigate(targetUrl).catch(() => client.focus());
         }
       }
       if (clients.openWindow) {

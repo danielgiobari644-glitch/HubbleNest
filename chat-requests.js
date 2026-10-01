@@ -25,6 +25,7 @@ import {
 
 import { getOrCreateConversation, getConversationId } from './private-chat.js';
 import { showToast } from './utils.js';
+import { sendPushToUser } from './notifications.js';
 
 /**
  * Deterministic Request ID for a pair of users
@@ -143,6 +144,13 @@ export async function sendChatRequest(senderProfile, receiverUser) {
       createdAt: serverTimestamp()
     });
 
+    // Deliver a real background push (works even when HubbleNest is closed)
+    sendPushToUser(receiverUser.uid, {
+      title: 'New Chat Request',
+      body: `${senderProfile.displayName || 'A member'} wants to chat with you.`,
+      tag: 'chat_request'
+    }).catch(() => {});
+
     showToast(`Chat request sent to ${receiverUser.displayName || 'member'}.`, 'success');
     return requestData;
   } catch (err) {
@@ -194,6 +202,13 @@ export async function acceptChatRequest(requestId, currentUserProfile) {
         isRead: false,
         createdAt: serverTimestamp()
       });
+
+      // Deliver a real background push (works even when HubbleNest is closed)
+      sendPushToUser(reqData.senderId, {
+        title: 'Chat Request Accepted',
+        body: `${currentUserProfile.displayName || 'A member'} accepted your chat request. You can now chat!`,
+        tag: 'chat_request_accepted'
+      }).catch(() => {});
     } catch (notifErr) {
       console.warn('Could not send acceptance notification:', notifErr);
     }

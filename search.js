@@ -43,7 +43,7 @@ export async function executeGlobalSearch(term, currentUserId) {
     const usersSnap = await getDocs(query(collection(db, 'users'), limit(40)));
     usersSnap.forEach((d) => {
       const u = d.data();
-      if (u.uid !== currentUserId) {
+      if (u.uid && u.uid !== currentUserId) {
         if (
           (u.displayName && u.displayName.toLowerCase().includes(clean)) ||
           (u.username && u.username.toLowerCase().includes(clean)) ||

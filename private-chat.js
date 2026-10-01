@@ -35,6 +35,7 @@ import {
 } from './encryption.js';
 
 import { showToast } from './utils.js';
+import { sendPushToUser } from './notifications.js';
 
 let activePrivateUnsubscribe = null;
 
@@ -246,6 +247,13 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
       isRead: false,
       createdAt: serverTimestamp()
     });
+
+    // Deliver a real background push (works even when HubbleNest is closed)
+    sendPushToUser(peerUser.uid, {
+      title: 'New Private Message',
+      body: `You received a private message from ${currentUser.displayName || 'a member'}.`,
+      tag: 'private_message'
+    }).catch(() => {});
   } catch (e) {
     console.warn('Could not notify recipient', e);
   }

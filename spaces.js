@@ -22,6 +22,7 @@ import {
 } from './firebase.js';
 
 import { showToast } from './utils.js';
+import { sendPushToUser } from './notifications.js';
 
 /**
  * Generate a short, unique, human-friendly Space Code
@@ -370,6 +371,13 @@ export async function requestToJoinSpace(spaceId, userProfile) {
         isRead: false,
         createdAt: serverTimestamp()
       });
+
+      // Deliver a real background push (works even when HubbleNest is closed)
+      sendPushToUser(space.createdBy, {
+        title: 'New Join Request',
+        body: `${userProfile.displayName} requested to join "${space.name}"`,
+        tag: 'join_request'
+      }).catch(() => {});
     }
   } catch (e) {
     console.warn('Could not post admin notification', e);
@@ -418,6 +426,13 @@ export async function approveJoinRequest(spaceId, applicant) {
       isRead: false,
       createdAt: serverTimestamp()
     });
+
+    // Deliver a real background push (works even when HubbleNest is closed)
+    sendPushToUser(applicant.userId, {
+      title: 'Join Request Approved!',
+      body: `You are now a member of "${spaceName}".`,
+      tag: 'request_accepted'
+    }).catch(() => {});
   } catch (e) {
     console.warn('Could not notify member of approval', e);
   }
@@ -447,6 +462,13 @@ export async function declineJoinRequest(spaceId, applicant) {
       isRead: false,
       createdAt: serverTimestamp()
     });
+
+    // Deliver a real background push (works even when HubbleNest is closed)
+    sendPushToUser(applicant.userId, {
+      title: 'Join Request Update',
+      body: `Your request to join "${spaceName}" was declined by an administrator.`,
+      tag: 'request_declined'
+    }).catch(() => {});
   } catch (e) {
     console.warn(e);
   }
