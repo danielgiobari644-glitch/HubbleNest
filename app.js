@@ -723,16 +723,6 @@ async function loadDashboard() {
   renderSpacesGridLoading();
   state.userSpaces = await fetchUserSpaces(state.currentUser.uid);
 
-  // Update stats on dashboard hero
-  const statSpaces = document.getElementById('dash-stat-spaces');
-  if (statSpaces) statSpaces.textContent = state.userSpaces.length;
-
-  const statPeople = document.getElementById('dash-stat-people');
-  if (statPeople) statPeople.textContent = state.people ? state.people.length : 0;
-
-  const statDms = document.getElementById('dash-stat-dms');
-  if (statDms) statDms.textContent = state.conversations ? state.conversations.length : 0;
-
   // Mobile bottom nav: Home tab active
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('mob-nav-spaces')?.classList.add('active');
@@ -771,7 +761,7 @@ function updateCategoryCounts() {
 
 /**
  * Dedicated "Your Spaces" page — opened from the sidebar, the dashboard
- * "My Spaces" stat, or anywhere else spaces need to be browsed.
+ * quick action, or anywhere else spaces need to be browsed.
  */
 export async function openMySpacesPage() {
   state.currentView = 'my-spaces';
@@ -867,12 +857,10 @@ function renderDashRail() {
     if (featBtn) featBtn.onclick = () => openSpace(featured.id);
   }
 
-  // Members card: fetch real directory (also feeds the People stat)
+  // Members card: fetch real directory
   if (state.currentUser) {
     fetchPeopleDirectory(state.currentUser.uid).then(people => {
       state.people = people || [];
-      const statPeople = document.getElementById('dash-stat-people');
-      if (statPeople) statPeople.textContent = state.people.length;
 
       const stack = document.getElementById('rail-members-avatars');
       const count = document.getElementById('rail-members-count');

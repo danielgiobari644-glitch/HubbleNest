@@ -869,22 +869,6 @@
 
               <!-- Community Feed (Real official community Space messages) -->
               <div class="home-feed" id="home-feed" aria-live="polite"></div>
-
-              <!-- Real-time stats (clickable) -->
-              <div class="dash-stats-row">
-                <div class="dash-stat-item" onclick="window.HubbleNest.openMySpacesPage()" title="Open Your Spaces">
-                  <span class="dash-stat-num" id="dash-stat-spaces">0</span>
-                  <span class="dash-stat-label">My Spaces</span>
-                </div>
-                <div class="dash-stat-item" onclick="window.HubbleNest.openPeopleView()" title="Browse all HubbleNest members">
-                  <span class="dash-stat-num" id="dash-stat-people">0</span>
-                  <span class="dash-stat-label">People</span>
-                </div>
-                <div class="dash-stat-item" onclick="window.HubbleNest.openDirectMessagesView()" title="View private conversations">
-                  <span class="dash-stat-num" id="dash-stat-dms">0</span>
-                  <span class="dash-stat-label">Private Chats</span>
-                </div>
-              </div>
             </div>
 
             <!-- Right Rail -->
@@ -896,16 +880,24 @@
                     <span class="rail-quick-icon tone-gradient"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
                     <span>Create a Space</span>
                   </button>
+                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openMySpacesPage()">
+                    <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/></svg></span>
+                    <span>Your Spaces</span>
+                  </button>
                   <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openPeopleView()">
-                    <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg></span>
+                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg></span>
                     <span>Find People</span>
                   </button>
+                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openDirectMessagesView()">
+                    <span class="rail-quick-icon tone-blue"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                    <span>Messages</span>
+                  </button>
                   <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openCommunityMembers()">
-                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+                    <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
                     <span>View Members</span>
                   </button>
                   <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openCommunitySpace()">
-                    <span class="rail-quick-icon tone-blue"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
+                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
                     <span>Get Help</span>
                   </button>
                 </div>
