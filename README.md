@@ -94,29 +94,37 @@ members' browsers (no server needed). One-time setup by the project owner:
 ## Troubleshooting
 
 **"Missing or insufficient permissions" when sending / accepting chat requests
-(`chat-requests.js`, `app.js — Failed to accept request`):**
+(`chat-requests.js`, `app.js — Failed to accept request`), or
+`@firebase/firestore: Uncaught Error in snapshot listener: ... Missing or
+insufficient permissions` when opening a private chat:**
 the published Firestore rules are older than the ones shipped in this package.
 The app checks `getDoc()` on `chatRequests/{uidA_uidB}` and
 `conversations/{id}` to see whether one already exists between two members —
 when the document **does not exist yet**, the old rules dereference
 `resource.data` on a null resource and deny the read, which surfaces as
-"Missing or insufficient permissions" and blocks the whole flow. Fix (2
-minutes, owner only):
+"Missing or insufficient permissions" and blocks the whole flow. The same
+class of bug hits the private-messages LISTENER when it opens a brand-new
+conversation while its document is still being created (the SDK then logs
+"Uncaught Error in snapshot listener" and the chat stays silently empty).
+Fix (2 minutes, owner only):
 
 1. Open **Firebase Console → Firestore Database → Rules**.
-2. Replace the full contents with the current `firestore.rules` file from
-   this package (the `chatRequests` and `conversations` blocks now allow
-   reading non-existent documents — they carry no data, so nothing is
-   exposed).
+2. Replace the full contents with the **current** `firestore.rules` file from
+   THIS package (the `chatRequests` and `conversations` blocks allow reading
+   non-existent documents — they carry no data, so nothing is exposed; the
+   `conversations/{id}/messages` read is null-safe the same way).
 3. Click **Publish**. The request → accept → private-chat flow works
    immediately, no reload needed.
 
 **After deploying a new build, an old service worker keeps serving stale
 files (or logs "Failed to convert value to 'Response'"):**
-open the site, DevTools → Application → Service Workers → **Unregister**,
-then hard-refresh (**Ctrl+Shift+R**) once. New builds bump the cache version
-(`hubblenest-v8`), so this is only needed once per migration. The fetch
-handler now always resolves to a real `Response`, so the
+the shipped worker (v9) uses **stale-while-revalidate** for all app files:
+it responds instantly from cache and refreshes every asset in the background
+on each load, so a redeploy normally reaches every browser after ONE normal
+reload — no manual steps. If a tab is stuck on an older worker (v8 or
+earlier used strict cache-first), migrate it once: DevTools → Application →
+Service Workers → **Unregister**, then hard-refresh (**Ctrl+Shift+R**).
+The fetch handler always resolves to a real `Response`, so the
 "Failed to convert value to 'Response'" error can no longer occur.
 
 **Web push notifications return 401 / "token-subscribe-failed" /
@@ -140,6 +148,13 @@ before any browser can register for push, and both are owner-only fixes:
    - Put it in **`notifications.js` → `DEFAULT_VAPID_PUBLIC_KEY`** (top of
      the file), or alternatively in the Firestore `config/push` document as
      the `publicKey` field. Redeploy/re-upload the changed file.
+   - **Verify the running app actually uses your key:** with the app open,
+     the console now prints e.g.
+     `[HubbleNest] Web Push: using VAPID key BLeL1k63W4…sxYo (source:
+     embedded constant)`. If the suffix does NOT match the key you pasted,
+     the browser is running a stale cached copy of `notifications.js` —
+     hard-refresh once (Ctrl+Shift+R), or unregister the old service worker
+     (see the stale-service-worker entry above).
 3. If your Google Cloud **Web API key** has restrictions (Google Cloud
    Console → APIs & Services → **Credentials** → the browser key used by
    `firebase.js`): either set *Application restrictions* → **None**, or add
@@ -187,10 +202,11 @@ portfolio again (they can still reach it anytime via the account menu →
 - **Background push notifications** via FCM — works when the app is closed
 - **PWA** — installable (with iOS "Add to Home Screen" guidance), offline shell
   via service worker, Firestore local persistence
-- **Fast loading** — service worker v7 serves every shell asset, Firebase SDK
-  chunk, Google Font and Cloudinary image from cache on repeat visits
-  (cache-first; the cache version is bumped on each deploy to ship updates),
-  fonts load in parallel (no render-blocking `@import`), below-fold images
+- **Fast loading** — service worker v9 serves every shell asset, Firebase SDK
+  chunk, Google Font and Cloudinary image instantly from cache on repeat
+  visits (stale-while-revalidate: cached response first, background refresh
+  keeps deploys fresh after one reload — no manual cache clearing), fonts
+  load in parallel (no render-blocking `@import`), below-fold images
   lazy-load
 - **Dark / light theme**, responsive layout with mobile bottom navigation
 

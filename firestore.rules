@@ -168,9 +168,19 @@ service cloud.firestore {
       allow update: if isAuthenticated() && request.auth.uid in resource.data.participants;
 
       // Encrypted Private Messages
+      //
+      // The messages LISTENER can attach in the tiny window while the
+      // conversation document is still being created (open a brand-new DM).
+      // get() on a non-existent document ERRORS inside rules — the same
+      // class of problem as chatRequests above — so the read must be
+      // null-safe. A non-existent conversation has an empty messages
+      // subcollection, so allowing that read exposes nothing; an EXISTING
+      // conversation still strictly requires participation.
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && 
-          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow read: if isAuthenticated() && (
+          !exists(/databases/$(database)/documents/conversations/$(conversationId)) ||
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+        );
         allow create: if isAuthenticated() && 
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants &&
           request.resource.data.senderId == request.auth.uid;

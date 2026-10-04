@@ -54,7 +54,7 @@ let activeNotifUnsubscribe = null;
  *   Firebase Console → Project Settings → Cloud Messaging → Web Push
  *   certificates → Generate key pair → paste the key here.
  */
-const DEFAULT_VAPID_PUBLIC_KEY = 'BNWK5wmGB3hgVmKZoN4k_EShZLdIYGyHPgKrUDlmuplytJcUAolrgNKrzvbvozTcmBm6qTi_PiJcCd6xZmz5bR4';
+const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquVuPlHHHZKYaOzGUOCqp7z--H328TFz0Zpua7xeszYo';
 
 /**
  * A valid P-256 Web Push public key is 87 base64url characters starting
@@ -200,6 +200,16 @@ export async function initWebPushNotifications(userId, opts = {}) {
       err.code = 'messaging/invalid-vapid-key';
       throw err;
     }
+
+    // Fingerprint diagnostic: makes it easy to VERIFY which Web Push
+    // certificate the RUNNING app uses. After you paste a new key into this
+    // file and redeploy, this line must show the NEW key's suffix — if it
+    // still shows the old one, the browser is running a stale cached copy
+    // (one hard refresh clears it) or the edit never reached the deploy.
+    console.info(
+      `[HubbleNest] Web Push: using VAPID key ${vapidKey.slice(0, 10)}…${vapidKey.slice(-6)} ` +
+      `(source: ${vapidKey === DEFAULT_VAPID_PUBLIC_KEY ? 'embedded constant' : 'config/push doc'})`
+    );
 
     const token = await getToken(messaging, {
       vapidKey: vapidKey.trim(),

@@ -3,19 +3,24 @@
  * Uses relative asset paths so the app works when hosted from ANY base path
  * (domain root, GitHub Pages project subpath, Firebase Hosting, etc.)
  *
- * CACHING STRATEGY (v7 — "fast loads"):
+ * CACHING STRATEGY (v9 — "fast loads + self-healing deploys"):
  * - App navigations:            network-first → cache → cached shell
- * - Same-origin shell assets:   cache-first (all assets are precached; the
- *                               cache version is bumped on every deploy,
- *                               which evicts the old cache atomically)
- * - Firebase SDK (gstatic):     cache-first (immutable, version-pinned URLs)
- * - Google Fonts:               cache-first
- * - Cloudinary images:          cache-first with a 220-entry FIFO cap
+ * - Same-origin shell assets:   STALE-WHILE-REVALIDATE — served instantly
+ *                               from cache while the network copy refreshes
+ *                               the cache in the background. Every deploy
+ *                               therefore reaches users after ONE reload,
+ *                               no manual cache-version bump required (the
+ *                               bump on each release still forces an
+ *                               immediate atomic refresh).
+ * - Firebase SDK (gstatic):     stale-while-revalidate (immutable URLs —
+ *                               background refresh is a cheap no-op hit)
+ * - Google Fonts:               stale-while-revalidate
+ * - Cloudinary images:          stale-while-revalidate + 220-entry FIFO cap
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v8';
-const IMAGE_CACHE = 'hubblenest-images-v7';
+const CACHE_NAME = 'hubblenest-v9';
+const IMAGE_CACHE = 'hubblenest-images-v9';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',
@@ -85,26 +90,35 @@ function isCacheableResponse(response) {
   return !!response && (response.ok || response.type === 'opaque');
 }
 
-// Cache-first: instant from cache, network only on miss (immutable resources
-// and precached shell assets — freshness is guaranteed by the CACHE_NAME bump
-// on every deploy, which evicts the previous cache at activation).
-async function cacheFirst(request, cacheName = CACHE_NAME) {
+// Stale-while-revalidate: respond INSTANTLY from cache (or network on first
+// miss) and refresh the cached copy in the background. Rendering never waits
+// for the network, yet every deployed change reaches users after one reload —
+// fixes "I redeployed but the browser kept running the old file".
+async function staleWhileRevalidate(request, cacheName = CACHE_NAME) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
-  if (cached) return cached;
-  try {
-    const response = await fetch(request);
-    if (isCacheableResponse(response)) {
-      cache.put(request, response.clone()).catch(() => {});
+
+  const networkUpdate = (async () => {
+    try {
+      const response = await fetch(request);
+      if (isCacheableResponse(response)) {
+        await cache.put(request, response.clone());
+      }
+      return response;
+    } catch (networkError) {
+      return null; // offline — cached copy (if any) keeps serving
     }
-    return response;
-  } catch (networkError) {
-    return new Response('Offline', {
-      status: 503,
-      statusText: 'Offline',
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-    });
-  }
+  })();
+
+  if (cached) return cached;
+
+  const fresh = await networkUpdate;
+  if (fresh) return fresh;
+  return new Response('Offline', {
+    status: 503,
+    statusText: 'Offline',
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+  });
 }
 
 // Keep the Cloudinary image cache bounded (FIFO trim)
@@ -155,24 +169,24 @@ self.addEventListener('fetch', (event) => {
   // Firebase SDK chunks on www.gstatic.com are immutable (version-pinned URL).
   // Cache them so repeat loads (and offline boots) don't re-download ~1MB.
   if (host === 'www.gstatic.com') {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(staleWhileRevalidate(request));
     return;
   }
 
-  // Google Fonts stylesheets + font files: stable URLs → cache-first.
+  // Google Fonts stylesheets + font files: stable URLs → SWR.
   if (host === 'fonts.googleapis.com' || host === 'fonts.gstatic.com') {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(staleWhileRevalidate(request));
     return;
   }
 
-  // Cloudinary images (avatars, attachments, covers): cache-first with a cap.
+  // Cloudinary images (avatars, attachments, covers): SWR with a cap.
   // Only image responses are stored — videos/raw files stay network-only.
   if (host.endsWith('.cloudinary.com') || host.includes('cloudinary.com')) {
     event.respondWith((async () => {
-      const response = await cacheFirst(request, IMAGE_CACHE);
+      const response = await staleWhileRevalidate(request, IMAGE_CACHE);
       try {
         const contentType = response && response.headers ? response.headers.get('content-type') || '' : '';
-        if (contentType.startsWith('image/')) await trimImageCache();
+        if (contentType.startsWith('image/')) trimImageCache();
       } catch (e) { /* best effort */ }
       return response;
     })());
@@ -209,10 +223,10 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Everything else on our own origin (css/js/png/svg/webmanifest):
-  // cache-first — zero round trips on repeat loads (all precached;
-  // deploy freshness via the cache-version bump).
+  // stale-while-revalidate — zero perceived latency (instant cached response)
+  // AND automatic deploy freshness (background refresh per reload).
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(staleWhileRevalidate(request));
   }
 });
 

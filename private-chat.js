@@ -133,6 +133,12 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
     limit(100)
   );
 
+  // Self-heal: if this listener attached in the tiny window while the
+  // conversation document was still being created (brand-new DM), the
+  // security rules briefly deny the read. Retry ONCE shortly after —
+  // by then the conversation exists and the same rules allow the read.
+  let privateListenerRetried = false;
+
   activePrivateUnsubscribe = onSnapshot(q, async (snap) => {
     const decryptedList = [];
     for (const d of snap.docs) {
@@ -172,6 +178,23 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
       });
     }
     onMessages(decryptedList);
+  }, (err) => {
+    // Errors were previously unhandled here, which surfaced as the SDK's
+    // "Uncaught Error in snapshot listener: Missing or insufficient
+    // permissions" and left the conversation permanently silent.
+    console.error('Private messages listener error:', err);
+    const denied = err?.code === 'permission-denied' ||
+      String(err?.message || '').includes('Missing or insufficient permissions');
+    if (denied && !privateListenerRetried) {
+      privateListenerRetried = true;
+      setTimeout(() => {
+        try {
+          subscribeToPrivateMessages(convId, currentUser, peerUser, onMessages);
+        } catch (e) { /* ignore */ }
+      }, 1600);
+    } else if (denied) {
+      showToast('This conversation could not load. Reopen the chat to retry.', 'error');
+    }
   });
 
   return activePrivateUnsubscribe;
