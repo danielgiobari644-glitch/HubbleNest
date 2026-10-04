@@ -44,8 +44,27 @@ let activeNotifUnsubscribe = null;
  * Default Web Push certificate public key (VAPID) used to mint FCM
  * registration tokens for this app. Public information — safe to embed.
  * A project-specific key can optionally override it via `config/push.publicKey`.
+ *
+ * ⚠️ THIS KEY MUST HAVE BEEN GENERATED IN THE **SAME** FIREBASE PROJECT AS
+ * `firebaseConfig` ABOVE (hubblenest). A key from any other project — or a
+ * deleted/regenerated certificate — makes FCM's registration endpoint answer
+ * 401 "Request is missing required authentication credential"
+ * (messaging/token-subscribe-failed) and push notifications cannot work.
+ * Fix (2 minutes, see README → Troubleshooting → "Web push notifications return 401"):
+ *   Firebase Console → Project Settings → Cloud Messaging → Web Push
+ *   certificates → Generate key pair → paste the key here.
  */
 const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquVuPlHHHZKYaOzGUOCqp7z--H328TFz0Zpua7xeszYo';
+
+/**
+ * A valid P-256 Web Push public key is 87 base64url characters starting
+ * with "B" (an uncompressed EC point: 65 bytes → 87 unpadded base64url chars).
+ * Anything else can only fail at the FCM endpoint, so we bail out with a
+ * clear message before even trying.
+ */
+function isValidVapidKey(key) {
+  return typeof key === 'string' && /^B[A-Za-z0-9_-]{86}$/.test(key.trim());
+}
 
 /**
  * Subscribe to user's notifications in Firestore
@@ -136,8 +155,16 @@ function urlBase64ToUint8Array(base64String) {
  * including GitHub Pages project sites), then mints an FCM registration
  * token for this browser and stores it in Firestore so other members can
  * deliver pushes to this user even when the app is closed.
+ *
+ * @param {string} userId
+ * @param {{silent?: boolean}} [opts]  silent (default true): never surface
+ *        UI toasts for background token refreshes — only user-initiated
+ *        opt-ins (nudge/settings) pass { silent: false }.
+ * @returns {Promise<boolean>} true when a token was minted and stored.
  */
-export async function initWebPushNotifications(userId) {
+export async function initWebPushNotifications(userId, opts = {}) {
+  const silent = opts.silent !== false;
+
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     console.log('Push notifications are not supported in this browser.');
     return false;
@@ -168,8 +195,14 @@ export async function initWebPushNotifications(userId) {
       /* config/push is optional; fall back to the embedded key */
     }
 
+    if (!isValidVapidKey(vapidKey)) {
+      const err = new Error('The configured VAPID/Web Push public key is malformed (expected 87 base64url chars starting with "B").');
+      err.code = 'messaging/invalid-vapid-key';
+      throw err;
+    }
+
     const token = await getToken(messaging, {
-      vapidKey,
+      vapidKey: vapidKey.trim(),
       serviceWorkerRegistration: registration
     });
 
@@ -193,15 +226,30 @@ export async function initWebPushNotifications(userId) {
     console.warn('Web push setup error:', err);
     const code = err?.code || '';
     const msg = String(err?.message || '');
-    if (code === 'messaging/token-subscribe-failed' ||
-        code === 'messaging/failed-service-worker-registration' ||
-        msg.includes('token-subscribe-failed') ||
-        msg.includes('missing required authentication credential') ||
-        msg.includes('Requested entity was not found')) {
-      // 401 on fcmregistrations.googleapis.com = the project's Firebase Cloud
-      // Messaging API is disabled (or the VAPID key belongs to another
-      // project). Nothing the app can do — this needs project-side config.
-      showToast('Push could not be activated: the Firebase Cloud Messaging API is not enabled for this Firebase project. The project owner must enable it in Google Cloud Console → APIs & Services → “Firebase Cloud Messaging API” (see README → Troubleshooting).', 'error', 10000);
+    const authProblem =
+      code === 'messaging/token-subscribe-failed' ||
+      code === 'messaging/invalid-vapid-key' ||
+      msg.includes('token-subscribe-failed') ||
+      msg.includes('missing required authentication credential') ||
+      msg.includes('Requested entity was not found');
+
+    if (authProblem) {
+      // 401 on fcmregistrations.googleapis.com — the receiving side of push
+      // needs PROJECT-side configuration that only the owner can do:
+      //   1) enable the "Firebase Cloud Messaging API" for the project, and
+      //   2) generate a Web Push certificate (VAPID) in THAT project and use
+      //      its key here (embedded constant or config/push.publicKey).
+      console.error(
+        '[HubbleNest] Push notifications cannot activate — project configuration required.\n' +
+        '  1. Google Cloud Console → select the \'hubblenest\' project → APIs & Services → Library → enable "Firebase Cloud Messaging API".\n' +
+        '  2. Firebase Console → Project Settings (gear) → Cloud Messaging → Web Push certificates → "Generate key pair" and copy it.\n' +
+        '  3. Paste that key into notifications.js → DEFAULT_VAPID_PUBLIC_KEY (or the config/push doc\'s publicKey field), and redeploy.\n' +
+        '  4. If the Web API key has HTTP-referrer/API restrictions (Google Cloud Console → Credentials), allow this site or remove the restriction.\n' +
+        '  Full walkthrough: README → Troubleshooting → "Web push notifications return 401".'
+      );
+      if (!silent) {
+        showToast('Push could not be activated: this Firebase project needs its Cloud Messaging API enabled and a matching Web Push certificate (VAPID). The project owner can fix it in ~2 minutes — see README → Troubleshooting → "Web push notifications return 401".', 'error', 10000);
+      }
     }
     return false;
   }
@@ -217,7 +265,8 @@ export async function requestPushPermission(userId) {
 
   const permission = await Notification.requestPermission();
   if (permission === 'granted') {
-    const ok = await initWebPushNotifications(userId);
+    // User-initiated — surface setup problems with a visible toast.
+    const ok = await initWebPushNotifications(userId, { silent: false });
     return ok;
   }
   return false;

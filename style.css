@@ -4559,3 +4559,176 @@ h1, h2, h3, h4 {
     justify-content: center;
   }
 }
+
+/* ==========================================================================
+   RETURNING-VISITOR BOOT SPLASH
+   "Only new users should see the portfolio" — visitors who have ever signed
+   in on this device skip the landing page: this splash covers the boot
+   window while Firebase restores their session, then the app (signed in)
+   or the sign-in view (signed out) appears. The <head> boot gate script
+   toggles the hn-returning-visitor / hn-boot-timeout classes on <html>.
+   ========================================================================== */
+.boot-splash {
+  display: none; /* revealed only by the .hn-returning-visitor gate */
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: var(--bg-primary, #0b0e1a);
+}
+
+.hn-returning-visitor .boot-splash { display: flex; }
+
+/* Safety net: if the app hasn't routed within 6 s, reveal the landing page. */
+.hn-returning-visitor.hn-boot-timeout .boot-splash { display: none !important; }
+.hn-returning-visitor.hn-boot-timeout .landing-page-wrapper { display: block !important; }
+
+/* While the gate is active the portfolio stays hidden (no flash of it). */
+.hn-returning-visitor:not(.hn-boot-timeout) .landing-page-wrapper { display: none !important; }
+
+.boot-splash-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  background: var(--accent-gradient, linear-gradient(135deg, #6c6ff5, #8b5cf6));
+  box-shadow: 0 18px 50px rgba(108, 111, 245, 0.45);
+  animation: bootSplashPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes bootSplashPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 18px 50px rgba(108, 111, 245, 0.45); }
+  50% { transform: scale(1.06); box-shadow: 0 24px 64px rgba(108, 111, 245, 0.6); }
+}
+
+.boot-splash-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(108, 111, 245, 0.25);
+  border-top-color: #8b8dfc;
+  animation: bootSplashSpin 0.8s linear infinite;
+}
+
+@keyframes bootSplashSpin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-splash-icon, .boot-splash-spinner { animation: none; }
+}
+
+/* ==========================================================================
+   PWA INSTALL BANNER
+   Shown as soon as the browser fires beforeinstallprompt (and on iOS Safari,
+   where it opens the guided "Add to Home Screen" sheet). The Install button
+   calls BeforeInstallPromptEvent.prompt() — the call Chrome requires to
+   actually present the install dialog after the page captures the event.
+   ========================================================================== */
+.install-banner {
+  position: fixed;
+  left: 24px;
+  bottom: 24px; /* the push nudge owns the right corner — no overlap */
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 430px;
+  padding: 16px 16px 16px 18px;
+  border-radius: 18px;
+  background: var(--bg-card, rgba(15, 19, 35, 0.92));
+  border: 1px solid rgba(108, 111, 245, 0.35);
+  box-shadow: 0 22px 60px rgba(2, 6, 18, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: pushNudgeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.light-theme .install-banner {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.18);
+}
+
+.install-banner-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.16);
+}
+
+.install-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.install-banner-copy b {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.install-banner-copy span {
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.install-banner-action {
+  flex: none;
+  padding: 9px 18px;
+  border: none;
+  border-radius: 99px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--accent-gradient, linear-gradient(135deg, #6c6ff5, #8b5cf6));
+  cursor: pointer;
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.install-banner-action:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(108, 111, 245, 0.35); }
+
+.install-banner-dismiss {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-normal), color var(--transition-normal);
+}
+
+.install-banner-dismiss:hover { background: rgba(255, 255, 255, 0.07); color: var(--text-primary); }
+
+@media (max-width: 640px) {
+  .install-banner {
+    left: 16px;
+    right: 16px;
+    bottom: 88px; /* clear of the mobile bottom nav */
+    max-width: none;
+    padding: 14px;
+    gap: 12px;
+  }
+  /* Stacked above the push nudge when both are visible at once */
+  .install-banner.hn-stacked { bottom: 176px; }
+  .install-banner-copy span { display: none; }
+}

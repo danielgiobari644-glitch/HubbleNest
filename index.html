@@ -64,7 +64,7 @@
         'closeModal', 'dismissPushNudge', 'enablePushFromNudge', 'handleDeleteSpace',
         'handleExtendExpiration', 'handleSaveSpaceSettings', 'handleSaveSpaceSettingsFromTab',
         'handleCreateSpaceSubmit', 'handleCreateSpaceFromPage', 'handleSaveProfile',
-        'handleSaveProfileFromPage'
+        'handleSaveProfileFromPage', 'dismissInstallBanner'
       ];
       for (var i = 0; i < HANDLERS.length; i++) {
         (function (name) {
@@ -77,8 +77,40 @@
       }
     })();
   </script>
+
+  <!--
+    Returning-visitor boot gate.
+    New visitors (never signed in on this device) see the full landing/portfolio.
+    Anyone who has EVER signed in on this device skips the portfolio: a branded
+    splash shows while Firebase restores the session, then the app (if signed in)
+    or the sign-in view (if signed out) appears. If the app fails to boot within
+    6 seconds, the landing page is revealed as a safety net.
+  -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('hn-has-authed') === '1') {
+          var de = document.documentElement;
+          de.classList.add('hn-returning-visitor');
+          setTimeout(function () { de.classList.add('hn-boot-timeout'); }, 6000);
+        }
+      } catch (e) { /* private mode — treat as new visitor */ }
+    })();
+  </script>
 </head>
 <body>
+
+  <!--
+    Boot splash — only ever visible for RETURNING visitors (see the
+    hn-returning-visitor gate in <head>): covers the portfolio while Firebase
+    restores the session, then the app or the sign-in view takes over.
+  -->
+  <div class="boot-splash" id="boot-splash" aria-hidden="true">
+    <div class="boot-splash-icon">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </div>
+    <div class="boot-splash-spinner"></div>
+  </div>
 
   <!-- Ambient Atmospheric Lighting -->
   <div class="bg-ambient" aria-hidden="true">
@@ -791,8 +823,6 @@
         </div>
 
       </div>
-
-      <div class="hn-credit hn-credit-auth">Created by Giobari Daniel</div>
 
     </main>
 
@@ -2058,6 +2088,21 @@
     </div>
     <button type="button" class="push-nudge-enable" onclick="window.HubbleNest.enablePushFromNudge()">Turn on</button>
     <button type="button" class="push-nudge-dismiss" onclick="window.HubbleNest.dismissPushNudge()" aria-label="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+
+  <!-- PWA Install Banner (appears when the browser fires beforeinstallprompt) -->
+  <div class="install-banner" id="install-banner" style="display: none;" role="dialog" aria-label="Install HubbleNest">
+    <div class="install-banner-icon" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </div>
+    <div class="install-banner-copy">
+      <b>Install HubbleNest</b>
+      <span>Add it to your device for a faster, full-screen app experience.</span>
+    </div>
+    <button type="button" class="install-banner-action" onclick="window.HubbleNest.handleInstallClick()">Install</button>
+    <button type="button" class="install-banner-dismiss" onclick="window.HubbleNest.dismissInstallBanner()" aria-label="Dismiss">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
     </button>
   </div>

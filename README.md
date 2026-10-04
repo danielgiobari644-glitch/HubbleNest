@@ -115,28 +115,40 @@ minutes, owner only):
 files (or logs "Failed to convert value to 'Response'"):**
 open the site, DevTools → Application → Service Workers → **Unregister**,
 then hard-refresh (**Ctrl+Shift+R**) once. New builds bump the cache version
-(`hubblenest-v6`), so this is only needed once per migration. The fetch
+(`hubblenest-v8`), so this is only needed once per migration. The fetch
 handler now always resolves to a real `Response`, so the
 "Failed to convert value to 'Response'" error can no longer occur.
 
-**Push activation fails with a 401 / "token-subscribe-failed" /
+**Web push notifications return 401 / "token-subscribe-failed" /
 "Request is missing required authentication credential"
-(`fcmregistrations.googleapis.com`):**
-the project's **Firebase Cloud Messaging API** is not enabled. This is
-project-side config, not an app bug. Fix (2 minutes, owner only):
+(`fcmregistrations.googleapis.com` → `Push notifications aren't working`):**
+this is PROJECT-SIDE configuration, not an app bug. Two things must be true
+before any browser can register for push, and both are owner-only fixes:
 
-1. Open <https://console.cloud.google.com/apis/library/fcm.googleapis.com>
-   (select the **hubblenest** project).
-2. Click **Enable** on *Firebase Cloud Messaging API*.
-3. While there, also enable *Firebase Installations API* if it isn't already
-   (<https://console.cloud.google.com/apis/library/firebaseinstallations.googleapis.com>).
-4. In the app, press **Turn on notifications** again — the device now registers
-   successfully.
-
-If it still fails after enabling the API, the Web Push certificate (VAPID key)
-may belong to a different project: Firebase Console → Project settings →
-**Cloud Messaging** → Web Push certificates, and either set that key in the
-Firestore `config/push` document as `publicKey` or use the embedded default.
+1. **The Firebase Cloud Messaging API must be enabled for the project**
+   (the most common cause of the 401 above):
+   - Open <https://console.cloud.google.com/apis/library/fcm.googleapis.com>
+     and select the **hubblenest** project.
+   - Click **Enable**. Also enable *Firebase Installations API* if it isn't
+     already (<https://console.cloud.google.com/apis/library/firebaseinstallations.googleapis.com>).
+2. **A Web Push certificate (VAPID key) must exist in THAT same project and
+   be the key the app uses.** A key generated in a different Firebase
+   project — or a deleted/regenerated certificate — always answers 401:
+   - Firebase Console → ⚙️ **Project settings** → **Cloud Messaging** →
+     **Web Push certificates** → **Generate key pair** (if none exists) and
+     copy the 87-character key that starts with `B`.
+   - Put it in **`notifications.js` → `DEFAULT_VAPID_PUBLIC_KEY`** (top of
+     the file), or alternatively in the Firestore `config/push` document as
+     the `publicKey` field. Redeploy/re-upload the changed file.
+3. If your Google Cloud **Web API key** has restrictions (Google Cloud
+   Console → APIs & Services → **Credentials** → the browser key used by
+   `firebase.js`): either set *Application restrictions* → **None**, or add
+   `danielgiobari644-glitch.github.io/*` to the allowed HTTP referrers and
+   keep the FCM/Installations APIs allowed under *API restrictions*.
+4. In the app, press **Turn on notifications** again — the device now
+   registers successfully. (The app validates the key shape, logs a numbered
+   fix list to the console on failure, and only shows the error toast when
+   you explicitly opt in — never during silent background refreshes.)
 
 **Google Sign-In popup closes instantly or logs
 "Cross-Origin-Opener-Policy policy would block the window.closed call":**
@@ -146,10 +158,21 @@ Also make sure your domain is authorized: Firebase Console → Authentication �
 Settings → **Authorized domains** → add `danielgiobari644-glitch.github.io`.
 
 **"Banner not shown: beforeinstallpromptevent.preventDefault() called"
-in the console:** this is Chrome's standard informational note for sites with a
-custom install button (Twitter, Spotify and GitHub show it too). It is not an
-error — the native install banner appears when the **Download App** button in
-the hero is clicked, which calls `prompt()` on the captured event.
+in the console:** the app intentionally captures the install event to show
+its own **Install banner** (bottom-left on desktop, above the bottom nav on
+mobile — visible on the landing page AND inside the app). Clicking
+**Install** on that banner (or the hero **Download App** button) calls
+`prompt()` on the captured event, which presents Chrome's install dialog —
+exactly what the console note asks for. Until the user clicks Install, the
+note may still appear once; it is informational, not an error, and every
+site with custom install UI (Twitter, Spotify, GitHub) shows it.
+
+**Landing page ("portfolio") visibility:** only **first-time visitors** see
+the marketing landing page. As soon as a device has signed in once, future
+visits boot through a branded splash straight into the app — or into the
+sign-in view if the session expired — so returning members never see the
+portfolio again (they can still reach it anytime via the account menu →
+"Explore Landing Page").
 
 ## What's Inside
 

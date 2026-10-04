@@ -246,15 +246,18 @@ window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
   refreshHeroInstallButton();
+  showInstallBanner();
 });
 
 window.addEventListener('appinstalled', () => {
   deferredInstallPrompt = null;
   refreshHeroInstallButton();
+  hideInstallBanner();
   showToast('HubbleNest installed! Find it on your home screen.', 'success', 5000);
 });
 
 export async function handleInstallClick() {
+  hideInstallBanner(); // clicking Install (banner or hero) retires the banner
   if (isIosSafari() && !deferredInstallPrompt) {
     // iOS Safari has no programmatic install prompt — show guided steps.
     const sheet = document.getElementById('modal-install-ios');
@@ -289,6 +292,73 @@ export function closeInstallIosSheet() {
 }
 
 /* ==========================================================================
+   RETURNING-VISITOR BOOT SPLASH
+   Only new users see the landing/portfolio. Anyone who has ever signed in on
+   this device (flag persisted by the auth state listener below) boots through
+   a branded splash straight into the app — or into the sign-in view when the
+   session has expired. The <head> gate script hides the landing pre-paint.
+   ========================================================================== */
+
+const HAS_AUTHED_KEY = 'hn-has-authed';
+
+function hasAuthedBefore() {
+  try { return localStorage.getItem(HAS_AUTHED_KEY) === '1'; } catch (e) { return false; }
+}
+
+function markHasAuthed() {
+  try { localStorage.setItem(HAS_AUTHED_KEY, '1'); } catch (e) { /* private mode */ }
+}
+
+function hideBootSplash() {
+  const de = document.documentElement;
+  de.classList.remove('hn-returning-visitor', 'hn-boot-timeout');
+  const splash = document.getElementById('boot-splash');
+  if (splash) splash.style.display = 'none';
+}
+
+/* ==========================================================================
+   PWA INSTALL BANNER
+   Chrome suppresses its native mini-infobar because the app captures
+   beforeinstallprompt (preventDefault). The contract then is: the page MUST
+   call prompt() — we do that from this always-visible banner (and the hero
+   button). Shows bottom-left on desktop / above the mobile nav, hides while
+   running installed, and stays dismissed for 3 days after the user says no.
+   ========================================================================== */
+
+const INSTALL_BANNER_DISMISS_KEY = 'hn-install-banner-dismissed-at';
+const INSTALL_BANNER_DISMISS_DAYS = 3;
+
+function installBannerRecentlyDismissed() {
+  try {
+    const at = parseInt(localStorage.getItem(INSTALL_BANNER_DISMISS_KEY) || '0', 10);
+    if (!at) return false;
+    return (Date.now() - at) < INSTALL_BANNER_DISMISS_DAYS * 24 * 60 * 60 * 1000;
+  } catch (e) { return false; }
+}
+
+function showInstallBanner() {
+  const banner = document.getElementById('install-banner');
+  if (!banner) return;
+  if (isStandaloneDisplay()) return;                  // already installed
+  if (installBannerRecentlyDismissed()) return;       // user said no recently
+  // On mobile, stack above the push opt-in nudge if that one is visible too.
+  const nudge = document.getElementById('push-nudge');
+  const nudgeVisible = !!(nudge && nudge.style.display === 'flex');
+  banner.classList.toggle('hn-stacked', nudgeVisible);
+  banner.style.display = 'flex';
+}
+
+function hideInstallBanner() {
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+export function dismissInstallBanner() {
+  hideInstallBanner();
+  try { localStorage.setItem(INSTALL_BANNER_DISMISS_KEY, String(Date.now())); } catch (e) { /* private mode */ }
+}
+
+/* ==========================================================================
    PUSH NOTIFICATION OPT-IN NUDGE
    ========================================================================== */
 
@@ -303,7 +373,7 @@ function maybeShowPushNudge() {
     nudge.style.display = 'flex';
   } else if (supported && Notification.permission === 'granted' && state.currentUser) {
     // Silently (re)register the FCM token for this device.
-    initWebPushNotifications(state.currentUser.uid);
+    initWebPushNotifications(state.currentUser.uid, { silent: true });
   }
 }
 
@@ -334,6 +404,12 @@ export function dismissPushNudge() {
 // Initialize Theme
 initializeTheme();
 
+// iOS Safari never fires beforeinstallprompt — surface the guided install
+// banner there too (its Install button opens the "Add to Home Screen" sheet).
+if (isIosSafari()) {
+  showInstallBanner();
+}
+
 /* ==========================================================================
    1. AUTHENTICATION & ROUTING
    ========================================================================== */
@@ -341,6 +417,7 @@ initializeTheme();
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     state.currentUser = user;
+    markHasAuthed(); // remember this device has a member — future boots skip the portfolio
     try {
       state.userProfile = await createOrUpdateUserProfile(user);
     } catch (e) {
@@ -367,7 +444,13 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     state.currentUser = null;
     state.userProfile = null;
-    showLandingPage();
+    // Only NEW users see the marketing portfolio. Anyone who has already
+    // signed in on this device goes straight to the sign-in view.
+    if (hasAuthedBefore()) {
+      showAuthView('entry');
+    } else {
+      showLandingPage();
+    }
   }
 });
 
@@ -376,6 +459,8 @@ function setupAuthenticatedUI() {
   const appContainer = document.getElementById('app-container');
   const authContainer = document.getElementById('auth-container');
   const landingContainer = document.getElementById('landing-page-container');
+
+  hideBootSplash();
 
   if (landingContainer) landingContainer.style.display = 'none';
   if (authContainer) authContainer.style.display = 'none';
@@ -449,6 +534,8 @@ export function showLandingPage() {
   const landingContainer = document.getElementById('landing-page-container');
   const userBanner = document.getElementById('landing-user-banner');
 
+  hideBootSplash(); // explicit "Explore Landing Page" visits clear the gate too
+
   if (topbar) topbar.style.display = 'none';
   if (appContainer) appContainer.style.display = 'none';
   if (authContainer) authContainer.style.display = 'none';
@@ -471,6 +558,8 @@ export function showAuthView(mode = 'entry') {
   const appContainer = document.getElementById('app-container');
   const authContainer = document.getElementById('auth-container');
   const landingContainer = document.getElementById('landing-page-container');
+
+  hideBootSplash();
 
   if (topbar) topbar.style.display = 'none';
   if (appContainer) appContainer.style.display = 'none';
@@ -3283,6 +3372,7 @@ Object.assign(window.HubbleNest, {
   // PWA Install & Push Opt-in
   handleInstallClick,
   closeInstallIosSheet,
+  dismissInstallBanner,
   enablePushFromNudge,
   dismissPushNudge,
 
