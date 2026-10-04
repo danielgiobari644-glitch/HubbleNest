@@ -11,8 +11,15 @@
   <meta property="og:image" content="./hero-cosmic.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
+  <!-- Fonts: fetched in parallel (was a render-serial @import inside style.css) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
+
+  <!-- Kick off the two ES-module entry points while the CSS parses -->
+  <link rel="modulepreload" href="./app.js" />
+  <link rel="modulepreload" href="./firebase.js" />
+
   <link rel="stylesheet" href="./style.css" />
 
   <!-- PWA Manifest & App Compliance -->
@@ -26,6 +33,50 @@
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="icon" type="image/png" sizes="192x192" href="./pwa-192x192.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
+
+  <!--
+    Resilience shim.
+    If a JS module ever fails to load (offline hiccup, aborted network, stale
+    service-worker), the inline onclick handlers in this page must not throw
+    "Cannot read properties of undefined (reading 'showAuthView')" etc.
+    Real implementations from app.js overwrite these stubs the moment the
+    module graph evaluates successfully.
+  -->
+  <script>
+    (function () {
+      var ns = window.HubbleNest = window.HubbleNest || {};
+      var HANDLERS = [
+        'loadDashboard', 'openSearchModal', 'toggleTheme', 'toggleNotificationsMenu',
+        'toggleProfileMenu', 'openProfilePage', 'showLandingPage', 'logoutUser',
+        'setupAuthenticatedUI', 'showAuthView', 'showAuthEntryCard', 'openAuth',
+        'showSignupCard', 'showLoginCard', 'nextSignupStep', 'prevSignupStep',
+        'resetPassword', 'loginWithGoogle', 'handleInstallClick', 'closeInstallIosSheet',
+        'handleHeroCodeJoin', 'handleLandingCodeJoin', 'handleQuickCodeJoin', 'handleCodeSearch',
+        'handleJoinPageCodeSearch', 'openJoinSpacePage', 'openSpacesSection', 'openMySpacesPage',
+        'openPeopleView', 'openDirectMessagesView', 'openCreateSpacePage', 'openCommunityMembers',
+        'openCommunitySpace', 'openSpace', 'openMemberProfilePage', 'goBackFromMemberProfile',
+        'handleSpacesSearch', 'handlePeopleSearch', 'loadPeopleDirectory', 'scrollToSection',
+        'handleHomePost', 'clearAllHomeAttachments', 'copySpaceCode', 'copySpaceJoinLink',
+        'downloadSpaceQr', 'switchSpaceTab', 'cancelReply', 'cancelDirectReply',
+        'clearAllChatAttachments', 'clearAllDirectAttachments', 'cancelPendingAttachment',
+        'cancelDirectPendingAttachment', 'handleSendMessage', 'handleSendDirectMessage',
+        'toggleAnnouncementComposer', 'handleCreateAnnouncement', 'handleCreateAnnouncementInline',
+        'closeModal', 'dismissPushNudge', 'enablePushFromNudge', 'handleDeleteSpace',
+        'handleExtendExpiration', 'handleSaveSpaceSettings', 'handleSaveSpaceSettingsFromTab',
+        'handleCreateSpaceSubmit', 'handleCreateSpaceFromPage', 'handleSaveProfile',
+        'handleSaveProfileFromPage'
+      ];
+      for (var i = 0; i < HANDLERS.length; i++) {
+        (function (name) {
+          if (typeof ns[name] !== 'function') {
+            ns[name] = function () {
+              console.warn('[HubbleNest] "' + name + '" fired before the app finished loading. Reload the page once you are back online.');
+            };
+          }
+        })(HANDLERS[i]);
+      }
+    })();
+  </script>
 </head>
 <body>
 

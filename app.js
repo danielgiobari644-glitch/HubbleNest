@@ -3,6 +3,13 @@
  * Pure Vanilla JavaScript Application Entry Point
  */
 
+// Namespace is created as early as possible. index.html also installs no-op
+// stubs in <head> so inline onclick handlers can never throw
+// "Cannot read properties of undefined" even if a module fails to load.
+// NOTE: ES module imports below are hoisted & evaluated before this line —
+// the <head> shim covers failures inside those imports too.
+window.HubbleNest = window.HubbleNest || {};
+
 import { 
   auth, 
   db,
@@ -869,7 +876,7 @@ function renderDashRail() {
         const top = state.people.slice(0, 7);
         stack.innerHTML = top.map(p => `
           <span class="stack-avatar" title="${escapeHtml(p.displayName)}">
-            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" />
+            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
           </span>
         `).join('') + (state.people.length > 7 ? `<span class="stack-more">+${state.people.length - 7}</span>` : '');
         if (state.people.length === 0) {
@@ -981,7 +988,7 @@ function renderSpacesGrid() {
       return `
         <div class="space-card official-space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
           <div class="space-card-cover" style="position: relative;">
-            ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name || 'HubbleNest Help & Community')}"/>` : `
+            ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name || 'HubbleNest Help & Community')}" loading="lazy" decoding="async"/>` : `
               <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, #3b82f6 0%, #1e1b4b 100%); color: #ffffff; font-size: 2.2rem; font-weight: 800;">
                 HN
               </div>
@@ -1014,7 +1021,7 @@ function renderSpacesGrid() {
     return `
       <div class="space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
         <div class="space-card-cover">
-          ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name)}"/>` : `
+          ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name)}" loading="lazy" decoding="async"/>` : `
             <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); color: #3b82f6; font-size: 2rem; font-weight: 800;">
               ${escapeHtml(sp.name.slice(0, 2).toUpperCase())}
             </div>
@@ -1111,7 +1118,7 @@ function renderSpaceHeader() {
   if (coverEl) {
     const isAdmin = state.activeSpaceRole === 'admin';
     const coverHtml = sp.imageURL 
-      ? `<img src="${sp.imageURL}" class="space-hero-cover-img" alt="${escapeHtml(sp.name)}"/>` 
+      ? `<img src="${sp.imageURL}" class="space-hero-cover-img" alt="${escapeHtml(sp.name)}" decoding="async"/>` 
       : `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, #1e293b, #0f172a); display: flex; align-items: center; justify-content: center;"><span style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500;">HubbleNest Sanctuary</span></div>`;
 
     const adminCoverBtn = isAdmin ? `
@@ -1332,7 +1339,7 @@ function renderChatMessages() {
           return `
             <div class="msg-attachment-preview">
               <a href="${att.url}" target="_blank" rel="noopener noreferrer">
-                <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image"/>
+                <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image" loading="lazy" decoding="async"/>
               </a>
               <div style="margin-top: 4px;">
                 <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Image')}', '${escapeHtml(att.url)}', 'image')">
@@ -1384,7 +1391,7 @@ function renderChatMessages() {
     return `
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
         <div class="msg-avatar">
-          <img src="${getAvatarUrl(msg.senderPhoto, msg.senderName)}" class="avatar-img" alt=""/>
+          <img src="${getAvatarUrl(msg.senderPhoto, msg.senderName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
         </div>
         <div class="msg-bubble-box">
           <div class="msg-header">
@@ -1766,7 +1773,7 @@ function renderAnnouncementsList() {
           Posted by ${escapeHtml(ann.authorName)} · ${formatDateTime(ann.createdAt)}
         </div>
         <div class="announcement-content">${escapeHtml(ann.content)}</div>
-        ${ann.imageURL ? `<img src="${ann.imageURL}" class="announcement-img" alt=""/>` : ''}
+        ${ann.imageURL ? `<img src="${ann.imageURL}" class="announcement-img" alt="" loading="lazy" decoding="async"/>` : ''}
         <div style="display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
           ${ann.imageURL ? `
             <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${ann.id}', '${escapeHtml(ann.title)} (Image)', '${escapeHtml(ann.imageURL)}', 'image')">
@@ -1823,7 +1830,7 @@ function renderMembersList() {
     return `
       <div class="member-card" style="cursor: pointer;" onclick="window.HubbleNest.openUserCardModal('${m.userId}')">
         <div class="msg-avatar" style="width: 42px; height: 42px;">
-          <img src="${getAvatarUrl(m.photoURL, m.displayName)}" class="avatar-img" alt="${escapeHtml(m.displayName)}"/>
+          <img src="${getAvatarUrl(m.photoURL, m.displayName)}" class="avatar-img" alt="${escapeHtml(m.displayName)}" loading="lazy" decoding="async"/>
         </div>
         <div class="member-info">
           <div class="member-name">${escapeHtml(m.displayName)} ${isMe ? '(You)' : ''}</div>
@@ -1873,7 +1880,7 @@ function renderJoinRequests() {
     return `
       <div class="member-card" style="border-left: 3px solid var(--accent-primary);">
         <div class="msg-avatar">
-          <img src="${getAvatarUrl(req.photoURL, req.displayName)}" class="avatar-img" alt=""/>
+          <img src="${getAvatarUrl(req.photoURL, req.displayName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
         </div>
         <div class="member-info">
           <div class="member-name">${escapeHtml(req.displayName)} (@${escapeHtml(req.username)})</div>
@@ -1991,7 +1998,7 @@ function renderPeopleGrid(peopleList) {
       <div class="person-card" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
         <div class="person-header">
           <div class="person-avatar">
-            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" />
+            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
           </div>
           <div style="flex: 1; min-width: 0;">
             <div class="person-name">${escapeHtml(p.displayName)}</div>
@@ -2101,7 +2108,7 @@ export async function openMemberProfilePage(userId) {
 
   const profileCardHtml = `
     <div class="user-card-avatar" style="width: 80px; height: 80px; margin: 0 auto 16px;">
-      <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" alt="${escapeHtml(peerData.displayName)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />
+      <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" alt="${escapeHtml(peerData.displayName)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" decoding="async" />
     </div>
     <div class="user-card-name" style="text-align: center; font-size: 1.4rem; font-weight: 700;">${escapeHtml(peerData.displayName)}</div>
     <div class="user-card-handle" style="text-align: center; font-size: 0.9rem; color: var(--accent-primary); margin-bottom: 12px;">@${escapeHtml(peerData.username)}</div>
@@ -2240,7 +2247,7 @@ function renderDirectRequests() {
       <div class="direct-request-item">
         <div class="direct-request-item-top" onclick="window.HubbleNest.openUserCardModal('${req.senderId}')" style="cursor: pointer;">
           <div class="direct-request-avatar">
-            <img src="${getAvatarUrl(req.senderPhoto, req.senderName)}" alt="${escapeHtml(req.senderName)}" />
+            <img src="${getAvatarUrl(req.senderPhoto, req.senderName)}" alt="${escapeHtml(req.senderName)}" loading="lazy" decoding="async" />
           </div>
           <div class="direct-request-info">
             <div class="direct-request-name">${escapeHtml(req.senderName)}</div>
@@ -2281,7 +2288,7 @@ function renderConversationsList() {
     return `
       <div class="nav-link ${isActive ? 'active' : ''}" style="padding: 10px 12px; border-radius: var(--radius-md);" onclick="window.HubbleNest.selectConversation('${conv.id}', '${peerUid}')">
         <div class="msg-avatar" style="width: 36px; height: 36px; flex-shrink: 0;">
-          <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" class="avatar-img" alt="${escapeHtml(peerData.displayName)}"/>
+          <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" class="avatar-img" alt="${escapeHtml(peerData.displayName)}" decoding="async"/>
         </div>
         <div style="flex: 1; min-width: 0;">
           <div style="font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -2358,7 +2365,7 @@ function renderDirectMessages() {
           return `
             <div class="msg-attachment-preview">
               <a href="${att.url}" target="_blank" rel="noopener noreferrer">
-                <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image"/>
+                <img src="${att.url}" style="max-height: 200px; border-radius: 6px;" alt="Image" loading="lazy" decoding="async"/>
               </a>
               <div style="margin-top: 4px;">
                 <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary); display: inline-flex; align-items: center; gap: 4px;" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Image')}', '${escapeHtml(att.url)}', 'image')">
@@ -2436,7 +2443,7 @@ function renderDirectMessages() {
     return `
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
         <div class="msg-avatar" style="width: 32px; height: 32px;">
-          <img src="${getAvatarUrl(senderPhoto, senderName)}" class="avatar-img" alt="${escapeHtml(senderName || '')}" />
+          <img src="${getAvatarUrl(senderPhoto, senderName)}" class="avatar-img" alt="${escapeHtml(senderName || '')}" loading="lazy" decoding="async" />
         </div>
         <div class="msg-bubble-box">
           <div class="msg-bubble">
@@ -3212,7 +3219,9 @@ export async function handleSearchInput(term) {
    WINDOW EXPOSURES (FOR ONCLICK HANDLERS IN CLEAN VANILLA JS)
    ========================================================================== */
 
-window.HubbleNest = {
+// Object.assign (not reassignment) keeps the window.HubbleNest object
+// identity stable with the no-op stubs installed in index.html <head>.
+Object.assign(window.HubbleNest, {
   // Navigation & Pages (No Popups!)
   showLandingPage,
   openAuth: (mode) => showAuthView(mode),
@@ -3482,7 +3491,7 @@ window.HubbleNest = {
       switchSpaceTab('links');
     }
   }
-};
+});
 
 // Global click to close dropdown menus
 document.addEventListener('click', (e) => {

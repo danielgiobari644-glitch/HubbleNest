@@ -53,7 +53,7 @@ firebase deploy
 |------|-------|
 | Firebase config (apiKey, projectId, …) | `firebase.js` |
 | Cloudinary cloud / upload preset | `cloudinary.js` |
-| Firestore security rules | `firestore.rules` → paste into Firebase Console → Firestore → Rules → Publish |
+| Firestore security rules | `firestore.rules` → paste into Firebase Console → Firestore → Rules → Publish (**re-publish every time this file changes**) |
 | Background push sender (optional, see below) | Firestore document `config/push` |
 
 ## Notifications
@@ -92,6 +92,32 @@ members' browsers (no server needed). One-time setup by the project owner:
 > profile document.
 
 ## Troubleshooting
+
+**"Missing or insufficient permissions" when sending / accepting chat requests
+(`chat-requests.js`, `app.js — Failed to accept request`):**
+the published Firestore rules are older than the ones shipped in this package.
+The app checks `getDoc()` on `chatRequests/{uidA_uidB}` and
+`conversations/{id}` to see whether one already exists between two members —
+when the document **does not exist yet**, the old rules dereference
+`resource.data` on a null resource and deny the read, which surfaces as
+"Missing or insufficient permissions" and blocks the whole flow. Fix (2
+minutes, owner only):
+
+1. Open **Firebase Console → Firestore Database → Rules**.
+2. Replace the full contents with the current `firestore.rules` file from
+   this package (the `chatRequests` and `conversations` blocks now allow
+   reading non-existent documents — they carry no data, so nothing is
+   exposed).
+3. Click **Publish**. The request → accept → private-chat flow works
+   immediately, no reload needed.
+
+**After deploying a new build, an old service worker keeps serving stale
+files (or logs "Failed to convert value to 'Response'"):**
+open the site, DevTools → Application → Service Workers → **Unregister**,
+then hard-refresh (**Ctrl+Shift+R**) once. New builds bump the cache version
+(`hubblenest-v6`), so this is only needed once per migration. The fetch
+handler now always resolves to a real `Response`, so the
+"Failed to convert value to 'Response'" error can no longer occur.
 
 **Push activation fails with a 401 / "token-subscribe-failed" /
 "Request is missing required authentication credential"
@@ -138,6 +164,11 @@ the hero is clicked, which calls `prompt()` on the captured event.
 - **Background push notifications** via FCM — works when the app is closed
 - **PWA** — installable (with iOS "Add to Home Screen" guidance), offline shell
   via service worker, Firestore local persistence
+- **Fast loading** — service worker v7 serves every shell asset, Firebase SDK
+  chunk, Google Font and Cloudinary image from cache on repeat visits
+  (cache-first; the cache version is bumped on each deploy to ship updates),
+  fonts load in parallel (no render-blocking `@import`), below-fold images
+  lazy-load
 - **Dark / light theme**, responsive layout with mobile bottom navigation
 
 ## Structure (flat — no subfolders)

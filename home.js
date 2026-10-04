@@ -108,7 +108,7 @@ function renderHomeFeed(messages) {
           return `
             <div class="msg-attachment-preview">
               <a href="${att.url}" target="_blank" rel="noopener noreferrer">
-                <img src="${att.url}" style="max-height: 240px;" alt="Image"/>
+                <img src="${att.url}" style="max-height: 240px;" alt="Image" loading="lazy" decoding="async"/>
               </a>
             </div>
           `;
@@ -139,7 +139,7 @@ function renderHomeFeed(messages) {
     return `
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
         <div class="msg-avatar">
-          <img src="${getAvatarUrl(msg.senderPhoto, msg.senderName)}" class="avatar-img" alt=""/>
+          <img src="${getAvatarUrl(msg.senderPhoto, msg.senderName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
         </div>
         <div class="msg-bubble-box">
           <div class="msg-header">

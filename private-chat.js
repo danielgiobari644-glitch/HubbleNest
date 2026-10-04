@@ -52,32 +52,41 @@ export function getConversationId(uid1, uid2) {
 export async function getOrCreateConversation(currentUser, peerUser) {
   const convId = getConversationId(currentUser.uid, peerUser.uid);
   const convRef = doc(db, 'conversations', convId);
-  const snap = await getDoc(convRef);
 
-  if (!snap.exists()) {
-    const convData = {
-      id: convId,
-      participants: [currentUser.uid, peerUser.uid],
-      participantData: {
-        [currentUser.uid]: {
-          displayName: currentUser.displayName || 'Member',
-          username: currentUser.username || 'user',
-          photoURL: currentUser.photoURL || ''
-        },
-        [peerUser.uid]: {
-          displayName: peerUser.displayName || 'Member',
-          username: peerUser.username || 'user',
-          photoURL: peerUser.photoURL || ''
-        }
-      },
-      lastMessage: null,
-      updatedAt: serverTimestamp()
-    };
-    await setDoc(convRef, convData);
-    return convData;
+  // The existence check must NEVER be a hard failure: if the read is denied
+  // (stale rules) or the device is briefly offline, we still try to create
+  // the conversation — the create rule is the real gatekeeper.
+  let snap = null;
+  try {
+    snap = await getDoc(convRef);
+  } catch (readErr) {
+    console.warn('Conversation existence check failed — will attempt to create it:', readErr?.code || readErr);
   }
 
-  return snap.data();
+  if (snap && snap.exists()) {
+    return snap.data();
+  }
+
+  const convData = {
+    id: convId,
+    participants: [currentUser.uid, peerUser.uid],
+    participantData: {
+      [currentUser.uid]: {
+        displayName: currentUser.displayName || 'Member',
+        username: currentUser.username || 'user',
+        photoURL: currentUser.photoURL || ''
+      },
+      [peerUser.uid]: {
+        displayName: peerUser.displayName || 'Member',
+        username: peerUser.username || 'user',
+        photoURL: peerUser.photoURL || ''
+      }
+    },
+    lastMessage: null,
+    updatedAt: serverTimestamp()
+  };
+  await setDoc(convRef, convData);
+  return convData;
 }
 
 /**
