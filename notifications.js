@@ -54,7 +54,7 @@ let activeNotifUnsubscribe = null;
  *   Firebase Console → Project Settings → Cloud Messaging → Web Push
  *   certificates → Generate key pair → paste the key here.
  */
-const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquVuPlHHHZKYaOzGUOCqp7z--H328TFz0Zpua7xeszYo';
+const DEFAULT_VAPID_PUBLIC_KEY = 'BNWK5wmGB3hgVmKZoN4k_EShZLdIYGyHPgKrUDlmuplytJcUAolrgNKrzvbvozTcmBm6qTi_PiJcCd6xZmz5bR4';
 
 /**
  * A valid P-256 Web Push public key is 87 base64url characters starting
