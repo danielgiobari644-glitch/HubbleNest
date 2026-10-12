@@ -154,15 +154,56 @@ import {
   ensureUserKeyPair
 } from './encryption.js';
 
-// Home community feed (reuses the Space chat system for the official community Space)
+// Community feed (real posts + ranking algorithm), Arcade, Direct Share,
+// and the Firestore Connection Doctor (replaces the old home.js space-mirror feed)
 import {
-  startHomeFeed,
-  stopHomeFeed,
+  startCommunityFeed,
+  stopCommunityFeed,
+  setFeedConnections,
   handleHomePost,
   stageHomeAttachment as stageHomeFile,
   removeHomeAttachment,
-  clearAllHomeAttachments
-} from './home.js';
+  clearAllHomeAttachments,
+  feedSetMode,
+  feedToggleLike,
+  feedToggleComments,
+  feedSubmitComment,
+  feedDeleteComment,
+  feedDeletePost,
+  toggleRankingInfo
+} from './community.js';
+
+import {
+  startArcade,
+  stopArcade,
+  setArcadeFilter,
+  openGameEditor,
+  closeGameEditor,
+  setCodePane,
+  insertStarterGame,
+  scheduleGamePreview,
+  saveCurrentGame,
+  gameDelete,
+  openGamePlayer,
+  closeGamePlayer,
+  gameToggleLike
+} from './games.js';
+
+import {
+  openDirectShareView,
+  stopDirectShare,
+  setMode as setShareMode,
+  createDirectShare,
+  addFilesToShare,
+  copyShareLink,
+  closeDirectShare,
+  backToSharePicker,
+  connectToShare
+} from './direct-share.js';
+
+import {
+  runFirestoreDoctor
+} from './firestore-doctor.js';
 
 // Application State
 const state = {
@@ -194,7 +235,10 @@ const state = {
   directPendingAttachment: null,
   directPendingAttachments: [],
   directReplyingTo: null,
-  previousView: 'dashboard'
+  previousView: 'dashboard',
+  conversationsUnsub: null,
+  incomingReqUnsub: null,
+  directChatRetried: false
 };
 
 /* ==========================================================================
@@ -444,6 +488,12 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     state.currentUser = null;
     state.userProfile = null;
+    // Tear down realtime subscriptions so a future sign-in starts clean.
+    stopCommunityFeed();
+    stopArcade();
+    stopDirectShare();
+    if (state.conversationsUnsub) { state.conversationsUnsub(); state.conversationsUnsub = null; }
+    if (state.incomingReqUnsub) { state.incomingReqUnsub(); state.incomingReqUnsub = null; }
     // Only NEW users see the marketing portfolio. Anyone who has already
     // signed in on this device goes straight to the sign-in view.
     if (hasAuthedBefore()) {
@@ -499,8 +549,9 @@ function setupAuthenticatedUI() {
   if (menuName) menuName.textContent = state.userProfile.displayName || 'Member';
   if (menuHandle) menuHandle.textContent = `@${state.userProfile.username || 'user'}`;
 
-  // Subscribe to incoming chat requests
-  subscribeToIncomingRequests(state.currentUser.uid, (requests) => {
+  // Subscribe to incoming chat requests (guarded: never stack duplicates)
+  if (state.incomingReqUnsub) { state.incomingReqUnsub(); state.incomingReqUnsub = null; }
+  state.incomingReqUnsub = subscribeToIncomingRequests(state.currentUser.uid, (requests) => {
     state.incomingChatRequests = requests;
     const badge = document.getElementById('direct-requests-badge');
     const countEl = document.getElementById('direct-requests-count');
@@ -521,10 +572,20 @@ function setupAuthenticatedUI() {
     }
 
     renderDirectRequests();
+
+    // Connection set for the feed's affinity signal: pending requests + DMs
+    setFeedConnections(computeConnectionSet());
   });
 
   // Offer push notification opt-in (once, dismissible) or refresh device token
   maybeShowPushNudge();
+
+  // Direct Share deep link captured before sign-in (?share=CODE / #share=CODE)
+  const pendingShare = sessionStorage.getItem('pendingShareCode');
+  if (pendingShare) {
+    sessionStorage.removeItem('pendingShareCode');
+    openDirectShareViewWrapper(pendingShare);
+  }
 }
 
 export function showLandingPage() {
@@ -657,6 +718,22 @@ async function checkUrlJoinParam() {
       history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]join=[^&]+/, '') );
     } catch (e) { /* non-fatal */ }
     processLandingCode(deepLinkCode);
+    return;
+  }
+
+  // Direct Share deep links: ?share=CODE or #share=CODE (encoded in the QR)
+  const shareHash = window.location.hash.match(/^#share=([A-Za-z0-9]{6})/);
+  const shareQuery = new URLSearchParams(window.location.search).get('share');
+  const shareCode = ((shareHash && shareHash[1]) || (shareQuery && shareQuery.trim()) || '').toUpperCase();
+  if (/^[A-Z0-9]{6}$/.test(shareCode)) {
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]share=[^&]+/, ''));
+    } catch (e) { /* non-fatal */ }
+    if (state.currentUser) {
+      openDirectShareViewWrapper(shareCode);
+    } else {
+      sessionStorage.setItem('pendingShareCode', shareCode);
+    }
     return;
   }
 
@@ -796,6 +873,8 @@ export function showSignupCard() {
 async function loadDashboard() {
   state.currentView = 'dashboard';
   unsubscribeFromChat();
+  stopArcade();
+  stopDirectShare();
 
   document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
   document.getElementById('view-dashboard')?.classList.add('active-view');
@@ -977,18 +1056,19 @@ function renderDashRail() {
 }
 
 /**
- * Start the community feed on Home (official support Space via existing chat system)
+ * Start the community feed on Home (real feedPosts + transparent ranking).
+ * The affinity signal uses this member's real connections: accepted DMs and
+ * pending chat requests, refreshed whenever either changes.
  */
+function computeConnectionSet() {
+  const set = new Set();
+  (state.incomingChatRequests || []).forEach(r => { if (r.senderId) set.add(r.senderId); });
+  (state.conversations || []).forEach(c => (c.participants || []).forEach(p => { if (p !== state.currentUser?.uid) set.add(p); }));
+  return set;
+}
+
 function startHomeCommunityFeed() {
-  const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
-  const spaceId = official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
-  startHomeFeed(
-    spaceId,
-    state.userProfile,
-    state.currentUser?.uid,
-    state.activeSpaceRole === 'admin' || official?.userRole === 'admin'
-  );
-  window.HubbleNest._homeSpaceId = spaceId;
+  startCommunityFeed(state.userProfile, state.currentUser?.uid, computeConnectionSet());
 }
 
 /**
@@ -2289,12 +2369,52 @@ export async function openDirectChatWithPeer(peerUserId) {
 }
 
 /* ==========================================================================
+   10b. ARCADE & DIRECT SHARE VIEWS
+   ========================================================================== */
+
+export function openArcadeView() {
+  state.currentView = 'arcade';
+  unsubscribeFromChat();
+  stopDirectShare();
+  stopCommunityFeed();
+
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-arcade')?.classList.add('active-view');
+
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-arcade')?.classList.add('active');
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+
+  startArcade();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function openDirectShareViewWrapper(deepLinkCode = null) {
+  state.currentView = 'direct-share';
+  unsubscribeFromChat();
+  stopArcade();
+  stopCommunityFeed();
+
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-direct-share')?.classList.add('active-view');
+
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-direct-share')?.classList.add('active');
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+
+  openDirectShareView(deepLinkCode);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ==========================================================================
    11. PRIVATE DIRECT MESSAGING
    ========================================================================== */
 
 export async function openDirectMessagesView() {
   state.currentView = 'direct';
   unsubscribeFromChat();
+  stopArcade();
+  stopDirectShare();
 
   document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
   document.getElementById('view-direct-messages')?.classList.add('active-view');
@@ -2309,10 +2429,14 @@ export async function openDirectMessagesView() {
   // Render pending requests box
   renderDirectRequests();
 
-  // Subscribe to conversations
-  subscribeToUserConversations(state.currentUser.uid, (convs) => {
+  // Subscribe to conversations (guarded: opening the view twice must not
+  // stack duplicate realtime listeners — the old bug behind phantom
+  // "Conversations listener error" spam in the console).
+  if (state.conversationsUnsub) { state.conversationsUnsub(); state.conversationsUnsub = null; }
+  state.conversationsUnsub = subscribeToUserConversations(state.currentUser.uid, (convs) => {
     state.conversations = convs;
     renderConversationsList();
+    setFeedConnections(computeConnectionSet());
   });
 }
 
@@ -2399,6 +2523,8 @@ export async function selectConversation(convId, peerUid) {
   const peerData = peerSnap.data();
   state.activeDirectPeer = peerData;
   state.activeConversation = { id: convId };
+  state.directMessages = [];
+  state.directChatRetried = false;
 
   // Update header with peer's details
   const headerName = document.getElementById('direct-chat-peer-name');
@@ -2413,38 +2539,134 @@ export async function selectConversation(convId, peerUid) {
     headerAvatar.src = getAvatarUrl(peerData.photoURL, peerData.displayName);
   }
 
+  hideDirectChatError();
   if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
   if (activeChatBox) activeChatBox.style.display = 'flex';
 
   renderConversationsList();
+  showDirectMessagesSkeleton();
 
   // Subscribe to messages with local client-side decryption
   subscribeToPrivateMessages(convId, state.userProfile, peerData, (messages) => {
     state.directMessages = messages;
     renderDirectMessages();
+  }, (err) => {
+    // Real, visible failure state — never a silent dead chat.
+    showDirectChatError(err);
   });
+}
+
+function showDirectMessagesSkeleton() {
+  const container = document.getElementById('direct-messages-feed');
+  if (!container) return;
+  const widths = ['68%', '44%', '76%', '52%', '38%'];
+  container.innerHTML = widths.map((w, i) => `
+    <div class="message-row ${i % 2 ? 'msg-own' : ''}">
+      <div class="msg-avatar" style="width: 32px; height: 32px;"></div>
+      <div class="msg-bubble-box">
+        <div class="msg-bubble msg-skeleton-bubble">
+          <span class="msg-skeleton-line" style="width: ${w};"></span>
+          <span class="msg-skeleton-line msg-skeleton-line-short" style="width: ${Math.round(parseInt(w) * 0.55)}%;"></span>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function showDirectChatError(err) {
+  const card = document.getElementById('direct-chat-error');
+  const feed = document.getElementById('direct-messages-feed');
+  if (!card) return;
+  const denied = err?.code === 'permission-denied' ||
+    String(err?.message || '').includes('Missing or insufficient permissions');
+  card.innerHTML = `
+    <div class="chat-error-card">
+      <div class="chat-error-title">${denied ? 'This conversation is blocked by your Firestore rules' : 'This conversation could not load'}</div>
+      <div class="chat-error-desc">${denied
+        ? 'Your Firebase project\'s published rules are refusing the read. The Connection Doctor checks every rule live and tells you exactly which line to fix — most people are back in under a minute.'
+        : 'Check your connection and try again.'}</div>
+      <div class="chat-error-actions">
+        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.retryActiveDirectChat()">Retry</button>
+      </div>
+    </div>`;
+  card.style.display = 'block';
+  if (feed) feed.style.display = 'none';
+}
+
+function hideDirectChatError() {
+  const card = document.getElementById('direct-chat-error');
+  const feed = document.getElementById('direct-messages-feed');
+  if (card) { card.style.display = 'none'; card.innerHTML = ''; }
+  if (feed) feed.style.display = 'block';
+}
+
+export function retryActiveDirectChat() {
+  if (!state.activeConversation || !state.activeDirectPeer) return;
+  hideDirectChatError();
+  showDirectMessagesSkeleton();
+  subscribeToPrivateMessages(
+    state.activeConversation.id,
+    state.userProfile,
+    state.activeDirectPeer,
+    (messages) => {
+      state.directMessages = messages;
+      renderDirectMessages();
+    },
+    (err) => showDirectChatError(err)
+  );
+}
+
+/** Enter sends, Shift+Enter newline, composer auto-grows while typing. */
+export function handleDirectComposerKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    handleSendDirectMessage();
+    const el = document.getElementById('direct-message-input');
+    if (el) el.style.height = 'auto';
+    return;
+  }
+  const el = event.target;
+  if (el && el.tagName === 'TEXTAREA') {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
 }
 
 function renderDirectMessages() {
   const container = document.getElementById('direct-messages-feed');
   if (!container) return;
 
+  // A successful snapshot means the listener is healthy — clear any error card.
+  hideDirectChatError();
+
   if (state.directMessages.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="padding: 40px 0;">
         <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
         <h4 class="empty-state-title">This conversation is private</h4>
-        <p class="empty-state-desc">Messages sent here are end-to-end encrypted between you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}.</p>
+        <p class="empty-state-desc">Messages sent here are end-to-end encrypted between you and ${escapeHtml(state.activeDirectPeer?.displayName || 'this member')}. Nobody else — not even HubbleNest — can read them.</p>
       </div>
     `;
     return;
   }
 
-  container.innerHTML = state.directMessages.map(msg => {
+  let lastDayKey = '';
+  const html = state.directMessages.map(msg => {
     const isOwn = msg.senderId === state.currentUser.uid;
     const decrypted = msg.decrypted || { text: '...' };
     const senderPhoto = isOwn ? state.userProfile.photoURL : state.activeDirectPeer?.photoURL;
     const senderName = isOwn ? state.userProfile.displayName : state.activeDirectPeer?.displayName;
+
+    // Day divider between messages sent on different calendar days
+    const ts = msg.createdAt?.toDate ? msg.createdAt.toDate() : (msg.createdAt?.seconds ? new Date(msg.createdAt.seconds * 1000) : null);
+    let dividerHtml = '';
+    if (ts) {
+      const dayKey = ts.toDateString();
+      if (dayKey !== lastDayKey) {
+        lastDayKey = dayKey;
+        dividerHtml = `<div class="chat-day-divider"><span>${formatDayLabel(ts)}</span></div>`;
+      }
+    }
 
     // Attachments render
     let attachmentsHtml = '';
@@ -2530,6 +2752,7 @@ function renderDirectMessages() {
     }
 
     return `
+      ${dividerHtml}
       <div class="message-row ${isOwn ? 'msg-own' : ''}">
         <div class="msg-avatar" style="width: 32px; height: 32px;">
           <img src="${getAvatarUrl(senderPhoto, senderName)}" class="avatar-img" alt="${escapeHtml(senderName || '')}" loading="lazy" decoding="async" />
@@ -2548,15 +2771,25 @@ function renderDirectMessages() {
               ` : ''}
             </div>
           </div>
-          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; text-align: ${isOwn ? 'right' : 'left'};">
-            ${formatTimeAgo(msg.createdAt)} · <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Private
+          <div class="msg-meta">
+            ${msg.decrypted?.isDecryptionError ? '<span class="msg-meta-warn">Undecryptable on this device</span> · ' : ''}
+            ${ts ? `<span class="msg-meta-time" title="${escapeHtml(ts.toLocaleString())}">${escapeHtml(ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>` : formatTimeAgo(msg.createdAt)}
           </div>
         </div>
       </div>
     `;
   }).join('');
 
+  container.innerHTML = html;
   container.scrollTop = container.scrollHeight;
+}
+
+function formatDayLabel(date) {
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 export function stageDirectAttachment(file) {
@@ -2801,6 +3034,18 @@ export function handleNotificationClick(notifId, spaceId) {
     openDirectChatWithPeer(notif.senderId);
   } else if (notif?.type === 'private_message' && notif.senderId) {
     openDirectChatWithPeer(notif.senderId);
+  } else if ((notif?.type === 'feed_like' || notif?.type === 'feed_comment') && notif.postId) {
+    loadDashboard();
+    setTimeout(() => {
+      const card = document.getElementById(`feed-post-${notif.postId}`);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('feed-post-flash');
+        setTimeout(() => card.classList.remove('feed-post-flash'), 2000);
+      }
+    }, 600);
+  } else if (notif?.type === 'game_like' && notif.gameId) {
+    openArcadeView();
   } else if (spaceId) {
     openSpace(spaceId);
   }
@@ -3419,6 +3664,8 @@ Object.assign(window.HubbleNest, {
   // Direct Messages
   selectConversation,
   handleSendDirectMessage,
+  handleDirectComposerKey,
+  retryActiveDirectChat,
   stageDirectAttachment,
   removeDirectAttachment,
   clearAllDirectAttachments,
@@ -3426,6 +3673,33 @@ Object.assign(window.HubbleNest, {
   replyToDirectMessage,
   replyToDirectFile,
   cancelDirectReply,
+
+  // Arcade (user-created HTML/CSS/JS games)
+  openArcadeView,
+  setArcadeFilter,
+  openGameEditor,
+  closeGameEditor,
+  setCodePane,
+  insertStarterGame,
+  scheduleGamePreview,
+  saveCurrentGame,
+  gameDelete,
+  openGamePlayer,
+  closeGamePlayer,
+  gameToggleLike,
+
+  // Direct Share (code / QR file handoff)
+  openDirectShareView: openDirectShareViewWrapper,
+  setShareMode,
+  createDirectShare,
+  addFilesToShare,
+  copyShareLink,
+  closeDirectShare,
+  backToSharePicker,
+  connectToShare,
+
+  // Firestore Connection Doctor
+  runFirestoreDoctor,
 
   // Notifications
   handleNotificationClick,
@@ -3514,29 +3788,21 @@ Object.assign(window.HubbleNest, {
     if (state.activeSpace?.code) copyToClipboard(state.activeSpace.code, 'Space code copied');
   },
 
-  // Home community feed (official Space via existing chat system)
-  resolveHomeSpaceId: () => {
-    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
-    return official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
-  },
+  // Home community feed — real feedPosts with ranking
   handleHomePost: () => {
     if (!state.userProfile || !state.currentUser) return;
-    handleHomePost(
-      window.HubbleNest.resolveHomeSpaceId(),
-      state.userProfile,
-      state.currentUser.uid,
-      state.activeSpaceRole === 'admin' || state.userSpaces.some(sp => (sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID) && sp.userRole === 'admin')
-    );
+    handleHomePost();
   },
   stageHomeAttachment: (file) => stageHomeFile(file, 100),
   removeHomeAttachment,
   clearAllHomeAttachments,
-  toggleHomeReaction: (msgId, emoji) => {
-    toggleMessageReaction(window.HubbleNest.resolveHomeSpaceId(), msgId, emoji, state.currentUser.uid);
-  },
-  deleteHomeMessage: (msgId) => {
-    deleteSpaceMessage(window.HubbleNest.resolveHomeSpaceId(), msgId);
-  },
+  feedSetMode,
+  feedToggleLike,
+  feedToggleComments,
+  feedSubmitComment,
+  feedDeleteComment,
+  feedDeletePost,
+  toggleRankingInfo,
 
   // Sidebar "Spaces" shortcut: open the dedicated Your Spaces page
   openSpacesSection: () => openMySpacesPage(),
@@ -3582,6 +3848,22 @@ Object.assign(window.HubbleNest, {
     }
   }
 });
+
+// Live references used by the Arcade / Direct Share modules and their
+// inline onclick handlers (identity of window.HubbleNest stays stable).
+window.HubbleNest._state = state;
+const playerGameIdRef = { id: null };
+Object.defineProperty(window.HubbleNest, '_playerGameId', {
+  get: () => playerGameIdRef.id,
+  set: (v) => { playerGameIdRef.id = v; }
+});
+
+// Keep the player like-button wired to the currently open game.
+const _openGamePlayer = window.HubbleNest.openGamePlayer;
+window.HubbleNest.openGamePlayer = function (gameId) {
+  window.HubbleNest._playerGameId = gameId;
+  return _openGamePlayer(gameId);
+};
 
 // Global click to close dropdown menus
 document.addEventListener('click', (e) => {

@@ -120,8 +120,10 @@ export function subscribeToUserConversations(userId, onUpdate) {
 
 /**
  * Subscribe to messages in a specific private conversation
+ * @param {Function} onMessages called with decrypted messages on every snapshot
+ * @param {Function} [onError] called on terminal listener errors (after self-heal retry)
  */
-export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMessages) {
+export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMessages, onError = null) {
   if (activePrivateUnsubscribe) {
     activePrivateUnsubscribe();
     activePrivateUnsubscribe = null;
@@ -189,11 +191,15 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
       privateListenerRetried = true;
       setTimeout(() => {
         try {
-          subscribeToPrivateMessages(convId, currentUser, peerUser, onMessages);
+          subscribeToPrivateMessages(convId, currentUser, peerUser, onMessages, onError);
         } catch (e) { /* ignore */ }
       }, 1600);
-    } else if (denied) {
-      showToast('This conversation could not load. Reopen the chat to retry.', 'error');
+    } else {
+      if (denied) {
+        showToast('This conversation could not load. Reopen the chat to retry.', 'error');
+      }
+      // Surface the failure to the UI (friendly error card in app.js).
+      if (typeof onError === 'function') onError(err);
     }
   });
 
