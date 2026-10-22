@@ -127,6 +127,93 @@ QRRSBlock.getRsBlockTable = function(typeNumber, errorCorrectLevel) {
   }
 };
 
+// Format-information BCH(15,5) encoding (QR spec Annex C).
+//
+// The 15-bit format field around the finder patterns must carry
+//   BCH15_5((errorCorrectionLevel << 3) | maskPattern) XOR 0x5412
+// NOT the raw mask constant. Writing 0x5412 verbatim tells every scanner a
+// fixed (wrong) error-correction level and mask pattern, so the code decodes
+// as corrupt. This was the reason camera apps refused HubbleNest QR codes.
+var QR_G15 = (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0); // 0x0537
+var QR_G15_MASK = (1 << 14) | (1 << 12) | (1 << 10) | (1 << 4) | (1 << 1);               // 0x5412
+var QR_G18 = (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0); // 0x1F25
+
+function qrBCHDigit(data) {
+  var digit = 0;
+  while (data != 0) { digit++; data >>>= 1; }
+  return digit;
+}
+
+function qrGetBCHTypeInfo(data) {
+  var d = data << 10;
+  while (qrBCHDigit(d) - qrBCHDigit(QR_G15) >= 0) {
+    d ^= (QR_G15 << (qrBCHDigit(d) - qrBCHDigit(QR_G15)));
+  }
+  return ((data << 10) | d) ^ QR_G15_MASK;
+}
+
+// 18-bit version information (versions 7-40 only), BCH(18,6) with G18.
+function qrGetBCHTypeNumber(typeNumber) {
+  var d = typeNumber << 12;
+  while (qrBCHDigit(d) - qrBCHDigit(QR_G18) >= 0) {
+    d ^= (QR_G18 << (qrBCHDigit(d) - qrBCHDigit(QR_G18)));
+  }
+  return d;
+}
+
+// Alignment-pattern center coordinates per version (QR spec Annex E).
+// Version 2+ REQUIRES these 5x5 patterns — without them decoders reject
+// every code above version 1 (short codes worked, real deep links didn't).
+var QR_PATTERN_POSITION_TABLE = [
+  [],            // (unused index 0)
+  [],            // version 1: no alignment patterns
+  [6, 18],
+  [6, 22],
+  [6, 26],
+  [6, 30],
+  [6, 34],
+  [6, 22, 38],
+  [6, 24, 42],
+  [6, 26, 46],
+  [6, 28, 50],
+  [6, 30, 54],
+  [6, 32, 58],
+  [6, 34, 62],
+  [6, 26, 46, 66],
+  [6, 26, 48, 70],
+  [6, 26, 50, 74],
+  [6, 30, 54, 78],
+  [6, 30, 56, 82],
+  [6, 30, 58, 86],
+  [6, 34, 62, 90],
+  [6, 28, 54, 80, 106],
+  [6, 26, 50, 84, 108],
+  [6, 30, 54, 88, 112],
+  [6, 32, 58, 92, 116],
+  [6, 30, 58, 96, 120],
+  [6, 34, 62, 100, 124],
+  [6, 28, 54, 80, 106, 132],
+  [6, 26, 50, 84, 108, 136],
+  [6, 30, 54, 88, 112, 140],
+  [6, 32, 58, 92, 116, 144],
+  [6, 26, 50, 84, 108, 132, 156],
+  [6, 30, 54, 88, 112, 136, 160],
+  [6, 34, 58, 92, 116, 140, 164],
+  [6, 30, 54, 88, 112, 136, 160, 184],
+  [6, 34, 58, 92, 116, 140, 164, 188],
+  [6, 30, 54, 88, 112, 136, 160, 184, 208],
+  [6, 34, 58, 92, 116, 140, 164, 188, 212],
+  [6, 30, 54, 88, 112, 136, 160, 184, 208, 232],
+  [6, 34, 58, 92, 116, 140, 164, 188, 212, 236],
+  [6, 30, 58, 100, 140, 180, 220]
+];
+
+function qrGetAlignmentPatternPositions(typeNumber) {
+  if (typeNumber < 1) throw new Error('bad typeNumber: ' + typeNumber);
+  if (typeNumber === 1) return [];
+  return QR_PATTERN_POSITION_TABLE[typeNumber] || [];
+}
+
 function QRCodeModel(typeNumber, errorCorrectLevel) {
   this.typeNumber = typeNumber;
   this.errorCorrectLevel = errorCorrectLevel;
@@ -178,12 +265,49 @@ QRCodeModel.prototype = {
     this.setupPositionProbePattern(0, 0);
     this.setupPositionProbePattern(this.moduleCount - 7, 0);
     this.setupPositionProbePattern(0, this.moduleCount - 7);
+    this.setupAlignmentPattern();
     this.setupTimingPattern();
     this.setupTypeInfo(test, maskPattern);
+    this.setupVersionInfo(test);
     if (this.dataCache == null) {
       this.dataCache = QRCodeModel.createData(this.typeNumber, this.errorCorrectLevel, this.dataList);
     }
     this.mapData(this.dataCache, maskPattern);
+  },
+  setupAlignmentPattern: function() {
+    var pos = qrGetAlignmentPatternPositions(this.typeNumber);
+    for (var i = 0; i < pos.length; i++) {
+      for (var j = 0; j < pos.length; j++) {
+        var row = pos[i];
+        var col = pos[j];
+        // Skip centers already occupied by the finder/timing patterns
+        if (this.modules[row][col] != null) continue;
+        // 5x5 pattern: dark border ring + dark center, light in between
+        for (var r = -2; r <= 2; r++) {
+          for (var c = -2; c <= 2; c++) {
+            this.modules[row + r][col + c] =
+              (r == 0 && c == 0) ||
+              (Math.abs(r) == 2 && Math.abs(c) == 2) ||
+              (r == 0 && Math.abs(c) == 2) ||
+              (Math.abs(r) == 2 && c == 0);
+          }
+        }
+      }
+    }
+  },
+  // 18-bit version information blocks — REQUIRED for versions 7-40,
+  // mirrored in the top-right and bottom-left corners.
+  setupVersionInfo: function(test) {
+    if (this.typeNumber < 7) return;
+    var bits = qrGetBCHTypeNumber(this.typeNumber);
+    for (var i = 0; i < 18; i++) {
+      var mod = (!test && ((bits >> i) & 1) == 1);
+      this.modules[Math.floor(i / 3)][i % 3 + this.moduleCount - 8 - 3] = mod;
+    }
+    for (var i = 0; i < 18; i++) {
+      var mod = (!test && ((bits >> i) & 1) == 1);
+      this.modules[i % 3 + this.moduleCount - 8 - 3][Math.floor(i / 3)] = mod;
+    }
   },
   setupPositionProbePattern: function(row, col) {
     for (var r = -1; r <= 7; r++) {
@@ -210,7 +334,7 @@ QRCodeModel.prototype = {
   },
   setupTypeInfo: function(test, maskPattern) {
     var data = (this.errorCorrectLevel << 3) | maskPattern;
-    var bits = 0x5412; // default mask info
+    var bits = qrGetBCHTypeInfo(data); // BCH-encoded format info, XOR-masked
     for (var i = 0; i < 15; i++) {
       var mod = ((bits >> i) & 1) == 1;
       if (i < 6) this.modules[i][8] = mod;
@@ -333,9 +457,11 @@ export function generateQrDataUrl(text, size = 320) {
   const ctx = canvas.getContext('2d');
 
   const count = qr.getModuleCount();
-  const margin = 4;
-  const cellSize = (size - margin * 2 * (size / count / 4)) / count;
-  const offset = (size - count * cellSize) / 2;
+  // Spec-recommended quiet zone: 4 modules on every side, so scanners can
+  // find the finder patterns even against busy backgrounds.
+  const quietModules = 4;
+  const cellSize = size / (count + quietModules * 2);
+  const offset = quietModules * cellSize;
 
   // Background
   ctx.fillStyle = '#ffffff';

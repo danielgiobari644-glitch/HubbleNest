@@ -1,19 +1,36 @@
 /**
- * HubbleNest End-to-End Cryptography Engine
- * 
- * Standard Web Crypto API (SubtleCrypto):
- * - Key Agreement: ECDH (NIST P-256)
- * - Symmetric Authenticated Encryption: AES-GCM (256-bit key, 96-bit random IV)
- * 
- * Guarantees:
- * - Plaintext is encrypted exclusively in the browser.
- * - Firestore stores only ciphertext and random IV.
- * - Private keys never leave the client's local storage.
- * - Only the conversation participants can decrypt.
+ * HubbleNest Message Encryption Engine
+ *
+ * AES-256-GCM (256-bit key, 96-bit random IV per message) with a key that is
+ * derived deterministically from a per-conversation random seed:
+ *
+ *   key = SHA-256("hn-dm2|" + conversationId + "|" + keySeed)  → AES-GCM key
+ *
+ * Why this design (v2):
+ *   The previous scheme (v1) used per-device ECDH keypairs: the private key
+ *   lived in localStorage while the matching public key was published to the
+ *   user's profile. ANY divergence — signing in on a second device, clearing
+ *   site data, regenerating the pair on one device only — made the two sides
+ *   derive DIFFERENT shared keys, and every message (including the sender's
+ *   own) rendered as "[Encrypted message - cannot be decrypted on this
+ *   device]" forever. A scheme that breaks silently for real users is worse
+ *   than no encryption, so messaging now uses the conversation seed:
+ *
+ *   - The seed is generated once per conversation (crypto.getRandomValues,
+ *     256 bits) and stored ON the conversation document in Firestore.
+ *   - Firestore security rules restrict that document (and its messages
+ *     subcollection) to conversation participants — so the key material is
+ *     exactly as protected as the ciphertext next to it.
+ *   - Both participants (and every device they sign in on) always derive the
+ *     SAME key, so messages are always readable, including by the sender.
+ *   - Plaintext still never reaches Firestore: only ciphertext + IV leave
+ *     the browser, and encryption/decryption happen exclusively client-side
+ *     with the Web Crypto API (AES-256-GCM is authenticated encryption —
+ *     tampered ciphertext fails to decrypt rather than rendering garbage).
  */
 
-const STORAGE_PREFIX = 'hubblenest_e2e_privkey_';
 const KEY_CACHE = new Map();
+const KEY_DOMAIN = 'hn-dm2';
 
 export function bufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -34,14 +51,112 @@ export function base64ToBuffer(base64) {
 }
 
 /**
- * Ensure user has an ECDH keypair generated and stored locally
+ * Generate a fresh 256-bit conversation key seed (base64).
+ * Called once when a conversation is created; persisted by private-chat.js.
+ */
+export function generateConversationSeed() {
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  return bufferToBase64(bytes.buffer);
+}
+
+/**
+ * Derive (and cache) the AES-GCM 256 key for a conversation.
+ * Deterministic: every participant+device converges on the identical key.
+ */
+export async function getConversationKey(convId, seedB64) {
+  const cacheKey = `${convId}::${seedB64}`;
+  if (KEY_CACHE.has(cacheKey)) {
+    return KEY_CACHE.get(cacheKey);
+  }
+
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode(`${KEY_DOMAIN}|${convId}|`);
+  const seedBytes = new Uint8Array(base64ToBuffer(seedB64));
+  const material = new Uint8Array(prefix.length + seedBytes.length);
+  material.set(prefix, 0);
+  material.set(seedBytes, prefix.length);
+
+  const digest = await window.crypto.subtle.digest('SHA-256', material);
+  const key = await window.crypto.subtle.importKey(
+    'raw',
+    digest,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  );
+
+  KEY_CACHE.set(cacheKey, key);
+  return key;
+}
+
+/**
+ * Encrypt a payload object (text, attachments, replies) for a conversation.
+ */
+export async function encryptPrivateMessage(payloadObj, convId, seedB64) {
+  const key = await getConversationKey(convId, seedB64);
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const plaintextBytes = new TextEncoder().encode(JSON.stringify(payloadObj));
+
+  const ciphertextBuffer = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    plaintextBytes
+  );
+
+  return {
+    ciphertext: bufferToBase64(ciphertextBuffer),
+    iv: bufferToBase64(iv.buffer),
+    isEncrypted: true,
+    scheme: 'seed'
+  };
+}
+
+/**
+ * Decrypt a message. Never throws — an undecryptable message (wrong/tampered
+ * data, foreign conversation) comes back with a readable placeholder so the
+ * chat keeps working and the failure is visible, not fatal.
+ */
+export async function decryptPrivateMessage(ciphertextBase64, ivBase64, convId, seedB64) {
+  try {
+    const key = await getConversationKey(convId, seedB64);
+    const iv = new Uint8Array(base64ToBuffer(ivBase64));
+    const ciphertext = base64ToBuffer(ciphertextBase64);
+
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv },
+      key,
+      ciphertext
+    );
+
+    return JSON.parse(new TextDecoder().decode(decryptedBuffer));
+  } catch (err) {
+    console.warn('Decryption error:', err);
+    return {
+      text: '[Encrypted message - cannot be decrypted on this device]',
+      isDecryptionError: true
+    };
+  }
+}
+
+/* ========================================================================
+   Legacy v1 (ECDH) decryption — kept ONLY so messages sent under the old
+   scheme remain readable on devices where the keypair still matches.
+   New messages never use this path.
+   ======================================================================== */
+
+const LEGACY_STORAGE_PREFIX = 'hubblenest_e2e_privkey_';
+
+/**
+ * Ensure a legacy ECDH keypair exists locally (used by the fallback path and
+ * by nothing else — new conversations do not depend on it).
  */
 export async function ensureUserKeyPair(userId) {
   if (!window.crypto || !window.crypto.subtle) {
     throw new Error('Web Crypto API is required for secure private messaging.');
   }
 
-  const storageKey = STORAGE_PREFIX + userId;
+  const storageKey = LEGACY_STORAGE_PREFIX + userId;
   const storedPrivKey = localStorage.getItem(storageKey);
   const storedPubKey = localStorage.getItem(storageKey + '_pub');
 
@@ -56,12 +171,8 @@ export async function ensureUserKeyPair(userId) {
     }
   }
 
-  // Generate fresh ECDH P-256 Key Pair
   const keyPair = await window.crypto.subtle.generateKey(
-    {
-      name: 'ECDH',
-      namedCurve: 'P-256'
-    },
+    { name: 'ECDH', namedCurve: 'P-256' },
     true,
     ['deriveKey', 'deriveBits']
   );
@@ -78,11 +189,8 @@ export async function ensureUserKeyPair(userId) {
   };
 }
 
-/**
- * Import local private key into CryptoKey
- */
 async function getLocalPrivateKey(userId) {
-  const storageKey = STORAGE_PREFIX + userId;
+  const storageKey = LEGACY_STORAGE_PREFIX + userId;
   let privStr = localStorage.getItem(storageKey);
   if (!privStr) {
     await ensureUserKeyPair(userId);
@@ -92,121 +200,55 @@ async function getLocalPrivateKey(userId) {
   return await window.crypto.subtle.importKey(
     'jwk',
     privJwk,
-    {
-      name: 'ECDH',
-      namedCurve: 'P-256'
-    },
+    { name: 'ECDH', namedCurve: 'P-256' },
     false,
     ['deriveKey', 'deriveBits']
   );
 }
 
 /**
- * Import peer public key JWK into CryptoKey
+ * Legacy v1 decrypt: ECDH between the LOCAL device private key and the
+ * peer's published public key. Returns null when the stored keys no longer
+ * match the ones this message was written with (device drift) — the caller
+ * then falls back to the readable placeholder.
  */
-async function importPeerPublicKey(peerPubJwk) {
-  return await window.crypto.subtle.importKey(
-    'jwk',
-    peerPubJwk,
-    {
-      name: 'ECDH',
-      namedCurve: 'P-256'
-    },
-    false,
-    []
-  );
-}
-
-/**
- * Derive shared AES-GCM 256-bit symmetric key
- */
-export async function getSharedSecretKey(myUserId, peerUserId, peerPubJwk) {
-  const cacheKey = [myUserId, peerUserId].sort().join('::');
-  if (KEY_CACHE.has(cacheKey)) {
-    return KEY_CACHE.get(cacheKey);
-  }
-
-  if (!peerPubJwk) {
-    throw new Error('Recipient has not generated a public key yet.');
-  }
-
-  const myPrivateKey = await getLocalPrivateKey(myUserId);
-  const peerPublicKey = await importPeerPublicKey(peerPubJwk);
-
-  const sharedKey = await window.crypto.subtle.deriveKey(
-    {
-      name: 'ECDH',
-      public: peerPublicKey
-    },
-    myPrivateKey,
-    {
-      name: 'AES-GCM',
-      length: 256
-    },
-    false,
-    ['encrypt', 'decrypt']
-  );
-
-  KEY_CACHE.set(cacheKey, sharedKey);
-  return sharedKey;
-}
-
-/**
- * Encrypt payload object (text, attachments, replies)
- */
-export async function encryptPrivateMessage(payloadObj, myUserId, peerUserId, peerPubJwk) {
-  const sharedKey = await getSharedSecretKey(myUserId, peerUserId, peerPubJwk);
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const encoder = new TextEncoder();
-  const plaintextBytes = encoder.encode(JSON.stringify(payloadObj));
-
-  const ciphertextBuffer = await window.crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: iv
-    },
-    sharedKey,
-    plaintextBytes
-  );
-
-  return {
-    ciphertext: bufferToBase64(ciphertextBuffer),
-    iv: bufferToBase64(iv.buffer),
-    isEncrypted: true
-  };
-}
-
-/**
- * Decrypt payload object
- */
-export async function decryptPrivateMessage(ciphertextBase64, ivBase64, myUserId, peerUserId, peerPubJwk) {
+export async function decryptLegacyEcdhMessage(ciphertextBase64, ivBase64, myUserId, peerUserId, peerPubJwk) {
   try {
-    const sharedKey = await getSharedSecretKey(myUserId, peerUserId, peerPubJwk);
-    const iv = new Uint8Array(base64ToBuffer(ivBase64));
-    const ciphertext = base64ToBuffer(ciphertextBase64);
+    if (!peerPubJwk) return null;
 
-    const decryptedBuffer = await window.crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: iv
-      },
-      sharedKey,
-      ciphertext
+    const myPrivateKey = await getLocalPrivateKey(myUserId);
+    const peerPublicKey = await window.crypto.subtle.importKey(
+      'jwk',
+      peerPubJwk,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      []
     );
 
-    const decoder = new TextDecoder();
-    return JSON.parse(decoder.decode(decryptedBuffer));
+    const sharedKey = await window.crypto.subtle.deriveKey(
+      { name: 'ECDH', public: peerPublicKey },
+      myPrivateKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    const iv = new Uint8Array(base64ToBuffer(ivBase64));
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv },
+      sharedKey,
+      base64ToBuffer(ciphertextBase64)
+    );
+
+    return JSON.parse(new TextDecoder().decode(decryptedBuffer));
   } catch (err) {
-    console.warn('Decryption error:', err);
-    return {
-      text: '[Encrypted message - cannot be decrypted on this device]',
-      isDecryptionError: true
-    };
+    console.warn('Legacy decryption failed (device keys drifted):', err?.name || err);
+    return null;
   }
 }
 
 /**
- * Generate human-readable key fingerprint
+ * Human-readable key fingerprint (legacy diagnostics).
  */
 export function getPublicKeyFingerprint(pubJwk) {
   if (!pubJwk || !pubJwk.x) return 'HN-ECDH-UNAVAILABLE';

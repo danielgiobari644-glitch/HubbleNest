@@ -173,7 +173,15 @@ export function startArcade() {
   const q = query(collection(db, 'games'), orderBy('createdAt', 'desc'), limit(60));
   gamesUnsubscribe = onSnapshot(q, (snap) => {
     gamesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (arcadeFilter === 'mine') renderArcadeGrid();
+    // ALWAYS re-render on every snapshot — the old code only re-rendered in
+    // 'mine' filter mode, so games published by other members never appeared
+    // until the user left and reopened the Arcade (the "needs a refresh" bug).
+    renderArcadeGrid();
+    // Keep the open player's like button in sync with live like counts too.
+    if (playerGameId) {
+      const fresh = gamesCache.find(g => g.id === playerGameId);
+      if (fresh) renderPlayerLike(fresh);
+    }
   }, (err) => {
     console.error('Arcade listener error:', err);
     const grid = els().grid;

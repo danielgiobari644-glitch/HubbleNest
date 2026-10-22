@@ -39,7 +39,8 @@ import {
   serverTimestamp, 
   increment,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 import {
   getMessaging,
@@ -119,6 +120,7 @@ export {
   increment,
   arrayUnion,
   arrayRemove,
+  runTransaction,
   getToken,
   onMessage
 };

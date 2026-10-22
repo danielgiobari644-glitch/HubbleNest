@@ -31,7 +31,6 @@ import {
 } from './firebase.js';
 
 import { uploadToCloudinary } from './cloudinary.js';
-import { ensureUserKeyPair } from './encryption.js';
 import { showToast } from './utils.js';
 
 // State for multi-step signup
@@ -111,13 +110,6 @@ async function _doCreateOrUpdateUserProfile(user, additionalData = {}) {
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);
 
-  let keyData = null;
-  try {
-    keyData = await ensureUserKeyPair(user.uid);
-  } catch (e) {
-    console.warn('Could not generate crypto keys:', e);
-  }
-
   if (!snap.exists()) {
     const profile = {
       uid: user.uid,
@@ -127,7 +119,6 @@ async function _doCreateOrUpdateUserProfile(user, additionalData = {}) {
       usernameLower: (data.username || (user.email ? user.email.split('@')[0] : 'user_' + user.uid.slice(0, 5))).toLowerCase(),
       photoURL: data.photoURL || user.photoURL || '',
       bio: data.bio || 'HubbleNest community member',
-      publicKeyJwk: keyData ? keyData.publicKeyJwk : null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       theme: 'dark'
@@ -136,10 +127,6 @@ async function _doCreateOrUpdateUserProfile(user, additionalData = {}) {
     return profile;
   } else {
     const existing = snap.data();
-    // Ensure public key exists
-    if (!existing.publicKeyJwk && keyData) {
-      await setDoc(userRef, { publicKeyJwk: keyData.publicKeyJwk }, { merge: true });
-    }
     // Signup race recovery: the listener may have created this doc with
     // defaults moments ago — apply the real gradual-signup data now.
     const patch = {};
@@ -208,9 +195,6 @@ export async function loginWithEmail(email, password) {
     const snap = await getDoc(userRef);
     if (!snap.exists()) {
       await createOrUpdateUserProfile(cred.user);
-    } else {
-      // Ensure encryption key exists on this device
-      ensureUserKeyPair(cred.user.uid).catch(console.warn);
     }
     showToast('Signed in successfully', 'success');
     return cred.user;

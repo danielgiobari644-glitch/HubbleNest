@@ -184,14 +184,19 @@ function enterSenderMode(code) {
 
   const qrImg = document.getElementById('ds-qr-img');
   if (qrImg) {
-    generateQrDataUrl(shareUrlFor(code), 240).then(dataUrl => {
-      qrImg.src = dataUrl;
+    try {
+      // generateQrDataUrl is SYNCHRONOUS (returns a PNG data URL string).
+      // The old code chained .then() on it, which threw
+      // "TypeError: generateQrDataUrl(...).then is not a function" and —
+      // because the throw happened mid-function — silently killed the live
+      // file-list subscription below, making the whole share look dead.
+      qrImg.src = generateQrDataUrl(shareUrlFor(code), 240);
       qrImg.alt = `QR code for share ${code}`;
-    }).catch(err => {
+    } catch (err) {
       console.warn('QR render failed:', err);
       const box = document.getElementById('ds-qr-box');
       if (box) box.innerHTML = `<div class="ds-qr-fallback">QR unavailable — share the code itself.</div>`;
-    });
+    }
   }
 
   // Live mirror of the share (own doc) so file list updates instantly.

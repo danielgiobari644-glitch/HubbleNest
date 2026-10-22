@@ -24,14 +24,15 @@ import {
   limit, 
   onSnapshot, 
   serverTimestamp, 
-  increment 
+  increment,
+  runTransaction 
 } from './firebase.js';
 
 import { 
   encryptPrivateMessage, 
   decryptPrivateMessage, 
-  ensureUserKeyPair, 
-  getPublicKeyFingerprint 
+  decryptLegacyEcdhMessage,
+  generateConversationSeed 
 } from './encryption.js';
 
 import { showToast } from './utils.js';
@@ -82,11 +83,50 @@ export async function getOrCreateConversation(currentUser, peerUser) {
         photoURL: peerUser.photoURL || ''
       }
     },
+    // 256-bit random seed BOTH participants derive the same AES-256-GCM
+    // message key from (see encryption.js). Stored on the conversation doc,
+    // which the security rules restrict to participants — so the key
+    // material is exactly as protected as the ciphertext beside it.
+    keySeed: generateConversationSeed(),
     lastMessage: null,
     updatedAt: serverTimestamp()
   };
   await setDoc(convRef, convData);
   return convData;
+}
+
+/**
+ * Return the conversation's key seed, creating one for legacy conversations
+ * that predate the seed scheme.
+ *
+ * Concurrency-safe: the legacy backfill runs in a transaction so two
+ * participants opening the same old chat at the same time converge on ONE
+ * seed instead of overwriting each other's (which would orphan messages).
+ * If the conversation document itself is missing or unreadable, a local seed
+ * is returned so the UI still works — a conversation created later by
+ * getOrCreateConversation carries its own seed and replaces this one.
+ */
+export async function ensureConversationKeySeed(convId) {
+  const convRef = doc(db, 'conversations', convId);
+  try {
+    const snap = await getDoc(convRef);
+    if (snap.exists()) {
+      const existingSeed = snap.data().keySeed;
+      if (existingSeed) return existingSeed;
+      return await runTransaction(db, async (tx) => {
+        const fresh = await tx.get(convRef);
+        if (fresh.exists() && fresh.data().keySeed) {
+          return fresh.data().keySeed;
+        }
+        const seed = generateConversationSeed();
+        tx.update(convRef, { keySeed: seed });
+        return seed;
+      });
+    }
+  } catch (err) {
+    console.warn('Conversation key seed unavailable, using a local one:', err?.code || err);
+  }
+  return generateConversationSeed();
 }
 
 /**
@@ -141,35 +181,39 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
   // by then the conversation exists and the same rules allow the read.
   let privateListenerRetried = false;
 
+  // Resolve the conversation key seed once per subscription; every snapshot
+  // decryption reuses it. Failure-tolerant: null seed → placeholder text,
+  // the listener itself stays healthy.
+  const seedPromise = ensureConversationKeySeed(convId).catch(() => null);
+
   activePrivateUnsubscribe = onSnapshot(q, async (snap) => {
+    const seed = seedPromise ? await seedPromise : null;
     const decryptedList = [];
     for (const d of snap.docs) {
       const raw = d.data();
       let decryptedContent = { text: raw.ciphertext };
 
-      // Decrypt message if encrypted
       if (raw.isEncrypted && raw.ciphertext && raw.iv) {
-        try {
-          const peerPubJwk = peerUser.publicKeyJwk;
-          if (peerPubJwk) {
-            decryptedContent = await decryptPrivateMessage(
+        // Primary path: the conversation-seed key (v2 scheme — always works,
+        // on every device, for sender and receiver alike).
+        decryptedContent = seed
+          ? await decryptPrivateMessage(raw.ciphertext, raw.iv, convId, seed)
+          : { text: '[Encrypted message - cannot be decrypted on this device]', isDecryptionError: true };
+
+        // Fallback: messages written by the old per-device ECDH scheme carry
+        // no scheme marker. Try the legacy key path once before giving up —
+        // on the device where that keypair still matches, history stays readable.
+        if (decryptedContent.isDecryptionError && raw.scheme !== 'seed') {
+          try {
+            const legacy = await decryptLegacyEcdhMessage(
               raw.ciphertext,
               raw.iv,
               currentUser.uid,
               peerUser.uid,
-              peerPubJwk
+              peerUser.publicKeyJwk
             );
-          } else {
-            decryptedContent = {
-              text: '[Waiting for peer encryption handshake]',
-              isPendingKey: true
-            };
-          }
-        } catch (e) {
-          decryptedContent = {
-            text: '[Unable to decrypt on this device]',
-            isDecryptionError: true
-          };
+            if (legacy && !legacy.isDecryptionError) decryptedContent = legacy;
+          } catch (e) { /* keep the placeholder */ }
         }
       }
 
@@ -215,26 +259,15 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
     throw new Error('Message cannot be empty.');
   }
 
-  const convId = getConversationId(currentUser.uid, peerUser.uid);
+  // 1. Get or create the conversation FIRST — it carries the key seed both
+  //    sides derive the AES key from (v2 scheme: no per-device keypairs and
+  //    no peer-key dead ends; you can always send).
+  const convData = await getOrCreateConversation(currentUser, peerUser);
+  const convId = convData.id || getConversationId(currentUser.uid, peerUser.uid);
   const convRef = doc(db, 'conversations', convId);
+  const seed = convData.keySeed || await ensureConversationKeySeed(convId);
 
-  // 1. Ensure current user has keypair
-  await ensureUserKeyPair(currentUser.uid);
-
-  // 2. Fetch fresh peer public key if needed
-  let peerPubJwk = peerUser.publicKeyJwk;
-  if (!peerPubJwk) {
-    const peerDoc = await getDoc(doc(db, 'users', peerUser.uid));
-    if (peerDoc.exists() && peerDoc.data().publicKeyJwk) {
-      peerPubJwk = peerDoc.data().publicKeyJwk;
-    }
-  }
-
-  if (!peerPubJwk) {
-    throw new Error(`${peerUser.displayName || 'This member'} has not set up secure messaging yet. You can chat once they sign in.`);
-  }
-
-  // 3. Encrypt payload locally in browser
+  // 2. Encrypt payload locally in the browser — plaintext never leaves it.
   const payloadToEncrypt = {
     text: text ? text.trim() : '',
     attachments: attachments,
@@ -242,14 +275,9 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
     timestamp: Date.now()
   };
 
-  const encryptedData = await encryptPrivateMessage(
-    payloadToEncrypt,
-    currentUser.uid,
-    peerUser.uid,
-    peerPubJwk
-  );
+  const encryptedData = await encryptPrivateMessage(payloadToEncrypt, convId, seed);
 
-  // 4. Save ciphertext and IV ONLY to Firestore
+  // 3. Save ciphertext and IV ONLY to Firestore
   const messageDoc = {
     conversationId: convId,
     senderId: currentUser.uid,
@@ -257,12 +285,13 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
     ciphertext: encryptedData.ciphertext,
     iv: encryptedData.iv,
     isEncrypted: true,
+    scheme: 'seed',
     createdAt: serverTimestamp()
   };
 
   await addDoc(collection(db, 'conversations', convId, 'messages'), messageDoc);
 
-  // 5. Update conversation snippet
+  // 4. Update conversation snippet
   await updateDoc(convRef, {
     updatedAt: serverTimestamp(),
     lastMessage: {
@@ -273,7 +302,7 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
     }
   });
 
-  // 6. Notify peer
+  // 5. Notify peer
   try {
     await addDoc(collection(db, 'notifications'), {
       userId: peerUser.uid,

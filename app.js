@@ -149,11 +149,6 @@ import {
   linkify 
 } from './utils.js';
 
-import {
-  getPublicKeyFingerprint,
-  ensureUserKeyPair
-} from './encryption.js';
-
 // Community feed (real posts + ranking algorithm), Arcade, Direct Share,
 // and the Firestore Connection Doctor (replaces the old home.js space-mirror feed)
 import {
@@ -202,7 +197,8 @@ import {
 } from './direct-share.js';
 
 import {
-  runFirestoreDoctor
+  runFirestoreDoctor,
+  handlePermissionError
 } from './firestore-doctor.js';
 
 // Application State
@@ -286,7 +282,14 @@ function refreshHeroInstallButton() {
 }
 
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Capture the native install prompt so the hero button can trigger it.
+  // Only capture the event when we will actually show our own banner.
+  // Chrome REQUIRES prompt() to be called after preventDefault() — capturing
+  // the event and then suppressing the banner (already installed / dismissed
+  // in the last 3 days) left prompt() uncalled and logged
+  // "Banner not shown: beforeinstallpromptevent.preventDefault() called.
+  // The page must call prompt()" on every load. When we don't capture, the
+  // browser's native install UI runs instead and prompts by itself.
+  if (isStandaloneDisplay() || installBannerRecentlyDismissed()) return;
   e.preventDefault();
   deferredInstallPrompt = e;
   refreshHeroInstallButton();
@@ -2177,9 +2180,14 @@ function renderPeopleGrid(peopleList) {
         <div class="person-bio">${escapeHtml(p.bio || 'HubbleNest community member')}</div>
         <div class="person-footer">
           <span style="font-size: 0.8rem; color: var(--text-muted);">HubbleNest Member</span>
-          <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); window.HubbleNest.openUserCardModal('${p.uid}')">
-            View Profile
-          </button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); window.HubbleNest.chatWithPerson('${p.uid}')" title="Chat with ${escapeHtml(p.displayName)}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); window.HubbleNest.openUserCardModal('${p.uid}')">
+              View Profile
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -2366,6 +2374,68 @@ export async function openDirectChatWithPeer(peerUserId) {
   setTimeout(() => {
     selectConversation(convId, peerUserId);
   }, 250);
+}
+
+/**
+ * One-tap "Chat" from the People directory cards.
+ *
+ * Respects the privacy-first request flow but removes every dead end:
+ *  - already connected            → open the chat instantly
+ *  - THEY sent you a request      → accept it and open the chat
+ *  - YOUR request is pending      → clear explanation, no duplicate send
+ *  - they declined within 24 h    → say so, no spam
+ *  - no relationship yet          → send the chat request right away
+ */
+export async function chatWithPerson(targetUserId) {
+  if (!state.currentUser) { showToast('Sign in first.', 'info'); return; }
+  if (!targetUserId || targetUserId === state.currentUser.uid) {
+    showToast('Pick another member to chat with.', 'info');
+    return;
+  }
+
+  try {
+    const rel = await getChatRelationship(state.currentUser.uid, targetUserId);
+    const status = rel?.data?.status;
+
+    if (rel && (status === 'accepted' || rel.direction === 'connected')) {
+      await openDirectChatWithPeer(targetUserId);
+      return;
+    }
+
+    if (rel && status === 'pending') {
+      if (rel.direction === 'received') {
+        const res = await acceptChatRequest(rel.data.id, state.userProfile);
+        if (res && res.conversation) {
+          openDirectMessagesView();
+          setTimeout(() => selectConversation(res.conversation.id, res.peer.uid), 250);
+        }
+      } else {
+        showToast('Your chat request is still pending — you can chat once they accept.', 'info', 4500);
+      }
+      return;
+    }
+
+    if (rel && status === 'declined') {
+      const updatedSeconds = rel.data.updatedAt?.seconds || 0;
+      if (Math.floor(Date.now() / 1000) - updatedSeconds < 86400) {
+        showToast('This member is not accepting chat requests right now.', 'info');
+        return;
+      }
+    }
+
+    const peerData = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
+    if (!peerData) { showToast('Could not load this member.', 'error'); return; }
+    const sent = await sendChatRequest(state.userProfile, peerData);
+    if (sent) {
+      showToast(`Chat request sent — you will chat with ${peerData.displayName || 'them'} once they accept.`, 'success', 4500);
+    }
+  } catch (err) {
+    console.error('Chat request from People card failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'Your Firestore rules block chat requests — run Connection Doctor.'
+      : 'Could not start this chat. Please try again.', 'error');
+    if (err?.code === 'permission-denied') handlePermissionError('people chat button');
+  }
 }
 
 /* ==========================================================================
@@ -3600,6 +3670,7 @@ Object.assign(window.HubbleNest, {
   handleDeclineRequest,
   cancelSentRequest,
   openDirectChatWithPeer,
+  chatWithPerson,
   handleProfilePhotoUpload,
 
   // Landing Page & Auth
@@ -3622,9 +3693,30 @@ Object.assign(window.HubbleNest, {
   dismissPushNudge,
 
   loginWithEmail: async () => {
-    const e = document.getElementById('login-email').value;
-    const p = document.getElementById('login-password').value;
-    await loginWithEmail(e, p);
+    const emailEl = document.getElementById('login-email');
+    const passEl = document.getElementById('login-password');
+    const btn = document.getElementById('login-submit-btn');
+    const errEl = document.getElementById('login-inline-error');
+    const email = emailEl ? emailEl.value : '';
+    const password = passEl ? passEl.value : '';
+
+    // Clear any previous inline error before retrying
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Signing in…'; }
+
+    try {
+      await loginWithEmail(email, password);
+    } catch (err) {
+      // auth.js already toasted the reason — ALSO mirror it inline on the
+      // card so the failure is visible exactly where the user is typing,
+      // instead of surfacing as an uncaught promise rejection in the console.
+      if (errEl) {
+        errEl.textContent = (err && err.message) ? err.message : 'Could not sign in. Please try again.';
+        errEl.style.display = 'block';
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Sign In'; }
+    }
   },
   loginWithGoogle: async () => {
     try {

@@ -72,6 +72,7 @@
         'openDirectShareView', 'setShareMode', 'createDirectShare', 'addFilesToShare',
         'copyShareLink', 'closeDirectShare', 'backToSharePicker', 'connectToShare',
         'runFirestoreDoctor', 'retryActiveDirectChat', 'handleDirectComposerKey',
+        'chatWithPerson', 'loginWithEmail',
         'handleSaveProfileFromPage', 'dismissInstallBanner'
       ];
       for (var i = 0; i < HANDLERS.length; i++) {
@@ -627,7 +628,9 @@
             <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password" />
           </div>
 
-          <button type="submit" class="btn btn-primary btn-full form-submit">
+          <div class="login-inline-error" id="login-inline-error" role="alert" style="display: none;"></div>
+
+          <button type="submit" id="login-submit-btn" class="btn btn-primary btn-full form-submit">
             Sign In
           </button>
         </form>

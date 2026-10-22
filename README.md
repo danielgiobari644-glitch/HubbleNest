@@ -173,14 +173,34 @@ Also make sure your domain is authorized: Firebase Console → Authentication �
 Settings → **Authorized domains** → add `danielgiobari644-glitch.github.io`.
 
 **"Banner not shown: beforeinstallpromptevent.preventDefault() called"
-in the console:** the app intentionally captures the install event to show
-its own **Install banner** (bottom-left on desktop, above the bottom nav on
-mobile — visible on the landing page AND inside the app). Clicking
-**Install** on that banner (or the hero **Download App** button) calls
-`prompt()` on the captured event, which presents Chrome's install dialog —
-exactly what the console note asks for. Until the user clicks Install, the
-note may still appear once; it is informational, not an error, and every
-site with custom install UI (Twitter, Spotify, GitHub) shows it.
+in the console:** fixed in the current build — the app now only captures the
+install event when it will actually show its own Install banner (bottom-left
+on desktop, above the bottom nav on mobile). When the banner is suppressed
+(already installed, or dismissed in the last 3 days) the event is left alone
+so the browser's native install UI handles the prompt itself. If you still
+see the note on an old cached copy, hard-refresh once (Ctrl+Shift+R).
+
+**Private messages show "[Encrypted message - cannot be decrypted on this
+device]" / `Decryption error: OperationError`:** this was the v1 encryption
+scheme's fatal flaw — it paired a per-device ECDH private key (localStorage)
+with a public key on the profile, so ANY drift (signing in on a second
+device, clearing site data, regenerating keys on one device only) made the
+two sides derive different keys and permanently orphaned every message.
+The current build (v2) derives one AES-256-GCM key per CONVERSATION from a
+random 256-bit seed stored on the conversation document (readable only by
+participants under the security rules), so messages decrypt identically on
+every device — sender included — and can never drift. Nothing to configure.
+Messages written by the v1 scheme carry no scheme marker: they are
+attempted with the legacy key path first (still readable where the old
+keypair matches) and otherwise show the placeholder. New messages are
+always readable for both participants.
+
+**Login says "Incorrect email or password" (auth/invalid-credential):**
+that is Firebase's exact answer for a wrong email OR wrong password —
+the app now shows it inline on the sign-in card (and as a toast) instead of
+leaving an uncaught promise error in the console. Double-check the address,
+or use **Sign In with Google** if the account was created that way; the
+"Forgot?" link sends a reset email.
 
 **Landing page ("portfolio") visibility:** only **first-time visitors** see
 the marketing landing page. As soon as a device has signed in once, future
@@ -194,15 +214,29 @@ portfolio again (they can still reach it anytime via the account menu →
 - **Landing page** with hero (incl. **Download App** PWA install button),
   features, use cases and invite-code quick join
 - **Email / password + Google authentication**, password recovery, 6-step signup
+- **Community feed (Home)** — post text/images/videos, like, comment, delete;
+  a transparent ranking algorithm (recency + engagement + affinity) orders
+  the For You tab, with a Latest tab and an in-app "How ranking works" guide
+- **Arcade** — members write real HTML/CSS/JS games in the built-in editor
+  (live preview), publish them, and anyone plays them instantly in a locked
+  sandboxed iframe; play counts and likes are real
+- **Direct Share** — hand files to another member with a 6-character code or
+  a scannable QR deep link; file bytes go to Cloudinary, metadata to
+  Firestore, and both sides see the file list update live
 - **Spaces** — create, join by code or QR, approve join requests, chat with
   reactions, attachments (images via Cloudinary), files, links and announcements
-- **People directory** with search, member profiles and private chat requests
-- **Realtime private messaging** with E2E-encrypted payloads (Web Crypto)
+- **People directory** with search, member profiles, one-tap **Chat** buttons
+  on every card and private chat requests
+- **Realtime private messaging** — payloads are AES-256-GCM encrypted in the
+  browser with a per-conversation key (Web Crypto); ciphertext only in Firestore
 - **Notification center** with unread badges (Firestore realtime)
 - **Background push notifications** via FCM — works when the app is closed
+- **Connection Doctor** — live self-diagnosis of Firestore rules with
+  one-click fixes (run `window.HubbleNest.runFirestoreDoctor()` or from any
+  permission-denied error card)
 - **PWA** — installable (with iOS "Add to Home Screen" guidance), offline shell
   via service worker, Firestore local persistence
-- **Fast loading** — service worker v9 serves every shell asset, Firebase SDK
+- **Fast loading** — service worker v11 serves every shell asset, Firebase SDK
   chunk, Google Font and Cloudinary image instantly from cache on repeat
   visits (stale-while-revalidate: cached response first, background refresh
   keeps deploys fresh after one reload — no manual cache clearing), fonts
@@ -213,11 +247,12 @@ portfolio again (they can still reach it anytime via the account menu →
 ## Structure (flat — no subfolders)
 
 ```
-index.html · style.css · app.js · home.js
+index.html · style.css · app.js
 firebase.js · auth.js · spaces.js · chat.js · private-chat.js · chat-requests.js
 people.js · profile.js · files.js · links.js · announcements.js · members.js
 notifications.js · fcm-sender.js · cloudinary.js · encryption.js · qr.js · search.js
 settings.js · utils.js
-service-worker.js · manifest.webmanifest · firestore.rules
+community.js · games.js · direct-share.js · firestore-doctor.js
+service-worker.js · manifest.webmanifest · firestore.rules · README.md
 + icons & illustrations (PNG / SVG at root)
 ```
