@@ -16,7 +16,9 @@ import {
   onAuthStateChanged, 
   doc, 
   getDoc,
+  getDocs,
   collection,
+  deleteDoc,
   addDoc,
   serverTimestamp 
 } from './firebase.js';
@@ -32,22 +34,18 @@ import {
   createOrUpdateUserProfile 
 } from './auth.js';
 
-import { 
-  createSpace, 
-  fetchUserSpaces, 
-  findSpaceByCode, 
-  getMembershipState, 
-  requestToJoinSpace, 
-  approveJoinRequest, 
-  declineJoinRequest, 
-  extendSpaceExpiration, 
-  updateSpaceSettings, 
+import {
+  createSpace,
+  fetchUserSpaces,
+  findSpaceByCode,
+  getMembershipState,
+  joinSpaceByCode,
+  addMemberToSpace,
+  removeSpaceMember,
+  extendSpaceExpiration,
+  updateSpaceSettings,
   updateSpaceCover,
-  deleteSpace,
-  ensureUserSupportMembership,
-  ensureOfficialSupportSpace,
-  OFFICIAL_SUPPORT_CODE,
-  OFFICIAL_SUPPORT_SPACE_ID
+  deleteSpace
 } from './spaces.js';
 
 import { 
@@ -77,10 +75,22 @@ import {
 } from './chat-requests.js';
 
 import {
-  fetchPeopleDirectory,
-  searchPeopleDirectory,
   fetchPublicUserCard
 } from './people.js';
+
+// Contacts — People page shows ONLY your contacts; add members by username;
+// contacts chat instantly with no request step.
+import {
+  subscribeToContacts,
+  addContact,
+  removeContact,
+  isContact,
+  findUserByUsername
+} from './contacts.js';
+
+// Rich text — real formatting (bold/italic/headings/lists/code/links) with a
+// vertical multi-line layout; no Markdown symbols are ever shown raw.
+import { renderRichText, richTextPreview } from './format.js';
 
 import {
   uploadProfilePhoto,
@@ -102,17 +112,19 @@ import {
 
 import { 
   subscribeToSpaceMembers, 
-  subscribeToJoinRequests, 
   updateMemberRole, 
   removeMemberFromSpace 
 } from './members.js';
 
-import { 
-  subscribeToNotifications, 
-  markNotificationAsRead, 
+import {
+  subscribeToNotifications,
+  markNotificationAsRead,
   markAllNotificationsAsRead,
   requestPushPermission,
-  initWebPushNotifications
+  initWebPushNotifications,
+  getPushConfigStatus,
+  savePushConfig,
+  sendPushToUser
 } from './notifications.js';
 
 import { 
@@ -181,7 +193,12 @@ import {
   gameDelete,
   openGamePlayer,
   closeGamePlayer,
-  gameToggleLike
+  gameToggleLike,
+  toggleGameFullscreen,
+  handleGameFilesUpload,
+  removeGameFile,
+  setGameEntry,
+  clearGameFiles
 } from './games.js';
 
 import {
@@ -200,6 +217,9 @@ import {
   runFirestoreDoctor,
   handlePermissionError
 } from './firestore-doctor.js';
+
+// Unified HubbleNest icon system — one local SVG set for the whole UI.
+import { installIconSystem } from './icons.js';
 
 // Application State
 const state = {
@@ -220,6 +240,8 @@ const state = {
   activeConversation: null,
   activeDirectPeer: null,
   directMessages: [],
+  contacts: [],
+  contactsUnsub: null,
   people: [],
   incomingChatRequests: [],
   selectedUserCard: null,
@@ -249,6 +271,26 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js').catch(() => {});
   });
+
+  // DEPLOY AUTO-REFRESH: when a newly-installed service worker takes over
+  // (skipWaiting + clients.claim fire controllerchange), reload ONCE so every
+  // module, stylesheet and the HTML shell come from the new cache atomically.
+  // Without this, the first load after a deploy renders a MIX of old cached
+  // JS/CSS and new HTML — the classic "I deployed but nothing changed" bug.
+  // The sessionStorage guard makes the reload happen at most once per tab
+  // session, so it can never loop.
+  try {
+    let claimedOnce = sessionStorage.getItem('hn-sw-claimed') === '1';
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (claimedOnce) {
+        sessionStorage.setItem('hn-sw-claimed', '0');
+        window.location.reload();
+        return;
+      }
+      claimedOnce = true;
+      sessionStorage.setItem('hn-sw-claimed', '1');
+    });
+  } catch (e) { /* sessionStorage unavailable — skip auto-refresh */ }
 }
 
 function isStandaloneDisplay() {
@@ -477,13 +519,6 @@ onAuthStateChanged(auth, async (user) => {
       };
     }
 
-    // Compulsory official support space auto-membership
-    try {
-      await ensureUserSupportMembership(state.userProfile);
-    } catch (err) {
-      console.warn('Support space membership sync:', err);
-    }
-
     setupAuthenticatedUI();
     loadDashboard();
     subscribeNotifications();
@@ -671,19 +706,6 @@ function processLandingCode(rawCode) {
     return;
   }
   const cleanCode = rawCode.startsWith('HN-') ? rawCode : `HN-${rawCode}`;
-  
-  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
-    if (state.currentUser) {
-      ensureUserSupportMembership(state.currentUser).then(() => {
-        openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-      });
-    } else {
-      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
-      showToast('Official HubbleNest Space! Sign in or create an account to enter.', 'info', 5000);
-      showAuthView('entry');
-    }
-    return;
-  }
 
   if (state.currentUser) {
     handleCodeSearch(cleanCode);
@@ -698,14 +720,6 @@ async function checkUrlJoinParam() {
   const pendingCode = sessionStorage.getItem('pendingJoinCode');
   if (pendingCode) {
     sessionStorage.removeItem('pendingJoinCode');
-    const clean = pendingCode.trim().toUpperCase();
-    if (clean === OFFICIAL_SUPPORT_CODE) {
-      if (state.currentUser) {
-        await ensureUserSupportMembership(state.currentUser);
-        openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-        return;
-      }
-    }
     handleCodeSearch(pendingCode);
     return;
   }
@@ -744,17 +758,6 @@ async function checkUrlJoinParam() {
   if (path.startsWith('/join/')) {
     const code = path.replace('/join/', '').trim().toUpperCase();
     if (code) {
-      if (code === OFFICIAL_SUPPORT_CODE) {
-        if (state.currentUser) {
-          await ensureUserSupportMembership(state.currentUser);
-          openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-          return;
-        } else {
-          sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
-          showAuthView('entry');
-          return;
-        }
-      }
       handleCodeSearch(code);
     }
   }
@@ -1004,11 +1007,8 @@ function renderSidebarSpaces() {
   };
 
   list.innerHTML = state.userSpaces.map((sp, idx) => {
-    const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
-    const grad = isOfficial ? palette[0] : palette[hashStr(sp.id || sp.name) % palette.length];
-    const icon = isOfficial
-      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
-      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/></svg>`;
+    const grad = palette[hashStr(sp.id || sp.name) % palette.length];
+    const icon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/></svg>`;
     return `
       <div class="sidebar-space-item ${state.currentView === 'space' && state.activeSpace?.id === sp.id ? 'active' : ''}"
            style="animation-delay: ${Math.min(idx * 0.03, 0.3)}s;"
@@ -1024,8 +1024,8 @@ function renderSidebarSpaces() {
  * Fill the dashboard right rail with REAL data (members, featured space, activity)
  */
 function renderDashRail() {
-  // Featured space = official community space when available
-  const featured = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID) || state.userSpaces[0];
+  // Featured space = your most recent Space (real data only)
+  const featured = state.userSpaces[0];
   const featName = document.getElementById('rail-featured-name');
   const featDesc = document.getElementById('rail-featured-desc');
   const featBtn = document.getElementById('rail-featured-btn');
@@ -1035,26 +1035,29 @@ function renderDashRail() {
     if (featBtn) featBtn.onclick = () => openSpace(featured.id);
   }
 
-  // Members card: fetch real directory
+  // Members card: show YOUR contacts (real data, live count)
   if (state.currentUser) {
-    fetchPeopleDirectory(state.currentUser.uid).then(people => {
-      state.people = people || [];
+    // One live subscription per session — re-calling renderDashRail replaces
+    // the previous listener instead of stacking duplicates.
+    if (typeof state.contactsUnsub === 'function') state.contactsUnsub();
+    state.contactsUnsub = subscribeToContacts(state.currentUser.uid, (contacts) => {
+      state.contacts = contacts || [];
 
       const stack = document.getElementById('rail-members-avatars');
       const count = document.getElementById('rail-members-count');
-      if (count) count.textContent = `${state.people.length} member${state.people.length === 1 ? '' : 's'}`;
+      if (count) count.textContent = `${state.contacts.length} contact${state.contacts.length === 1 ? '' : 's'}`;
       if (stack) {
-        const top = state.people.slice(0, 7);
+        const top = state.contacts.slice(0, 7);
         stack.innerHTML = top.map(p => `
           <span class="stack-avatar" title="${escapeHtml(p.displayName)}">
             <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
           </span>
-        `).join('') + (state.people.length > 7 ? `<span class="stack-more">+${state.people.length - 7}</span>` : '');
-        if (state.people.length === 0) {
-          stack.innerHTML = `<div class="rail-activity-empty">No members found yet.</div>`;
+        `).join('') + (state.contacts.length > 7 ? `<span class="stack-more">+${state.contacts.length - 7}</span>` : '');
+        if (state.contacts.length === 0) {
+          stack.innerHTML = `<div class="rail-activity-empty">No contacts yet — add people by their username.</div>`;
         }
       }
-    }).catch(err => console.warn('People directory fetch:', err));
+    }, (err) => console.warn('Contacts listener:', err?.code || err));
   }
 }
 
@@ -1065,6 +1068,7 @@ function renderDashRail() {
  */
 function computeConnectionSet() {
   const set = new Set();
+  (state.contacts || []).forEach(c => { if (c.uid) set.add(c.uid); });
   (state.incomingChatRequests || []).forEach(r => { if (r.senderId) set.add(r.senderId); });
   (state.conversations || []).forEach(c => (c.participants || []).forEach(p => { if (p !== state.currentUser?.uid) set.add(p); }));
   return set;
@@ -1151,47 +1155,11 @@ function renderSpacesGrid() {
   }
 
   container.innerHTML = filtered.map(sp => {
-    const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
     const expInfo = sp.type === 'temporary' ? formatExpiration(sp.expiresAt) : null;
     const coverUrl = sp.imageURL || '';
     const isAdmin = sp.userRole === 'admin';
 
-    if (isOfficial) {
-      return `
-        <div class="space-card official-space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
-          <div class="space-card-cover" style="position: relative;">
-            ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name || 'HubbleNest Help & Community')}" loading="lazy" decoding="async"/>` : `
-              <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, #3b82f6 0%, #1e1b4b 100%); color: #ffffff; font-size: 2.2rem; font-weight: 800;">
-                HN
-              </div>
-            `}
-            <div style="position: absolute; bottom: 8px; left: 12px; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); padding: 3px 10px; border-radius: var(--radius-full); border: 1px solid rgba(59, 130, 246, 0.4); font-size: 0.72rem; font-weight: 700; color: #93c5fd; display: flex; align-items: center; gap: 6px;">
-              <span style="color: #60a5fa;">✦</span> Official Community & Support
-            </div>
-          </div>
-          <div class="space-card-body">
-            <div class="space-card-meta">
-              <span class="official-pill">✦ HubbleNest Official</span>
-              <span>·</span>
-              <span>Questions & Help</span>
-              <span>·</span>
-              <span>${sp.memberCount || 1} members</span>
-            </div>
-            <h4 class="space-card-title">${escapeHtml(sp.name || 'HubbleNest Help & Community')}</h4>
-            <p class="space-card-desc">${escapeHtml(sp.description || 'Have a question about HubbleNest? Need help or want to share feedback? This is the place to ask.')}</p>
-            <div class="space-card-footer">
-              <span class="code-chip official-code-chip" onclick="event.stopPropagation(); window.HubbleNest.copyLinkUrl('${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)}')">${escapeHtml(sp.code || OFFICIAL_SUPPORT_CODE)} <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="space-card-btn-enter official-btn-enter">Open Community →</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <div class="space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
+    return `class="space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
         <div class="space-card-cover">
           ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name)}" loading="lazy" decoding="async"/>` : `
             <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); color: #3b82f6; font-size: 2rem; font-weight: 800;">
@@ -1231,18 +1199,11 @@ export async function openSpace(spaceId) {
   document.getElementById('view-space-detail').classList.add('active-view');
 
   // Find space details
-  let spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
+  const spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
   if (!spaceSnap.exists()) {
-    // If opening official support space, ensure it
-    if (spaceId === OFFICIAL_SUPPORT_SPACE_ID) {
-      await ensureOfficialSupportSpace();
-      spaceSnap = await getDoc(doc(db, 'spaces', spaceId));
-    }
-    if (!spaceSnap.exists()) {
-      showToast('Space not found', 'error');
-      loadDashboard();
-      return;
-    }
+    showToast('Space not found', 'error');
+    loadDashboard();
+    return;
   }
 
   state.activeSpace = { id: spaceSnap.id, ...spaceSnap.data() };
@@ -1254,7 +1215,6 @@ export async function openSpace(spaceId) {
 
 function renderSpaceHeader() {
   const sp = state.activeSpace;
-  const isOfficial = sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID;
   const titleEl = document.getElementById('space-detail-name');
   const descEl = document.getElementById('space-detail-desc');
   const metaEl = document.getElementById('space-detail-meta');
@@ -1263,28 +1223,22 @@ function renderSpaceHeader() {
   const adminBtn = document.getElementById('space-admin-controls-btn');
 
   if (titleEl) titleEl.textContent = sp.name;
-  if (descEl) descEl.textContent = sp.description || 'Welcome to this space.';
+  if (descEl) {
+    // Group descriptions render as real rich text — vertical, multi-line,
+    // honoring headings/lists/bold, never showing raw Markdown symbols.
+    descEl.innerHTML = renderRichText(sp.description) || '<span class="space-desc-empty">Welcome to this space.</span>';
+  }
   if (codeChip) codeChip.textContent = sp.code || 'HN-SPACE';
 
   const exp = sp.type === 'temporary' ? formatExpiration(sp.expiresAt) : null;
   if (metaEl) {
-    if (isOfficial) {
-      metaEl.innerHTML = `
-        <span class="official-pill">✦ HubbleNest Official</span>
-        <span>·</span>
-        <span>Questions, Help & Feedback</span>
-        <span>·</span>
-        <span>${sp.memberCount || 1} members</span>
-      `;
-    } else {
-      metaEl.innerHTML = `
-        <span>${escapeHtml(sp.category)}</span>
-        <span>·</span>
-        <span>${sp.memberCount || 1} members</span>
-        <span>·</span>
-        ${exp ? `<span style="color: ${exp.urgent ? 'var(--status-danger)' : 'inherit'}; font-weight: 500;">${exp.text}</span>` : `<span>Permanent</span>`}
-      `;
-    }
+    metaEl.innerHTML = `
+      <span>${escapeHtml(sp.category)}</span>
+      <span>·</span>
+      <span>${sp.memberCount || 1} members</span>
+      <span>·</span>
+      ${exp ? `<span style="color: ${exp.urgent ? 'var(--status-danger)' : 'inherit'}; font-weight: 500;">${exp.text}</span>` : `<span>Permanent</span>`}
+    `;
   }
 
   if (coverEl) {
@@ -1373,6 +1327,8 @@ function initSettingsTab() {
   if (!state.activeSpace) return;
   const nameInput = document.getElementById('edit-space-name-tab');
   const descInput = document.getElementById('edit-space-desc-tab');
+  const publicInput = document.getElementById('edit-space-public-tab');
+  if (publicInput) publicInput.checked = state.activeSpace.isPublic === true;
   if (nameInput) nameInput.value = state.activeSpace.name || '';
   if (descInput) descInput.value = state.activeSpace.description || '';
 }
@@ -1590,7 +1546,7 @@ function renderChatMessages() {
                 </div>
               `
             ) : ''}
-            <div>${linkify(msg.text)}</div>
+            <div class="rt-msg">${renderRichText(msg.text)}</div>
             ${attachmentsHtml}
             <div class="msg-actions-hover">
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.startReply('${msg.id}', '${escapeHtml(msg.senderName)}', '${escapeHtml(msg.text || (msg.attachments && msg.attachments[0] ? msg.attachments[0].originalFilename : 'Attachment'))}')" title="Reply">↩</button>
@@ -1944,7 +1900,7 @@ function renderAnnouncementsList() {
         <div style="font-size: 0.8rem; color: var(--text-muted);">
           Posted by ${escapeHtml(ann.authorName)} · ${formatDateTime(ann.createdAt)}
         </div>
-        <div class="announcement-content">${escapeHtml(ann.content)}</div>
+        <div class="announcement-content rich-text">${renderRichText(ann.content)}</div>
         ${ann.imageURL ? `<img src="${ann.imageURL}" class="announcement-img" alt="" loading="lazy" decoding="async"/>` : ''}
         <div style="display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
           ${ann.imageURL ? `
@@ -1981,20 +1937,27 @@ function initMembersListener() {
     state.spaceMembers = members;
     renderMembersList();
   });
-
-  if (state.activeSpaceRole === 'admin') {
-    subscribeToJoinRequests(state.activeSpace.id, (requests) => {
-      state.spaceJoinRequests = requests;
-      renderJoinRequests();
-    });
-  }
+  // NOTE: joining is INSTANT with a valid Space code — the old
+  // request/approval queue no longer exists, so there is nothing to listen to.
 }
 
 function renderMembersList() {
   const container = document.getElementById('members-list-grid');
   if (!container) return;
 
-  container.innerHTML = state.spaceMembers.map(m => {
+  const adminPanel = state.activeSpaceRole === 'admin' ? `
+    <div class="space-contacts-admin">
+      <div class="space-contacts-admin-head">
+        <div>
+          <b>Member management</b>
+          <div class="space-contacts-admin-sub">Add from your contacts, or remove existing members. Anyone with the Space code joins instantly.</div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.toggleSpaceContactsPicker()">+ Add contacts</button>
+      </div>
+      <div id="space-contacts-picker" style="display: none;"></div>
+    </div>` : '';
+
+  container.innerHTML = adminPanel + state.spaceMembers.map(m => {
     const isMe = m.userId === state.currentUser.uid;
     const isAdmin = m.role === 'admin';
     const canManage = state.activeSpaceRole === 'admin' && !isMe;
@@ -2018,7 +1981,7 @@ function renderMembersList() {
             <button class="btn btn-sm btn-ghost" onclick="window.HubbleNest.toggleRole('${m.userId}', '${m.role}')" title="Change role">
               ${isAdmin ? 'Demote' : 'Promote'}
             </button>
-            <button class="btn btn-sm btn-ghost" style="color: var(--status-danger);" onclick="window.HubbleNest.removeMember('${m.userId}')" title="Remove member">
+            <button class="btn btn-sm btn-ghost" style="color: var(--status-danger);" onclick="window.HubbleNest.removeSpaceMemberByUid('${m.userId}')" title="Remove member">
               ✕
             </button>
           ` : ''}
@@ -2028,47 +1991,89 @@ function renderMembersList() {
   }).join('');
 }
 
-function renderJoinRequests() {
-  const container = document.getElementById('join-requests-container');
-  const countBadge = document.getElementById('join-requests-count-badge');
-  if (!container) return;
+/* ==========================================================================
+   ADMIN MEMBER MANAGEMENT — add members straight from your contacts.
+   (Joining by code is instant for everyone else; no approval queue exists.)
+   ========================================================================== */
 
-  if (state.spaceJoinRequests.length === 0) {
-    container.style.display = 'none';
-    if (countBadge) countBadge.style.display = 'none';
+export function toggleSpaceContactsPicker() {
+  const panel = document.getElementById('space-contacts-picker');
+  if (!panel) return;
+  const show = panel.style.display === 'none' || !panel.style.display;
+  panel.style.display = show ? 'block' : 'none';
+  if (show) renderSpaceContactsPicker();
+}
+
+function renderSpaceContactsPicker() {
+  const panel = document.getElementById('space-contacts-picker');
+  if (!panel) return;
+  const memberUids = new Set((state.spaceMembers || []).map(m => m.userId));
+  const candidates = (state.contacts || []).filter(c => !memberUids.has(c.uid));
+
+  if ((state.contacts || []).length === 0) {
+    panel.innerHTML = `<div class="space-contacts-empty">None of your contacts are available yet — add contacts from the People page first.</div>`;
+    return;
+  }
+  if (candidates.length === 0) {
+    panel.innerHTML = `<div class="space-contacts-empty">All of your contacts are already members of this Space.</div>`;
     return;
   }
 
-  container.style.display = 'block';
-  if (countBadge) {
-    countBadge.textContent = state.spaceJoinRequests.length;
-    countBadge.style.display = 'inline-block';
-  }
-
-  const listEl = document.getElementById('join-requests-list');
-  if (!listEl) return;
-
-  listEl.innerHTML = state.spaceJoinRequests.map(req => {
-    return `
-      <div class="member-card" style="border-left: 3px solid var(--accent-primary);">
-        <div class="msg-avatar">
-          <img src="${getAvatarUrl(req.photoURL, req.displayName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
-        </div>
-        <div class="member-info">
-          <div class="member-name">${escapeHtml(req.displayName)} (@${escapeHtml(req.username)})</div>
-          <div class="member-role">${escapeHtml(req.bio || 'Applicant')} · ${formatTimeAgo(req.requestedAt)}</div>
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.approveRequest('${req.userId}')">
-            Accept
-          </button>
-          <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.declineRequest('${req.userId}')">
-            Decline
-          </button>
-        </div>
+  panel.innerHTML = candidates.map(c => `
+    <div class="member-card">
+      <div class="msg-avatar" style="width: 38px; height: 38px;">
+        <img src="${getAvatarUrl(c.photoURL, c.displayName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
       </div>
-    `;
-  }).join('');
+      <div class="member-info">
+        <div class="member-name">${escapeHtml(c.displayName)}</div>
+        <div class="member-role">@${escapeHtml(c.username || '')}</div>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.addSpaceMemberFromContacts('${c.uid}')">Add</button>
+    </div>
+  `).join('');
+}
+
+export async function addSpaceMemberFromContacts(memberUid) {
+  if (state.activeSpaceRole !== 'admin') return;
+  const contact = (state.contacts || []).find(c => c.uid === memberUid);
+  if (!contact) return;
+  try {
+    const res = await addMemberToSpace(state.activeSpace.id, {
+      uid: contact.uid,
+      displayName: contact.displayName,
+      username: contact.username,
+      photoURL: contact.photoURL
+    }, 'member');
+    showToast(res.already
+      ? `${contact.displayName} is already a member.`
+      : `${contact.displayName} added to the Space.`, res.already ? 'info' : 'success');
+    renderSpaceContactsPicker();
+  } catch (err) {
+    console.error('Add member failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'Your Firestore rules block adding members — run Connection Doctor.'
+      : 'Could not add this member.', 'error');
+  }
+}
+
+export async function removeSpaceMemberByUid(memberUid) {
+  if (state.activeSpaceRole !== 'admin') return;
+  const m = (state.spaceMembers || []).find(x => x.userId === memberUid);
+  if (!m) return;
+  if (m.userId === state.activeSpace?.createdBy) {
+    showToast('The Space creator cannot be removed.', 'warning');
+    return;
+  }
+  if (!window.confirm(`Remove ${m.displayName || 'this member'} from the Space?`)) return;
+  try {
+    await removeSpaceMember(state.activeSpace.id, memberUid);
+    showToast(`${m.displayName || 'Member'} removed from the Space.`, 'info');
+  } catch (err) {
+    console.error('Remove member failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'Your Firestore rules block removing members — run Connection Doctor.'
+      : 'Could not remove this member.', 'error');
+  }
 }
 
 /* ==========================================================================
@@ -2136,57 +2141,179 @@ export async function openPeopleView() {
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('mob-nav-people')?.classList.add('active');
 
-  await loadPeopleDirectory();
+  await loadMyContacts();
 }
 
-export async function loadPeopleDirectory() {
+/**
+ * CONTACTS-FIRST People page.
+ * Shows ONLY members you added to your contacts — never the full directory.
+ * New contacts are added by their exact username in the bar above the grid.
+ */
+export async function loadMyContacts() {
   const container = document.getElementById('people-directory-grid');
-  if (container) {
-    container.innerHTML = `<div style="grid-column: 1 / -1; padding: 48px 0; text-align: center; color: var(--text-muted);">Finding members on HubbleNest...</div>`;
+  if (!container) return;
+  if (!state.currentUser) {
+    container.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1; padding: 48px 0;">
+      <h3 class="empty-state-title">Sign in to see your contacts</h3>
+      <p class="empty-state-desc">Your contacts are private to your account.</p></div>`;
+    return;
   }
 
-  const people = await fetchPeopleDirectory(state.currentUser?.uid);
-  state.people = people;
-  renderPeopleGrid(people);
+  container.innerHTML = `<div style="grid-column: 1 / -1; padding: 48px 0; text-align: center; color: var(--text-muted);">Loading your contacts...</div>`;
+
+  if (typeof state.peopleUnsub === 'function') state.peopleUnsub();
+  state.peopleUnsub = subscribeToContacts(state.currentUser.uid, (contacts) => {
+    state.contacts = contacts || [];
+    renderPeopleGrid(applyPeopleFilter());
+  }, (err) => {
+    console.error('Contacts listener error:', err);
+    container.innerHTML = `<div class="feed-error-card">
+      <div class="feed-error-title">Your contacts could not load</div>
+      <div class="feed-error-desc">${escapeHtml(err.code || 'error')} — the Connection Doctor can pinpoint the exact rule to fix.</div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button></div>`;
+    if (err?.code === 'permission-denied') handlePermissionError('contacts');
+  });
 }
 
-function renderPeopleGrid(peopleList) {
+function applyPeopleFilter() {
+  const q = (state.peopleSearchQuery || '').trim().toLowerCase();
+  if (!q) return state.contacts || [];
+  return (state.contacts || []).filter(c =>
+    `${c.displayName || ''} ${c.username || ''}`.toLowerCase().includes(q));
+}
+
+/**
+ * Search a member by their EXACT username and show a verification card.
+ * Only safe public profile fields are shown — no emails, no private data.
+ */
+export async function addContactByUsername() {
+  const input = document.getElementById('add-contact-username');
+  const resultBox = document.getElementById('add-contact-result');
+  const btn = document.getElementById('add-contact-btn');
+  const raw = (input?.value || '').trim();
+  state.foundContactCandidate = null;
+
+  if (!raw) { showToast('Enter the username of the member you want to add.', 'info'); return; }
+  if (!state.currentUser) { showToast('Sign in first.', 'info'); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+  if (resultBox) { resultBox.style.display = 'block'; resultBox.innerHTML = `<div class="add-contact-searching">Looking up @${escapeHtml(raw.replace(/^@/, ''))}…</div>`; }
+
+  try {
+    const peer = await findUserByUsername(raw);
+    if (!peer) {
+      if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">No HubbleNest member has the username <b>@${escapeHtml(raw.replace(/^@/, ''))}</b>. Check the spelling — usernames are exact.</div>`;
+      return;
+    }
+    if (peer.uid === state.currentUser.uid) {
+      if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">That's you. You are already your own contact.</div>`;
+      return;
+    }
+    const already = (state.contacts || []).some(c => c.uid === peer.uid);
+    state.foundContactCandidate = peer;
+    if (resultBox) {
+      resultBox.innerHTML = `
+        <div class="add-contact-card">
+          <img src="${getAvatarUrl(peer.photoURL, peer.displayName)}" alt="" class="add-contact-avatar" />
+          <div class="add-contact-info">
+            <div class="add-contact-name">${escapeHtml(peer.displayName)}</div>
+            <div class="add-contact-handle">@${escapeHtml(peer.username)}</div>
+            ${peer.bio ? `<div class="add-contact-bio">${escapeHtml(peer.bio)}</div>` : ''}
+          </div>
+          ${already
+            ? `<span class="add-contact-already">Already in contacts</span>`
+            : `<button type="button" class="btn btn-primary btn-sm" id="add-contact-confirm-btn" onclick="window.HubbleNest.addFoundContact()">Add to contacts</button>`}
+        </div>`;
+    }
+  } catch (err) {
+    console.error('Username lookup failed:', err);
+    if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">Lookup failed (${escapeHtml(err.code || err.message || 'error')}). Try again.</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Add contact'; }
+  }
+}
+
+/** Add the verified username match to your contacts (real Firestore write). */
+export async function addFoundContact() {
+  const peer = state.foundContactCandidate;
+  if (!peer) return;
+  try {
+    await addContact(state.userProfile, peer);
+    state.foundContactCandidate = null;
+    showToast(`${peer.displayName} is now in your contacts — you can chat instantly.`, 'success', 4500);
+    const box = document.getElementById('add-contact-result');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    const input = document.getElementById('add-contact-username');
+    if (input) input.value = '';
+    // The live listener re-renders the grid; also refresh from cache at once.
+    renderPeopleGrid(applyPeopleFilter());
+  } catch (err) {
+    console.error('Add contact failed:', err);
+    showToast(err?.message === 'You are already your own contact.' ? err.message
+      : (err?.code === 'permission-denied'
+        ? 'Your Firestore rules block contacts — run Connection Doctor.'
+        : 'Could not add this contact. Please try again.'), 'error');
+    if (err?.code === 'permission-denied') handlePermissionError('contacts add');
+  }
+}
+
+/** Remove a contact from the People grid. */
+export async function removeContactFromList(contactUid) {
+  if (!contactUid || !state.currentUser) return;
+  const c = (state.contacts || []).find(x => x.uid === contactUid);
+  if (!c) return;
+  if (!window.confirm(`Remove ${c.displayName || 'this member'} from your contacts? Your private chat history stays, but you will no longer see them here.`)) return;
+  try {
+    await removeContact(state.currentUser.uid, contactUid);
+    showToast('Contact removed.', 'info');
+  } catch (err) {
+    console.error('Remove contact failed:', err);
+    showToast('Could not remove this contact.', 'error');
+  }
+}
+
+function renderPeopleGrid(contactsList) {
   const container = document.getElementById('people-directory-grid');
   if (!container) return;
 
-  if (!peopleList || peopleList.length === 0) {
+  const list = contactsList || [];
+  if (list.length === 0) {
+    const searching = (state.peopleSearchQuery || '').trim();
     container.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1; padding: 60px 0;">
         <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-        <h3 class="empty-state-title">No members found</h3>
-        <p class="empty-state-desc">Try searching with a different name or invite members with a Space code.</p>
+        <h3 class="empty-state-title">${searching ? 'No contacts match your search' : 'Your contact list is empty'}</h3>
+        <p class="empty-state-desc">${searching
+          ? 'No contact matches that name or username.'
+          : 'Add people by their exact username in the bar above — then chat with them instantly, no requests needed.'}</p>
       </div>
     `;
     return;
   }
 
-  container.innerHTML = peopleList.map(p => {
+  container.innerHTML = list.map(p => {
     return `
-      <div class="person-card" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
-        <div class="person-header">
+      <div class="person-card">
+        <div class="person-header" onclick="window.HubbleNest.openUserCardModal('${p.uid}')" title="View profile">
           <div class="person-avatar">
             <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
           </div>
           <div style="flex: 1; min-width: 0;">
             <div class="person-name">${escapeHtml(p.displayName)}</div>
-            <div class="person-handle">@${escapeHtml(p.username)}</div>
+            <div class="person-handle">@${escapeHtml(p.username || '')}</div>
           </div>
         </div>
-        <div class="person-bio">${escapeHtml(p.bio || 'HubbleNest community member')}</div>
+        ${p.bio ? `<div class="person-bio">${escapeHtml(p.bio)}</div>` : ''}
         <div class="person-footer">
-          <span style="font-size: 0.8rem; color: var(--text-muted);">HubbleNest Member</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Contact</span>
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); window.HubbleNest.chatWithPerson('${p.uid}')" title="Chat with ${escapeHtml(p.displayName)}">
+            <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${p.uid}')" title="Open your private chat with ${escapeHtml(p.displayName)}">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
             </button>
-            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); window.HubbleNest.openUserCardModal('${p.uid}')">
-              View Profile
+            <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
+              Profile
             </button>
+            <button class="btn btn-sm btn-ghost" style="color: var(--text-muted);" onclick="window.HubbleNest.removeContactFromList('${p.uid}')" title="Remove from contacts">✕</button>
           </div>
         </div>
       </div>
@@ -2194,10 +2321,9 @@ function renderPeopleGrid(peopleList) {
   }).join('');
 }
 
-export async function handlePeopleSearch(term) {
-  if (!state.currentUser) return;
-  const filtered = await searchPeopleDirectory(term, state.currentUser.uid);
-  renderPeopleGrid(filtered);
+export function handlePeopleSearch(term) {
+  state.peopleSearchQuery = term || '';
+  renderPeopleGrid(applyPeopleFilter());
 }
 
 /**
@@ -2236,11 +2362,24 @@ export async function openMemberProfilePage(userId) {
   let statusBadgeHtml = '';
   let actionsHtml = '';
 
+  // Contact relationship drives the primary actions (contacts chat instantly).
+  const contactFlag = !isMe ? await isContact(state.currentUser?.uid, userId) : false;
+
   if (isMe) {
     statusBadgeHtml = `<div class="user-card-status-badge" style="background: rgba(59, 130, 246, 0.12); color: var(--accent-primary);">This is your profile</div>`;
     actionsHtml = `
       <button class="btn btn-primary" onclick="window.HubbleNest.openProfilePage()">
         Edit My Profile & Settings
+      </button>
+    `;
+  } else if (contactFlag) {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-connected">✓ In your contacts</div>`;
+    actionsHtml = `
+      <button class="btn btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${userId}')">
+        Open Private Chat
+      </button>
+      <button class="btn btn-secondary" onclick="window.HubbleNest.removeContactFromProfile('${userId}')">
+        Remove from contacts
       </button>
     `;
   } else if (rel && (rel.data?.status === 'accepted' || rel.direction === 'connected')) {
@@ -2279,6 +2418,9 @@ export async function openMemberProfilePage(userId) {
     actionsHtml = `
       <button class="btn btn-primary" id="btn-request-to-chat" onclick="window.HubbleNest.handleSendChatRequest('${userId}')">
         ✉ Request to Chat
+      </button>
+      <button class="btn btn-secondary" onclick="window.HubbleNest.addContactFromProfile('${userId}')">
+        + Add to contacts
       </button>
     `;
   }
@@ -2367,6 +2509,34 @@ export async function cancelSentRequest(requestId, targetUserId) {
   }
 }
 
+export async function addContactFromProfile(targetUserId) {
+  try {
+    const peer = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
+    if (!peer) { showToast('Could not load this member.', 'error'); return; }
+    await addContact(state.userProfile, peer);
+    showToast(`${peer.displayName} is now in your contacts.`, 'success');
+    await openUserCardModal(targetUserId);
+  } catch (err) {
+    if (err?.message !== 'You are already your own contact.') {
+      console.error('Add contact failed:', err);
+      showToast(err?.code === 'permission-denied'
+        ? 'Your Firestore rules block contacts — run Connection Doctor.'
+        : 'Could not add this contact.', 'error');
+    }
+  }
+}
+
+export async function removeContactFromProfile(targetUserId) {
+  try {
+    await removeContact(state.currentUser.uid, targetUserId);
+    showToast('Contact removed.', 'info');
+    await openUserCardModal(targetUserId);
+  } catch (err) {
+    console.error('Remove contact failed:', err);
+    showToast('Could not remove this contact.', 'error');
+  }
+}
+
 export async function openDirectChatWithPeer(peerUserId) {
   closeModal('modal-user-card');
   const convId = getConversationId(state.currentUser.uid, peerUserId);
@@ -2394,6 +2564,12 @@ export async function chatWithPerson(targetUserId) {
   }
 
   try {
+    // CONTACTS CHAT INSTANTLY — no request, no acceptance, no dead ends.
+    if (await isContact(state.currentUser.uid, targetUserId)) {
+      await openDirectChatWithPeer(targetUserId);
+      return;
+    }
+
     const rel = await getChatRelationship(state.currentUser.uid, targetUserId);
     const status = rel?.data?.status;
 
@@ -2686,6 +2862,26 @@ export function retryActiveDirectChat() {
   );
 }
 
+/**
+ * Home feed composer: Enter posts, Shift+Enter inserts a newline, and the
+ * textarea auto-grows while the member types (up to 140px, then scrolls).
+ * Mirrors the private-chat composer behaviour.
+ */
+export function handleHomeComposerKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    handleHomePost();
+    const el = document.getElementById('home-composer-input');
+    if (el) el.style.height = 'auto';
+    return;
+  }
+  const el = event.target;
+  if (el && el.tagName === 'TEXTAREA') {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+}
+
 /** Enter sends, Shift+Enter newline, composer auto-grows while typing. */
 export function handleDirectComposerKey(event) {
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -2830,7 +3026,7 @@ function renderDirectMessages() {
         <div class="msg-bubble-box">
           <div class="msg-bubble">
             ${replySnippetHtml}
-            ${decrypted.text ? `<div>${linkify(decrypted.text)}</div>` : ''}
+            ${decrypted.text ? `<div class="rt-msg">${renderRichText(decrypted.text)}</div>` : ''}
             ${attachmentsHtml}
             <div class="msg-actions-hover">
               <button class="btn-ghost" style="padding: 2px 6px;" onclick="window.HubbleNest.replyToDirectMessage('${msg.id}', '${escapeHtml(senderName)}', '${escapeHtml(decrypted.text || (decrypted.attachments && decrypted.attachments[0] ? decrypted.attachments[0].originalFilename : 'Attachment'))}')" title="Reply">↩</button>
@@ -3224,18 +3420,6 @@ export async function handleCodeSearch(code) {
   }
 
   const cleanCode = code.trim().toUpperCase();
-  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
-    closeModal('modal-join-space');
-    closeModal('modal-space-preview');
-    if (state.currentUser) {
-      await ensureUserSupportMembership(state.currentUser);
-      openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-    } else {
-      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
-      showAuthView('entry');
-    }
-    return;
-  }
 
   showToast('Locating Space...', 'info', 1500);
   const foundSpace = await findSpaceByCode(code);
@@ -3266,15 +3450,25 @@ export async function handleCodeSearch(code) {
         closeModal('modal-space-preview');
         openSpace(foundSpace.id);
       };
-    } else if (currentStatus === 'pending') {
-      previewBtn.textContent = 'Request Pending';
-      previewBtn.disabled = true;
     } else {
-      previewBtn.textContent = 'Request to Join';
+      // INSTANT JOIN — the valid Space code IS the invitation. No approval.
+      previewBtn.textContent = 'Join Space';
       previewBtn.disabled = false;
       previewBtn.onclick = async () => {
-        await requestToJoinSpace(foundSpace.id, state.userProfile);
-        closeModal('modal-space-preview');
+        previewBtn.disabled = true;
+        previewBtn.textContent = 'Joining…';
+        try {
+          await joinSpaceByCode(foundSpace, state.userProfile);
+          closeModal('modal-space-preview');
+          openSpace(foundSpace.id);
+        } catch (err) {
+          console.error('Join failed:', err);
+          previewBtn.disabled = false;
+          previewBtn.textContent = 'Join Space';
+          showToast(err?.code === 'permission-denied'
+            ? 'Your Firestore rules block joining — run Connection Doctor.'
+            : (err.message || 'Could not join this Space.'), 'error');
+        }
       };
     }
   }
@@ -3443,17 +3637,6 @@ export async function handleJoinPageCodeSearch(code) {
   }
   const cleanCode = code.trim().toUpperCase();
 
-  if (cleanCode === OFFICIAL_SUPPORT_CODE) {
-    if (state.currentUser) {
-      await ensureUserSupportMembership(state.currentUser);
-      openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-    } else {
-      sessionStorage.setItem('pendingJoinCode', OFFICIAL_SUPPORT_CODE);
-      showAuthView('entry');
-    }
-    return;
-  }
-
   showToast('Locating Space...', 'info', 1200);
   const foundSpace = await findSpaceByCode(cleanCode);
   const resultBox = document.getElementById('join-page-result-box');
@@ -3481,17 +3664,25 @@ export async function handleJoinPageCodeSearch(code) {
       btn.textContent = 'Enter Space';
       btn.disabled = false;
       btn.onclick = () => openSpace(foundSpace.id);
-    } else if (currentStatus === 'pending') {
-      btn.textContent = 'Request Pending';
-      btn.disabled = true;
     } else {
-      btn.textContent = 'Request to Join';
+      // INSTANT JOIN with a valid code — no approval step.
+      btn.textContent = 'Join Space';
       btn.disabled = false;
       btn.onclick = async () => {
         btn.disabled = true;
-        btn.textContent = 'Requesting...';
-        await requestToJoinSpace(foundSpace.id, state.userProfile);
-        btn.textContent = 'Request Pending';
+        btn.textContent = 'Joining…';
+        try {
+          await joinSpaceByCode(foundSpace, state.userProfile);
+          if (resultBox) resultBox.style.display = 'none';
+          openSpace(foundSpace.id);
+        } catch (err) {
+          console.error('Join failed:', err);
+          btn.disabled = false;
+          btn.textContent = 'Join Space';
+          showToast(err?.code === 'permission-denied'
+            ? 'Your Firestore rules block joining — run Connection Doctor.'
+            : (err.message || 'Could not join this Space.'), 'error');
+        }
       };
     }
   }
@@ -3515,6 +3706,8 @@ export function openProfilePage() {
   document.getElementById('nav-profile')?.classList.add('active');
 
   if (!state.userProfile) return;
+  // Push notification one-time setup card (status + saved values)
+  initPushSettingsUI().catch(() => {});
   const nameInput = document.getElementById('page-profile-name');
   const handleInput = document.getElementById('page-profile-handle');
   const bioInput = document.getElementById('page-profile-bio');
@@ -3662,8 +3855,8 @@ Object.assign(window.HubbleNest, {
   openQrModal: () => switchSpaceTab('invite'),
   openNewAnnouncementModal: () => toggleAnnouncementComposer(true),
 
-  // People Directory & Chat Requests
-  loadPeopleDirectory,
+  // People (Contacts) & Chat Requests
+  loadMyContacts,
   handlePeopleSearch,
   handleSendChatRequest,
   handleAcceptRequest,
@@ -3729,7 +3922,20 @@ Object.assign(window.HubbleNest, {
     const e = prompt('Enter your account email for password reset:');
     if (e) resetPassword(e);
   },
-  logoutUser,
+  logoutUser: async () => {
+    // Prune THIS account's push tokens on sign-out so background pushes no
+    // longer reach a browser the member has logged out of.
+    try {
+      const uid = state.currentUser?.uid;
+      if (uid) {
+        const snap = await getDocs(collection(db, 'users', uid, 'pushTokens'));
+        const jobs = [];
+        snap.forEach((d) => jobs.push(deleteDoc(d.ref).catch(() => {})));
+        await Promise.all(jobs);
+      }
+    } catch (e) { /* token cleanup is best-effort — never blocks sign-out */ }
+    await logoutUser();
+  },
 
   // Spaces
   handleCreateSpaceSubmit,
@@ -3816,15 +4022,9 @@ Object.assign(window.HubbleNest, {
 
   // Members & Admin
   toggleRole: (uid, currRole) => updateMemberRole(state.activeSpace.id, uid, currRole === 'admin' ? 'member' : 'admin'),
-  removeMember: (uid) => removeMemberFromSpace(state.activeSpace.id, uid),
-  approveRequest: (uid) => {
-    const req = state.spaceJoinRequests.find(r => r.userId === uid);
-    if (req) approveJoinRequest(state.activeSpace.id, req);
-  },
-  declineRequest: (uid) => {
-    const req = state.spaceJoinRequests.find(r => r.userId === uid);
-    if (req) declineJoinRequest(state.activeSpace.id, req);
-  },
+  removeSpaceMemberByUid,
+  toggleSpaceContactsPicker,
+  addSpaceMemberFromContacts,
 
   // Space Admin Controls
   handleSaveSpaceSettings: async () => {
@@ -3885,6 +4085,7 @@ Object.assign(window.HubbleNest, {
     if (!state.userProfile || !state.currentUser) return;
     handleHomePost();
   },
+  handleHomeComposerKey,
   stageHomeAttachment: (file) => stageHomeFile(file, 100),
   removeHomeAttachment,
   clearAllHomeAttachments,
@@ -3899,34 +4100,13 @@ Object.assign(window.HubbleNest, {
   // Sidebar "Spaces" shortcut: open the dedicated Your Spaces page
   openSpacesSection: () => openMySpacesPage(),
 
-  // Official HubbleNest Community Space (real Get Help / Featured Space targets)
-  getOfficialSpaceId: () => {
-    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
-    return official ? official.id : OFFICIAL_SUPPORT_SPACE_ID;
-  },
+  // Rail quick actions — REAL targets only (no simulated official space):
+  // "Get Help" runs the live Connection Doctor; "View Members" opens contacts.
   openCommunitySpace: async () => {
-    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
-    if (official) {
-      await openSpace(official.id);
-      return;
-    }
-    try {
-      await ensureUserSupportMembership(state.currentUser);
-    } catch (e) { /* membership already ensured at auth */ }
-    await openSpace(OFFICIAL_SUPPORT_SPACE_ID);
+    runFirestoreDoctor();
   },
   openCommunityMembers: async () => {
-    const official = state.userSpaces.find(sp => sp.isOfficialSupport || sp.codeUpper === OFFICIAL_SUPPORT_CODE || sp.id === OFFICIAL_SUPPORT_SPACE_ID);
-    if (official) {
-      await openSpace(official.id);
-      switchSpaceTab('members');
-      return;
-    }
-    try {
-      await ensureUserSupportMembership(state.currentUser);
-    } catch (e) { /* membership already ensured at auth */ }
-    await openSpace(OFFICIAL_SUPPORT_SPACE_ID);
-    switchSpaceTab('members');
+    await openPeopleView();
   },
 
   // Inline links panel (fixes previously broken Add Link button in empty state)
@@ -3938,8 +4118,155 @@ Object.assign(window.HubbleNest, {
     } else {
       switchSpaceTab('links');
     }
-  }
+  },
+
+  // Contacts (People page & member profiles)
+  addContactByUsername,
+  addFoundContact,
+  removeContactFromList,
+  addContactFromProfile,
+  removeContactFromProfile,
+
+  // Arcade: multi-file projects + fullscreen player
+  toggleGameFullscreen,
+  handleGameFilesUpload,
+  removeGameFile,
+  setGameEntry,
+  clearGameFiles,
+
+  // Push notifications — one-time configuration (survives redeploys)
+  savePushConfigFromSettings,
+  testPushFromSettings,
+
+  // Rich-text compose toolbar
+  rtWrap
 });
+
+/* ==========================================================================
+   RICH-TEXT COMPOSE TOOLBAR
+   Wraps the textarea selection in lightweight formatting markers that
+   format.js renders as REAL bold/italic/underline/headings/lists/code.
+   The stored text stays plain and portable; nothing executable is saved.
+   ========================================================================== */
+
+const RT_WRAPS = {
+  bold: { pre: '**', post: '**', placeholder: 'bold text' },
+  italic: { pre: '_', post: '_', placeholder: 'italic text' },
+  underline: { pre: '++', post: '++', placeholder: 'underline text' },
+  code: { pre: '`', post: '`', placeholder: 'code' },
+  h: { pre: '## ', post: '', placeholder: 'Heading' },
+  ul: { pre: '- ', post: '', placeholder: 'list item' }
+};
+
+export function rtWrap(textareaId, kind) {
+  const ta = document.getElementById(textareaId);
+  const spec = RT_WRAPS[kind];
+  if (!ta || !spec) return;
+  const { selectionStart: s, selectionEnd: e, value } = ta;
+  const selected = value.slice(s, e) || spec.placeholder;
+  const next = value.slice(0, s) + spec.pre + selected + spec.post + value.slice(e);
+  ta.value = next;
+  const caret = s + spec.pre.length + selected.length + spec.post.length;
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+  // Let composers react (previews, autosize, draft autosave).
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/* ==========================================================================
+   PUSH NOTIFICATIONS — ONE-TIME SETUP UI (Profile & Settings page)
+   The Web Push certificate key and the background-push service account are
+   stored ONCE in Firestore `config/push` — server data that survives every
+   zip redeploy, so the owner never edits generated files again.
+   ========================================================================== */
+
+export async function initPushSettingsUI() {
+  const statusEl = document.getElementById('push-config-status');
+  if (!statusEl) return;
+  statusEl.innerHTML = `<div class="push-status-loading">Reading your push configuration…</div>`;
+  try {
+    const st = await getPushConfigStatus();
+    const vapidShort = st.publicKey
+      ? `${st.publicKey.slice(0, 10)}…${st.publicKey.slice(-6)}`
+      : null;
+    statusEl.innerHTML = `
+      <div class="push-status-row ${st.publicKeyIsEmbedded ? 'push-status-warn' : 'push-status-ok'}">
+        <span class="push-status-dot"></span>
+        <span><b>Web Push certificate:</b> ${st.publicKeyIsEmbedded
+          ? 'using the built-in fallback key (recommended: save YOUR project key below once)'
+          : `saved in this project's Firestore (${vapidShort}) — survives redeploys`}</span>
+      </div>
+      <div class="push-status-row ${st.senderConfigured ? 'push-status-ok' : 'push-status-warn'}">
+        <span class="push-status-dot"></span>
+        <span><b>Background push delivery:</b> ${st.senderConfigured
+          ? 'configured — members can push to each other even when the app is closed'
+          : 'not configured — in-app alerts work; background pushes need the service account below'}</span>
+      </div>
+      <div class="push-status-row push-status-info">
+        <span class="push-status-dot"></span>
+        <span>Reminder: the Firebase Cloud Messaging API must stay <b>enabled</b> for the hubblenest project (Google Cloud Console → APIs &amp; Services). That project setting also persists — it is never affected by re-uploading the app.</span>
+      </div>`;
+    // Pre-fill the VAPID field when a project key is already stored.
+    if (!st.publicKeyIsEmbedded && st.publicKey) {
+      const input = document.getElementById('push-vapid-input');
+      if (input && !input.value) input.value = st.publicKey;
+    }
+  } catch (err) {
+    console.warn('Push status load failed:', err);
+    statusEl.innerHTML = `<div class="push-status-row push-status-warn"><span class="push-status-dot"></span><span>Could not read the push configuration (${escapeHtml(err.code || 'error')}).</span></div>`;
+  }
+}
+
+export async function savePushConfigFromSettings() {
+  const vapid = document.getElementById('push-vapid-input')?.value || '';
+  const email = document.getElementById('push-client-email-input')?.value || '';
+  const key = document.getElementById('push-private-key-input')?.value || '';
+  const btn = document.getElementById('push-save-btn');
+  const statusEl = document.getElementById('push-config-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await savePushConfig(
+      { publicKey: vapid, clientEmail: email, privateKey: key },
+      state.userProfile
+    );
+    showToast('Push configuration saved — this persists for every future deploy.', 'success', 5000);
+    const pk = document.getElementById('push-private-key-input');
+    if (pk) pk.value = '';
+    await initPushSettingsUI();
+  } catch (err) {
+    console.error('Push config save failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'Only the member who configured push first (or the rules) can update it — run Connection Doctor for details.'
+      : (err.message || 'Could not save the push configuration.'), 'error', 6000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save push configuration'; }
+  }
+}
+
+/** Send a real test push to THIS device through the configured FCM path. */
+export async function testPushFromSettings() {
+  const uid = state.currentUser?.uid;
+  if (!uid) { showToast('Sign in first.', 'info'); return; }
+  showToast('Preparing a test push…', 'info');
+  try {
+    const granted = await requestPushPermission(uid);
+    if (!granted) {
+      showToast('Could not mint a registration token — check the status panel above and the browser permission.', 'warning', 6000);
+      return;
+    }
+    const res = await sendPushToUser(uid, {
+      title: 'HubbleNest test push',
+      body: 'If you can read this while HubbleNest is closed, off-app notifications work.',
+      tag: 'push-test'
+    });
+    if (res.ok) showToast(`Test push delivered to ${res.sent} device(s).`, 'success');
+    else if (res.reason === 'not-configured') showToast('Background delivery is not configured yet — save the service account fields above first.', 'warning', 6000);
+    else showToast(`Test push failed (${res.reason || res.error || 'unknown'}). In-app notifications still work.`, 'error', 6000);
+  } catch (err) {
+    console.warn('Test push failed:', err);
+    showToast('Test push could not run — see the console for the exact error.', 'warning');
+  }
+}
 
 // Live references used by the Arcade / Direct Share modules and their
 // inline onclick handlers (identity of window.HubbleNest stays stable).
@@ -3956,6 +4283,11 @@ window.HubbleNest.openGamePlayer = function (gameId) {
   window.HubbleNest._playerGameId = gameId;
   return _openGamePlayer(gameId);
 };
+
+// Unified icon system: upgrade every [data-hn-icon] placeholder (sidebar,
+// mobile nav, buttons) and keep working for content rendered later.
+installIconSystem();
+document.addEventListener('DOMContentLoaded', () => installIconSystem());
 
 // Global click to close dropdown menus
 document.addEventListener('click', (e) => {

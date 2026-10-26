@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-theme">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Public game — HubbleNest Arcade</title>
+  <meta name="description" content="A community game published to the open web from the HubbleNest Arcade." />
+  <link rel="canonical" href="https://danielgiobari644-glitch.github.io/HubbleNest/games/" />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#070a12" />
+  <meta property="og:title" content="Public game — HubbleNest Arcade" />
+  <meta property="og:description" content="A community game published to the open web from the HubbleNest Arcade." />
+  <meta property="og:type" content="article" />
+  <meta property="og:image" content="https://danielgiobari644-glitch.github.io/HubbleNest/hero-cosmic.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="./style.css?v=13" />
+  <link rel="stylesheet" href="./public.css?v=13" />
+</head>
+<body class="public-body">
+  <header class="pub-header">
+    <a class="pub-brand" href="./index.html" aria-label="HubbleNest home"><img src="./icon.svg" alt="" width="30" height="30" /><span>HubbleNest</span></a>
+    <nav class="pub-nav" aria-label="Site">
+      <a href="./features.html">Features</a><a href="./spaces.html">Spaces</a><a href="./feed.html">Feed</a><a href="./games.html">Games</a><a href="./help.html">Help</a>
+    </nav>
+    <a class="pub-cta" href="./index.html">Open HubbleNest</a>
+  </header>
+  <main class="pub-main">
+    <div class="pub-doc" id="pub-doc">
+      <div class="pub-doc-head">
+        <div class="pub-doc-meta" id="game-meta"><span>Loading…</span></div>
+        <h1 class="pub-doc-title" id="game-title">Public game</h1>
+        <div id="game-chips"></div>
+      </div>
+      <p class="pub-p" id="game-desc"></p>
+      <div id="game-stage"></div>
+      <div class="pub-files" id="game-files"></div>
+      <p class="pub-p" style="margin-top:26px;"><a class="pub-link" href="./index.html">Play, like and build games on HubbleNest →</a></p>
+    </div>
+  </main>
+  <footer class="pub-footer">
+    <div class="pub-footer-base">© <span id="pub-year">2026</span> HubbleNest. <a class="pub-link" href="./privacy.html">Privacy</a> · <a class="pub-link" href="./terms.html">Terms</a> · <a class="pub-link" href="./community-guidelines.html">Guidelines</a></div>
+  </footer>
+  <script>document.getElementById('pub-year').textContent = new Date().getFullYear();</script>
+  <script type="module">
+    // Public game page — only games whose author set isPublic:true are shown.
+    import { db, doc, getDoc } from './firebase.js';
+    import { renderRichText } from './format.js';
+    import { escapeHtml } from './utils.js';
+
+    const id = new URLSearchParams(location.search).get('id') || '';
+    const stage = document.getElementById('game-stage');
+    const filesEl = document.getElementById('game-files');
+
+    try {
+      if (!/^[A-Za-z0-9_-]{1,60}$/.test(id)) throw new Error('bad-id');
+      const snap = await getDoc(doc(db, 'games', id));
+      if (!snap.exists() || snap.data().isPublic !== true) throw new Error('missing');
+      const g = snap.data();
+      document.title = `${g.title || 'Game'} — HubbleNest Arcade`;
+      document.getElementById('game-meta').innerHTML = `
+        <span>by <b>${escapeHtml(g.authorName || 'Member')}</b></span>
+        <span>·</span><span>${g.plays || 0} plays</span>
+        <span class="pub-chip">Public game</span>`;
+      document.getElementById('game-title').textContent = g.title || 'Untitled game';
+      document.getElementById('game-desc').innerHTML = renderRichText(g.description || '');
+      const chips = (g.languages || []).map(l => `<span class="pub-chip">${escapeHtml(l)}</span>`).join('');
+      document.getElementById('game-chips').innerHTML = chips;
+
+      if (g.entryPath && g.files) {
+        stage.innerHTML = `<div class="pub-frame-wrap"><iframe id="pub-game-frame" title="${escapeHtml(g.title || 'Game')}" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe></div>`;
+        const frame = document.getElementById('pub-game-frame');
+        // Reuse the app's exact sandboxed builder (relative refs → data: URLs).
+        const { default: build } = await import('./public-game-builder.js');
+        frame.srcdoc = build(g.files, g.entryPath);
+      } else if (g.files) {
+        stage.innerHTML = `<div class="pub-note">This is a source project without an HTML entry — browsers cannot execute ${(g.languages || []).join(', ') || 'these languages'}. The full source is listed below.</div>`;
+      }
+      const files = g.files || {};
+      filesEl.innerHTML = Object.keys(files).sort().map(p =>
+        `<div class="pub-file-row"><span>${escapeHtml(p)}</span><span>${(files[p] || '').length.toLocaleString()} bytes</span></div>`).join('');
+    } catch (err) {
+      document.getElementById('pub-doc').innerHTML = `<div class="pub-missing">
+        <h1>This game is not public</h1>
+        <p class="pub-p">It may not exist, or its author has not published it to the web.</p>
+        <a class="btn btn-primary" href="./index.html">Open the Arcade</a></div>`;
+    }
+  </script>
+</body>
+</html>

@@ -1,14 +1,10 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
-
+# HubbleNest — public site is indexable; the authenticated app is not.
 User-agent: *
 Allow: /
+Disallow: /*.webmanifest$
+Disallow: /service-worker.js
+Disallow: /firebase-messaging-sw.js
+
+# App entry carries marketing content; everything behind authentication is
+# protected by Firestore rules + auth gates, never by robots.txt alone.
+Sitemap: https://danielgiobari644-glitch.github.io/HubbleNest/sitemap.xml

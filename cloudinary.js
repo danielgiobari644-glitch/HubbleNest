@@ -40,16 +40,20 @@ export function getFileCategory(file) {
 }
 
 /**
- * Validate file before uploading
+ * Validate file before uploading.
+ * @param {boolean} allowAnyType  when true (Direct Share), any extension is
+ *        accepted — code files, archives, everything. Cloudinary's auto
+ *        endpoint stores unknown types as raw files. Feed/chat uploads keep
+ *        the media-friendly whitelist.
  */
-export function validateFile(file, maxFileSizeMB = 100) {
+export function validateFile(file, maxFileSizeMB = 100, allowAnyType = false) {
   if (!file) {
     throw new Error('Please choose a file to upload.');
   }
 
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (!SUPPORTED_EXTENSIONS.has(ext)) {
-    throw new Error(`This file type (.${ext || 'unknown'}) isn't currently supported by HubbleNest.`);
+  if (!allowAnyType && !SUPPORTED_EXTENSIONS.has(ext)) {
+    throw new Error(`This file type (.${ext || 'unknown'}) isn't currently supported here. Direct Share accepts every file type.`);
   }
 
   const maxBytes = maxFileSizeMB * 1024 * 1024;
@@ -78,8 +82,8 @@ export function formatBytes(bytes) {
  * @param {number} maxFileSizeMB
  * @returns {Promise<{url: string, publicId: string, resourceType: string, format: string, bytes: number, originalFilename: string}>}
  */
-export async function uploadToCloudinary(file, onProgress = null, maxFileSizeMB = 100) {
-  validateFile(file, maxFileSizeMB);
+export async function uploadToCloudinary(file, onProgress = null, maxFileSizeMB = 100, allowAnyType = false) {
+  validateFile(file, maxFileSizeMB, allowAnyType);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

@@ -27,6 +27,7 @@ import {
   collection,
   doc,
   addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
@@ -48,6 +49,11 @@ import {
   getAvatarUrl,
   linkify
 } from './utils.js';
+
+// Rich text: posts and comments render REAL formatting (bold, italic,
+// headings, lists, code, links) in a vertical multi-line layout — never raw
+// Markdown symbols. linkify stays for legacy snippet helpers.
+import { renderRichText } from './format.js';
 
 import { handlePermissionError } from './firestore-doctor.js';
 
@@ -318,7 +324,7 @@ function renderPostCard(p, idx) {
           </button>` : ''}
       </header>
 
-      ${p.text ? `<div class="feed-post-text">${linkify(p.text)}</div>` : ''}
+      ${p.text ? `<div class="feed-post-text rich-text">${renderRichText(p.text)}</div>` : ''}
       ${renderAttachments(p)}
 
       <footer class="feed-post-actions">
@@ -384,9 +390,35 @@ export async function handleHomePost() {
       createdAtLocal: Date.now() // local fallback until the server stamp lands
     };
 
-    await addDoc(collection(db, 'feedPosts'), post);
+    const postRef = await addDoc(collection(db, 'feedPosts'), post);
 
-    if (input) input.value = '';
+    // Opt-in public web page: mirror ONLY public fields into publicPosts,
+    // which security rules expose to signed-out visitors. Private stays private.
+    const publicToggle = document.getElementById('home-post-public');
+    if (publicToggle?.checked) {
+      try {
+        await setDoc(doc(db, 'publicPosts', postRef.id), {
+          originalId: postRef.id,
+          authorName: post.authorName,
+          authorUsername: post.authorUsername,
+          authorPhoto: post.authorPhoto,
+          text: post.text,
+          attachments: post.attachments,
+          createdAt: serverTimestamp()
+        });
+        showToast('Also published to its public web page ✓', 'success');
+      } catch (pubErr) {
+        console.warn('Public mirror failed (post is still live in-app):', pubErr);
+        showToast('Posted, but the public web page could not be created.', 'warning');
+      }
+    }
+    if (publicToggle) publicToggle.checked = false;
+
+    if (input) {
+      input.value = '';
+      // Reset the auto-grown textarea height (Enter posts / Shift+Enter newline)
+      input.style.height = 'auto';
+    }
     clearAllHomeAttachments();
     showToast('Posted to the community ✓', 'success');
   } catch (err) {
@@ -536,7 +568,7 @@ function renderCommentsPanel(postId, comments) {
               ${c.authorId === context.currentUserId ? `
                 <button type="button" class="feed-comment-del" title="Delete comment" onclick="window.HubbleNest.feedDeleteComment('${postId}', '${escapeHtml(c.id)}')">✕</button>` : ''}
             </div>
-            <div class="feed-comment-text">${linkify(c.text || '')}</div>
+            <div class="feed-comment-text rich-text">${renderRichText(c.text || '')}</div>
           </div>
         </div>`).join('');
 
@@ -601,6 +633,8 @@ export async function feedDeletePost(postId) {
   if (!window.confirm('Delete this post permanently? Likes and comments go with it.')) return;
   try {
     await deleteDoc(doc(db, 'feedPosts', postId));
+    // Remove the public mirror too, if the post was published to the web.
+    deleteDoc(doc(db, 'publicPosts', postId)).catch(() => {});
     showToast('Post deleted.', 'info');
   } catch (err) {
     console.error('Post delete failed:', err);

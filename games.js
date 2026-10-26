@@ -45,7 +45,11 @@ import {
   getAvatarUrl
 } from './utils.js';
 
+import { formatBytes } from './cloudinary.js';
+
 import { handlePermissionError } from './firestore-doctor.js';
+
+import { buildSrcDocFromFiles, detectLanguages } from './public-game-builder.js';
 
 /* ========================================================================
    State
@@ -58,7 +62,16 @@ let editingGameId = null; // null = creating new
 let playerGameId = null;
 let previewTimer = null;
 
+/* Multi-file game project (path → text content). Any code language: the
+   files are stored verbatim in Firestore and served to the sandbox as
+   data: URLs, so HTML/CSS/JS entry files can reference their siblings
+   (scripts, stylesheets, JSON data, assets) with ordinary relative paths. */
+let editorFiles = {};      // { 'src/main.js': '...content...' }
+let editorEntry = null;    // 'index.html' or first .html file
+
 const MAX_TOTAL_BYTES = 600 * 1024; // well under Firestore's 1 MiB doc cap
+const MAX_FILE_COUNT = 150;
+const MAX_SINGLE_FILE_BYTES = 300 * 1024;
 const DRAFT_KEY = 'hn-arcade-draft';
 
 const els = () => ({
@@ -247,10 +260,17 @@ export function renderArcadeGrid() {
     const likes = Array.isArray(g.likedBy) ? g.likedBy.length : (g.likeCount || 0);
     const mine = g.authorId === uid;
     const sid = escapeHtml(g.id);
+    // Gradient thumbnail tile with the game's initials (reads well at any size).
+    const initials = String(g.title || 'Game').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'GN';
+    const hue = Array.from(String(g.id || g.title || '')).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
     return `
       <article class="game-card" onclick="window.HubbleNest.openGamePlayer('${sid}')">
-        <div class="game-card-thumb">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
+        <div class="game-card-thumb" style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));">
+          <span class="game-thumb-initials">${escapeHtml(initials)}</span>
+          ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
+          <span class="game-thumb-play">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>
+          </span>
         </div>
         <div class="game-card-body">
           <h3 class="game-card-title">${escapeHtml(g.title || 'Untitled game')}</h3>
@@ -304,7 +324,13 @@ export function openGameEditor(gameId) {
     if (htmlTa) htmlTa.value = game.html || '';
     if (cssTa) cssTa.value = game.css || '';
     if (jsTa) jsTa.value = game.js || '';
+    const pubInput = document.getElementById('game-public-input');
+    if (pubInput) pubInput.checked = game.isPublic === true;
+    editorFiles = (game.files && typeof game.files === 'object') ? { ...game.files } : {};
+    editorEntry = game.entryPath || currentEntryCandidate();
   } else {
+    editorFiles = {};
+    editorEntry = null;
     if (editorHeading) editorHeading.textContent = 'Create a game';
     // Restore an unsaved local draft if present (real autosave, real restore)
     let draft = null;
@@ -315,7 +341,9 @@ export function openGameEditor(gameId) {
       if (htmlTa) htmlTa.value = draft.html ?? STARTER_HTML;
       if (cssTa) cssTa.value = draft.css ?? STARTER_CSS;
       if (jsTa) jsTa.value = draft.js ?? STARTER_JS;
-      if (draft.title || draft.html) {
+      editorFiles = (draft.files && typeof draft.files === 'object') ? { ...draft.files } : {};
+      editorEntry = draft.entryPath || currentEntryCandidate();
+      if (draft.title || draft.html || Object.keys(editorFiles).length) {
         showToast('Restored your unsaved draft from this device.', 'info');
       }
     } else {
@@ -328,6 +356,7 @@ export function openGameEditor(gameId) {
   }
 
   if (saveBtn) saveBtn.textContent = game ? 'Save changes' : 'Publish to Arcade';
+  renderGameFilesPane();
   setCodePane('html');
   scheduleGamePreview();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -341,7 +370,7 @@ export function closeGameEditor() {
 }
 
 export function setCodePane(pane) {
-  ['html', 'css', 'js'].forEach(p => {
+  ['html', 'css', 'js', 'files'].forEach(p => {
     document.getElementById(`game-tab-${p}`)?.classList.toggle('feed-tab-active', p === pane);
     document.getElementById(`game-pane-${p}`)?.style.setProperty('display', p === pane ? 'block' : 'none');
   });
@@ -381,6 +410,8 @@ function saveEditorDraft() {
       html: document.getElementById('game-code-html')?.value || '',
       css: document.getElementById('game-code-css')?.value || '',
       js: document.getElementById('game-code-js')?.value || '',
+      files: editorFiles,
+      entryPath: editorEntry,
       savedAt: Date.now()
     }));
   } catch (e) { /* quota — non-fatal */ }
@@ -390,11 +421,134 @@ function renderGamePreview() {
   const frame = document.getElementById('game-preview-frame');
   if (!frame) return;
   frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-modals');
-  frame.srcdoc = buildSrcDoc(
-    document.getElementById('game-code-html')?.value || '',
-    document.getElementById('game-code-css')?.value || '',
-    document.getElementById('game-code-js')?.value || ''
-  );
+  const entry = currentEntryCandidate();
+  if (entry) {
+    frame.srcdoc = buildSrcDocFromFiles(editorFiles, entry);
+  } else {
+    frame.srcdoc = buildSrcDoc(
+      document.getElementById('game-code-html')?.value || '',
+      document.getElementById('game-code-css')?.value || '',
+      document.getElementById('game-code-js')?.value || ''
+    );
+  }
+}
+
+/* ------------------------------------------------------------------
+   Editor files pane
+   ------------------------------------------------------------------ */
+
+function currentEntryCandidate() {
+  if (editorEntry && (editorEntry in editorFiles)) return editorEntry;
+  const paths = Object.keys(editorFiles);
+  return paths.find(p => /(^|\/)index\.html?$/i.test(p)) || paths.find(p => /\.html?$/i.test(p)) || null;
+}
+
+function gameProjectBytes() {
+  let total = 0;
+  for (const content of Object.values(editorFiles)) total += content.length;
+  total += (document.getElementById('game-code-html')?.value || '').length;
+  total += (document.getElementById('game-code-css')?.value || '').length;
+  total += (document.getElementById('game-code-js')?.value || '').length;
+  return total;
+}
+
+export async function handleGameFilesUpload(fileList) {
+  const incoming = Array.from(fileList || []);
+  if (incoming.length === 0) return;
+
+  let added = 0, skipped = 0;
+  for (const file of incoming) {
+    const path = normalizeGamePath(file.webkitRelativePath || file.name);
+    if (!path) { skipped++; continue; }
+    if (file.size > MAX_SINGLE_FILE_BYTES) {
+      skipped++;
+      showToast(`${path} is ${(file.size / 1024).toFixed(0)} KB — single files are capped at ${MAX_SINGLE_FILE_BYTES / 1024} KB.`, 'warning');
+      continue;
+    }
+    try {
+      const content = await file.text();
+      if (content.includes('\u0000')) {
+        skipped++;
+        showToast(`${path} looks binary — game projects accept code/text files.`, 'warning');
+        continue;
+      }
+      editorFiles[path] = content;
+      added++;
+    } catch (err) {
+      skipped++;
+      console.warn('Could not read', path, err);
+    }
+  }
+
+  const count = Object.keys(editorFiles).length;
+  if (count > MAX_FILE_COUNT) {
+    showToast(`Game projects hold up to ${MAX_FILE_COUNT} files.`, 'warning');
+  }
+  editorEntry = currentEntryCandidate();
+
+  if (added > 0) {
+    showToast(`${added} file${added === 1 ? '' : 's'} added${skipped ? ` · ${skipped} skipped` : ''}. Entry: ${editorEntry || 'no .html file yet'}`, 'success', 4200);
+  } else if (skipped > 0) {
+    showToast('No usable code files were added.', 'warning');
+  }
+
+  renderGameFilesPane();
+  scheduleGamePreview();
+  const filesInput = document.getElementById('game-files-input');
+  const folderInput = document.getElementById('game-folder-input');
+  if (filesInput) filesInput.value = '';
+  if (folderInput) folderInput.value = '';
+}
+
+export function removeGameFile(path) {
+  delete editorFiles[path];
+  editorEntry = currentEntryCandidate();
+  renderGameFilesPane();
+  scheduleGamePreview();
+}
+
+export function setGameEntry(path) {
+  if (!(path in editorFiles)) return;
+  editorEntry = path;
+  renderGameFilesPane();
+  scheduleGamePreview();
+  showToast(`Entry file set to ${path}.`, 'info');
+}
+
+export function clearGameFiles() {
+  if (Object.keys(editorFiles).length === 0) return;
+  if (!window.confirm('Remove all uploaded project files from this game?')) return;
+  editorFiles = {};
+  editorEntry = null;
+  renderGameFilesPane();
+  scheduleGamePreview();
+}
+
+function renderGameFilesPane() {
+  const pane = document.getElementById('game-files-list');
+  const badge = document.getElementById('game-files-badge');
+  const wrap = document.getElementById('game-pane-files');
+  if (!pane) return;
+  const paths = Object.keys(editorFiles).sort();
+  if (badge) badge.textContent = paths.length ? `${paths.length}` : '';
+  if (wrap) wrap.style.display = 'block';
+  if (paths.length === 0) {
+    pane.innerHTML = `<div class="game-files-empty">No project files uploaded yet — add a folder of code (HTML, CSS, JS, JSON, Python, any text language) and it runs from its own index.html.</div>`;
+    return;
+  }
+  pane.innerHTML = paths.map((p) => {
+    const isEntry = p === editorEntry;
+    const isHtml = /\.html?$/i.test(p);
+    return `
+      <div class="game-file-row ${isEntry ? 'game-file-entry' : ''}">
+        <span class="game-file-path" title="${escapeHtml(p)}">${escapeHtml(p)}</span>
+        <span class="game-file-size">${formatBytes(editorFiles[p].length)}</span>
+        ${isEntry
+          ? `<span class="game-file-entry-chip">Entry</span>`
+          : (isHtml ? `<button type="button" class="btn-ghost game-file-btn" onclick="window.HubbleNest.setGameEntry('${escapeHtml(p)}')">Set entry</button>` : '')}
+        <button type="button" class="btn-ghost game-file-btn game-file-remove" title="Remove file" onclick="window.HubbleNest.removeGameFile('${escapeHtml(p)}')">✕</button>
+      </div>`;
+  }).join('');
 }
 
 export async function saveCurrentGame() {
@@ -411,19 +565,31 @@ export async function saveCurrentGame() {
   if (!me || !uid) { showToast('Sign in to publish a game.', 'error'); return; }
 
   if (!title) { showToast('Give your game a title first.', 'warning'); return; }
-  const total = html.length + css.length + js.length;
+  const entry = currentEntryCandidate();
+  const total = gameProjectBytes();
   if (total > MAX_TOTAL_BYTES) {
     showToast(`Your game is ${(total / 1024).toFixed(0)} KB — the limit is ${MAX_TOTAL_BYTES / 1024} KB. Trim it down.`, 'error');
     return;
   }
-  if (!html.trim() && !js.trim()) { showToast('Add at least some HTML or JavaScript.', 'warning'); return; }
+  const hasClassic = html.trim() || js.trim();
+  const hasFiles = Object.keys(editorFiles).length > 0;
+  if (!hasClassic && !hasFiles) { showToast('Add at least some HTML or JavaScript — or upload your project files.', 'warning'); return; }
+  // Source-only projects (no HTML entry) are WELCOME: they are stored and
+  // shared as readable source. The player shows the file tree and explains
+  // that the browser cannot execute e.g. Python without a real runtime. 
 
   const existing = editingGameId ? gamesCache.find(g => g.id === editingGameId) : null;
 
   const payload = {
     title: title.slice(0, 80),
     description: description.slice(0, 300),
+    isPublic: !!document.getElementById('game-public-input')?.checked,
     html, css, js,
+    files: hasFiles ? editorFiles : null,
+    entryPath: hasFiles ? entry : null,
+    fileCount: hasFiles ? Object.keys(editorFiles).length : 0,
+    languages: hasFiles ? detectLanguages(editorFiles) : [],
+    runnable: hasFiles ? !!entry : !!(html.trim() || js.trim()),
     authorId: uid,
     authorName: me.displayName || 'Member',
     authorPhoto: me.photoURL || '',
@@ -489,6 +655,13 @@ export function openGamePlayer(gameId) {
   if (!player) return;
   player.style.display = 'block';
 
+  // Restore the iframe if a previous source-only game replaced it with a panel.
+  const wrap = player.querySelector('.game-player-frame-wrap');
+  if (wrap && !wrap.querySelector('iframe')) {
+    delete wrap.dataset.sourcePanel;
+    wrap.innerHTML = '<iframe id="player-frame" title="Playable game" sandbox="allow-scripts allow-pointer-lock allow-modals" allowfullscreen="true"></iframe>';
+  }
+
   playerGameId = gameId;
   const titleEl = document.getElementById('player-title');
   const metaEl = document.getElementById('player-meta');
@@ -501,9 +674,23 @@ export function openGamePlayer(gameId) {
   }
   if (frame) {
     frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-modals');
-    frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+    frame.setAttribute('allowfullscreen', 'true');
+    if (game.entryPath && game.files) {
+      frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
+    } else if (game.files && !game.entryPath) {
+      // SOURCE PROJECT (no HTML entry): honest state — show the file tree and
+      // say plainly that the browser cannot execute these languages.
+      frame.remove();
+      renderSourceProjectPanel(game);
+    } else {
+      frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+    }
   }
   renderPlayerLike(game);
+  if (metaEl && game.fileCount > 0) {
+    const langs = (game.languages || []).map(l => `<span class="player-files-chip">${escapeHtml(l)}</span>`).join(' ');
+    metaEl.innerHTML += ` · <span class="player-files-chip">${game.fileCount} project file${game.fileCount === 1 ? '' : 's'}</span> ${langs}`;
+  }
 
   // Real play counter — one bump per open.
   updateDoc(doc(db, 'games', gameId), { plays: increment(1) }).catch((err) => {
@@ -525,11 +712,52 @@ function renderPlayerLike(game) {
     <span>${likes || 'Like'}</span>`;
 }
 
+/**
+ * Source-only project view: real file tree + a clear explanation of what the
+ * browser can and cannot run. Nothing fake is displayed.
+ */
+function renderSourceProjectPanel(game) {
+  const wrap = document.querySelector('.game-player-frame-wrap');
+  if (!wrap) return;
+  const files = game.files || {};
+  const paths = Object.keys(files).sort();
+  wrap.innerHTML = `
+    <div class="game-source-panel">
+      <h3 class="game-source-title">Source project — ${paths.length} file${paths.length === 1 ? '' : 's'}</h3>
+      <p class="game-source-note">
+        This project has no HTML entry file, so there is nothing a browser can
+        execute here: ${(game.languages || ['these languages']).join(', ')} need a
+        real runtime or compiler. The complete source is stored safely on
+        HubbleNest — browse the files below.
+      </p>
+      <div class="game-files-list">
+        ${paths.map(p => `
+          <div class="game-file-row">
+            <span class="game-file-path" title="${escapeHtml(p)}">${escapeHtml(p)}</span>
+            <span class="game-file-size">${formatBytes((files[p] || '').length)}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  // Reset the wrap so re-opening a runnable game rebuilds the iframe cleanly.
+  wrap.dataset.sourcePanel = '1';
+}
+
 export function closeGamePlayer() {
   const { browse, player } = els();
   if (player) { player.style.display = 'none'; const f = document.getElementById('player-frame'); if (f) f.removeAttribute('srcdoc'); }
   if (browse) browse.style.display = 'block';
   playerGameId = null;
+}
+
+/** Fullscreen the game frame — a real fullscreen session on the wrapper. */
+export function toggleGameFullscreen() {
+  const wrap = document.querySelector('.game-player-frame-wrap');
+  if (!wrap) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    wrap.requestFullscreen?.().catch(() => showToast('Fullscreen was blocked by the browser.', 'warning'));
+  }
 }
 
 export async function gameToggleLike(gameId) {

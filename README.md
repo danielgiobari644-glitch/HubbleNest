@@ -38,6 +38,24 @@ Then open **http://localhost:3000**
    add `your-username.github.io` (required for Google sign-in).
 3. Done — invite links are shared as `https://your-username.github.io/repo/#join=CODE`.
 
+**Public website & SEO:** this package ships a complete public site alongside
+the app: `features.html`, `spaces.html`, `feed.html`, `games.html`,
+`use-cases.html`, `for-schools.html`, `for-churches.html`, `for-teams.html`,
+`for-communities.html`, `about.html`, `help.html`, `contact.html`,
+`privacy.html`, `terms.html`, `community-guidelines.html` — plus dynamic
+public routes (`post.html?id=…`, `game.html?id=…`, `space.html?id=…`,
+`join.html`), a `404.html` clean-URL bridge and `sitemap.xml` / `robots.txt`
+ready for Google Search Console. Only content whose author explicitly set
+"Public on web" is ever reachable from the public pages — private posts,
+Spaces, games, messages and member lists stay behind authentication and
+Firestore rules, never behind robots.txt alone.
+
+> **About the `content.js` console error** ("A listener indicated an
+> asynchronous response…"): that message comes from a BROWSER EXTENSION, not
+> from HubbleNest — this project ships no `content.js` at all. Verify by
+> opening the app in an incognito window or with extensions disabled: the
+> error disappears. No application code was changed for it.
+
 ### Firebase Hosting (recommended — same backend)
 
 ```bash
@@ -62,32 +80,29 @@ firebase deploy
 toasts run on Firestore realtime listeners.
 
 **Off-app background push (real device notifications while HubbleNest is
-closed)** — delivered through **Firebase Cloud Messaging**, sent directly from
-members' browsers (no server needed). One-time setup by the project owner:
+closed)** — delivered through **Firebase Cloud Messaging**. Configuration is
+**ONE-TIME and lives in Firestore, not in the code** — it survives every
+re-upload of this zip, so you never paste keys into generated files again:
 
-1. **Generate a push sender key:**
-   Firebase Console → ⚙️ Project settings → **Service accounts** →
-   *Generate new private key* → download the JSON.
-   Recommended: first create a dedicated service account
-   (IAM & Admin → Service Accounts) with **only** the
-   *Firebase Cloud Messaging API Admin* role, and use ITS key.
-2. **Create the Firestore document** `config` (collection) → `push` (ID) with:
-   ```
-   clientEmail : "firebase-adminsdk-xxxx@hubblenest.iam.gserviceaccount.com"
-   privateKey  : "-----BEGIN PRIVATE KEY-----\nMIIEv...\n-----END PRIVATE KEY-----\n"
-   ```
-   (Paste the `client_email` and `private_key` values from the JSON. Keep the
-   `\n` escapes exactly as they appear in the JSON.)
-3. **Publish the updated Firestore rules** (see `firestore.rules`) so members
-   can read `config/push` and manage their device tokens in
-   `users/{uid}/pushTokens`.
-4. Members then press **Turn on notifications** in the app (or the browser
-   prompt) — their device registers an FCM token and every new private
-   message, chat request, join request and announcement reaches them even when
-   the app is fully closed.
+1. **In the app:** Profile & Settings → *"Off-App Push Notifications"*.
+2. Paste the **Web Push certificate key** (Firebase Console → Project settings
+   → Cloud Messaging → Web Push certificates → Generate key pair) and save.
+3. Optional, for background delivery: paste the **service account client
+   email + private key** (Firebase Console → Project settings → Service
+   accounts → Generate new private key; use a dedicated account with only the
+   *Firebase Cloud Messaging API Admin* role). Saved with the same button.
+4. **Project-side (persists forever, never affected by redeploys):** enable the
+   *Firebase Cloud Messaging API* (Google Cloud Console → APIs & Services →
+   Library) and make sure your Web API key is not referrer-restricted away
+   from `your-username.github.io`.
+5. Press **Send a test push to this device** in Settings to verify end-to-end.
 
-> Without step 2, everything else still works — you simply stay on in-app
-> notifications only. To remove a test/old account: Firebase Console →
+The first member to save the configuration becomes its owner in the Firestore
+rules — only they can update it afterwards. The built-in VAPID constant in
+`notifications.js` is a fallback for brand-new installs only; the Firestore
+value always wins. To remove a test/old account: Firebase Console →
+Authentication → delete the user, and Firestore → `users` → delete its
+profile document.
 > Authentication → delete the user, and Firestore → `users` → delete its
 > profile document.
 
@@ -117,13 +132,28 @@ Fix (2 minutes, owner only):
    immediately, no reload needed.
 
 **After deploying a new build, an old service worker keeps serving stale
-files (or logs "Failed to convert value to 'Response'"):**
-the shipped worker (v9) uses **stale-while-revalidate** for all app files:
-it responds instantly from cache and refreshes every asset in the background
-on each load, so a redeploy normally reaches every browser after ONE normal
-reload — no manual steps. If a tab is stuck on an older worker (v8 or
-earlier used strict cache-first), migrate it once: DevTools → Application →
-Service Workers → **Unregister**, then hard-refresh (**Ctrl+Shift+R**).
+files (or the app renders a MIX of old and new code):**
+the shipped worker (v12) makes deploys converge by themselves:
+
+- **index.html references versioned asset URLs** (`app.js?v=12`,
+  `style.css?v=12`). Each release bumps `v=`, so a new deploy can never be
+  satisfied by an old cached copy of those files.
+- **The service worker fetches every precache asset with `cache: 'reload'`**
+  during install, so the new cache version is built from the NETWORK, never
+  from stale HTTP-cache bytes (GitHub Pages sends `Cache-Control:
+  max-age=600`).
+- **Navigations revalidate with `cache: 'reload'`** and shell assets
+  revalidate with `cache: 'no-cache'` in the background, so one normal reload
+  always pairs fresh HTML with fresh code.
+- **The page auto-reloads once** when a newly installed worker takes over
+  (`controllerchange`), so the classic "deployed but nothing changed, had to
+  reload twice" is gone.
+
+If a tab is STILL stuck on a worker from v8 or earlier (strict cache-first):
+migrate it once: DevTools → Application → Service Workers → **Unregister**,
+then hard-refresh (**Ctrl+Shift+R**). Note GitHub Pages itself caches files
+for up to 10 minutes at its CDN edge — right after uploading a new zip, wait
+a moment or hard-refresh before concluding a deploy didn't take.
 The fetch handler always resolves to a real `Response`, so the
 "Failed to convert value to 'Response'" error can no longer occur.
 
@@ -214,19 +244,36 @@ portfolio again (they can still reach it anytime via the account menu →
 - **Landing page** with hero (incl. **Download App** PWA install button),
   features, use cases and invite-code quick join
 - **Email / password + Google authentication**, password recovery, 6-step signup
-- **Community feed (Home)** — post text/images/videos, like, comment, delete;
-  a transparent ranking algorithm (recency + engagement + affinity) orders
-  the For You tab, with a Latest tab and an in-app "How ranking works" guide
-- **Arcade** — members write real HTML/CSS/JS games in the built-in editor
-  (live preview), publish them, and anyone plays them instantly in a locked
-  sandboxed iframe; play counts and likes are real
-- **Direct Share** — hand files to another member with a 6-character code or
-  a scannable QR deep link; file bytes go to Cloudinary, metadata to
-  Firestore, and both sides see the file list update live
-- **Spaces** — create, join by code or QR, approve join requests, chat with
-  reactions, attachments (images via Cloudinary), files, links and announcements
-- **People directory** with search, member profiles, one-tap **Chat** buttons
-  on every card and private chat requests
+- **Rich-text everywhere** — posts, comments, chat messages, Space
+  descriptions and announcements render REAL formatting (bold, italic,
+  underline, headings, lists, code blocks, safe links) via a sanitized
+  formatter — never raw Markdown symbols. Composers carry a formatting
+  toolbar; stored text stays plain and portable
+- **Community feed (Home)** — multi-line posts with a compose toolbar,
+  images/videos, like, comment, delete; a transparent ranking algorithm
+  (recency + engagement + affinity) orders the For You tab, with a Latest tab
+  and an in-app "How ranking works" guide; opt-in **Public on web** gives a
+  post its own public page
+- **Arcade** — write HTML/CSS/JS in the editor (live preview) or **upload
+  files / a whole project folder in any coding language** (structure
+  preserved, 600 KB cap). Projects with an HTML entry are playable in a
+  locked sandbox; source-only projects (Python, Java, C, C++, C#, PHP, Ruby,
+  Go, Rust, Lua…) are stored with a browsable file tree and an honest
+  "cannot execute in a browser" note. Games can be published to a public page
+- **Direct Share** — hand files of ANY type to another member with a
+  6-character code or a scannable QR deep link; drag & drop, animated
+  "Energy Transfer" progress tied to the real upload, radar-pulse receiver
+  state, and live file lists on both sides
+- **Spaces** — create, chat with reactions/attachments/files/links/
+  announcements; **joining with a valid code is INSTANT (no approval)**;
+  admins add members straight from their contacts and remove members
+- **Contacts-first People** — the People page shows ONLY your contacts; add
+  people by their exact username; contacts chat instantly with no request
+  step (requests remain available for non-contacts from profiles)
+- **Public website** — 15 SEO pages (features, spaces, feed, games, use
+  cases, schools/churches/teams/communities, about, help, contact, privacy,
+  terms, guidelines) + public post/game/space pages, 404 clean-URL router,
+  sitemap.xml and robots.txt; only explicitly published content is public
 - **Realtime private messaging** — payloads are AES-256-GCM encrypted in the
   browser with a per-conversation key (Web Crypto); ciphertext only in Firestore
 - **Notification center** with unread badges (Firestore realtime)
@@ -236,10 +283,11 @@ portfolio again (they can still reach it anytime via the account menu →
   permission-denied error card)
 - **PWA** — installable (with iOS "Add to Home Screen" guidance), offline shell
   via service worker, Firestore local persistence
-- **Fast loading** — service worker v11 serves every shell asset, Firebase SDK
-  chunk, Google Font and Cloudinary image instantly from cache on repeat
-  visits (stale-while-revalidate: cached response first, background refresh
-  keeps deploys fresh after one reload — no manual cache clearing), fonts
+- **Fast loading & self-updating deploys** — service worker v13 serves every
+  shell asset, Firebase SDK chunk, Google Font and Cloudinary image instantly
+  from cache on repeat visits (stale-while-revalidate with no-cache
+  revalidation), versioned asset URLs + a one-time auto-reload mean every
+  deploy lands on the next page load with no manual cache clearing, fonts
   load in parallel (no render-blocking `@import`), below-fold images
   lazy-load
 - **Dark / light theme**, responsive layout with mobile bottom navigation
@@ -252,7 +300,9 @@ firebase.js · auth.js · spaces.js · chat.js · private-chat.js · chat-reques
 people.js · profile.js · files.js · links.js · announcements.js · members.js
 notifications.js · fcm-sender.js · cloudinary.js · encryption.js · qr.js · search.js
 settings.js · utils.js
-community.js · games.js · direct-share.js · firestore-doctor.js
+community.js · games.js · public-game-builder.js · direct-share.js
+firestore-doctor.js · format.js · contacts.js · icons.js
 service-worker.js · manifest.webmanifest · firestore.rules · README.md
+public.css · sitemap.xml · robots.txt · 404.html · 15 public pages
 + icons & illustrations (PNG / SVG at root)
 ```

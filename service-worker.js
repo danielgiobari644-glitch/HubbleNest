@@ -3,15 +3,23 @@
  * Uses relative asset paths so the app works when hosted from ANY base path
  * (domain root, GitHub Pages project subpath, Firebase Hosting, etc.)
  *
- * CACHING STRATEGY (v9 — "fast loads + self-healing deploys"):
- * - App navigations:            network-first → cache → cached shell
- * - Same-origin shell assets:   STALE-WHILE-REVALIDATE — served instantly
- *                               from cache while the network copy refreshes
- *                               the cache in the background. Every deploy
- *                               therefore reaches users after ONE reload,
- *                               no manual cache-version bump required (the
- *                               bump on each release still forces an
- *                               immediate atomic refresh).
+ * CACHING STRATEGY (v13 — "deploys land on the NEXT load, no mixed versions"):
+ * - App navigations:            network-first with cache:'reload' (revalidates
+ *                               the HTML shell, never trusting the browser's
+ *                               max-age=600 HTTP cache) → cache → cached shell
+ * - Same-origin shell assets:   STALE-WHILE-REVALIDATE with no-cache
+ *                               revalidation — served instantly from cache
+ *                               while a freshly-validated copy replaces it.
+ *                               Matching ignores the ?v= deploy-version query,
+ *                               so versioned asset URLs hit the canonical
+ *                               precached entries.
+ * - Precache install:           every asset is fetched with cache:'reload' so
+ *                               the precache can NEVER store stale HTTP-cache
+ *                               bytes during a deploy window.
+ * - Deploys:                    index.html references ?v=N asset URLs; on each
+ *                               release N bumps, the SW version bumps, and the
+ *                               page auto-reloads once when the new worker
+ *                               claims (see app.js controllerchange).
  * - Firebase SDK (gstatic):     stale-while-revalidate (immutable URLs —
  *                               background refresh is a cheap no-op hit)
  * - Google Fonts:               stale-while-revalidate
@@ -19,8 +27,8 @@
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v11';
-const IMAGE_CACHE = 'hubblenest-images-v11';
+const CACHE_NAME = 'hubblenest-v13';
+const IMAGE_CACHE = 'hubblenest-images-v13';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',
@@ -50,6 +58,11 @@ const PRECACHE_ASSETS = [
   './games.js',
   './direct-share.js',
   './firestore-doctor.js',
+  './format.js',
+  './contacts.js',
+  './icons.js',
+  './public-game-builder.js',
+  './public.css',
   './icon.svg',
   './pwa-192x192.png',
   './pwa-512x512.png',
@@ -63,15 +76,25 @@ const PRECACHE_ASSETS = [
   './welcome-scenic.svg'
 ];
 
-// Install: Pre-cache core shell
+// Install: Pre-cache core shell.
+// CRITICAL: each asset is fetched with cache:'reload'. cache.addAll() would
+// use the default HTTP cache — and GitHub Pages serves assets with
+// Cache-Control: max-age=600, so during a deploy window addAll() could copy
+// STALE bytes into the brand-new cache version, keeping users on old code
+// even after the version bump. cache:'reload' bypasses the HTTP cache.
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-        console.warn('Some precache assets failed:', err);
-      });
-    }).then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await Promise.all(PRECACHE_ASSETS.map(async (url) => {
+      try {
+        const response = await fetch(new Request(url, { cache: 'reload' }));
+        if (isCacheableResponse(response)) await cache.put(url, response);
+      } catch (e) {
+        // Offline during install — keep whatever this cache already holds.
+      }
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 // Activate: Clean up old caches
@@ -94,18 +117,35 @@ function isCacheableResponse(response) {
 }
 
 // Stale-while-revalidate: respond INSTANTLY from cache (or network on first
-// miss) and refresh the cached copy in the background. Rendering never waits
-// for the network, yet every deployed change reaches users after one reload —
-// fixes "I redeployed but the browser kept running the old file".
-async function staleWhileRevalidate(request, cacheName = CACHE_NAME) {
+// miss) and refresh the cached copy in the background.
+// - matchOpts.ignoreSearch lets versioned deploy URLs (app.js?v=12) resolve to
+//   the canonical precached entry (./app.js).
+// - revalidate=true fetches the network leg with cache:'no-cache' so the
+//   revalidation never copies stale bytes from the browser HTTP cache
+//   (GitHub Pages max-age=600) — fixed deploys reach the very next load.
+async function staleWhileRevalidate(request, cacheName = CACHE_NAME, matchOpts = {}, revalidate = false) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  const cached = await cache.match(request, matchOpts);
 
   const networkUpdate = (async () => {
     try {
-      const response = await fetch(request);
+      const response = revalidate
+        ? await fetch(request, { cache: 'no-cache' })
+        : await fetch(request);
       if (isCacheableResponse(response)) {
         await cache.put(request, response.clone());
+        // The same-origin branch matches with ignoreSearch — when this request
+        // carried a deploy-version query (app.js?v=12), ALSO refresh the
+        // canonical query-stripped entry (./app.js). Otherwise a stale/poisoned
+        // canonical entry would keep winning the ignoreSearch match forever
+        // while only the versioned key healed.
+        if (revalidate) {
+          const canonical = new URL(request.url);
+          if (canonical.search) {
+            canonical.search = '';
+            await cache.put(new Request(canonical.href), response.clone());
+          }
+        }
       }
       return response;
     } catch (networkError) {
@@ -196,12 +236,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App navigations: network-first (fresh deploys arrive immediately),
-  // with robust cache fallback for offline / flaky networks.
+  // App navigations: network-first with cache:'reload' (fresh deploys arrive
+  // immediately, never from the max-age=600 HTTP cache), with robust cache
+  // fallback for offline / flaky networks.
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const networkResponse = await fetch(request);
+        const networkResponse = await fetch(request, { cache: 'reload' });
         if (networkResponse && networkResponse.ok) {
           const cache = await caches.open(CACHE_NAME);
           cache.put(request, networkResponse.clone()).catch(() => {});
@@ -226,10 +267,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Everything else on our own origin (css/js/png/svg/webmanifest):
-  // stale-while-revalidate — zero perceived latency (instant cached response)
-  // AND automatic deploy freshness (background refresh per reload).
+  // stale-while-revalidate with no-cache revalidation — zero perceived latency
+  // (instant cached response) AND deploy freshness on the next load.
+  // ignoreSearch makes versioned URLs (app.js?v=12) hit canonical entries.
   if (url.origin === self.location.origin) {
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(staleWhileRevalidate(request, CACHE_NAME, { ignoreSearch: true }, true));
   }
 });
 

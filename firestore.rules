@@ -87,18 +87,60 @@ service cloud.firestore {
       allow delete: if isAuthenticated();
     }
 
-    // App configuration (push sender credentials: clientEmail / privateKey /
-    // optional publicKey). Writable ONLY from the Firebase Console / Admin SDK.
+    // App configuration (push sender credentials). The `push` document holds
+    // the Web Push certificate key and (optionally) the background-push
+    // service account. It is configured ONCE from the app's Settings page and
+    // lives in Firestore — so redeploying the app never resets it.
+    // Ownership model: the FIRST signed-in member to save the config claims it
+    // (ownerUid); afterwards only that member can change it. Reads stay
+    // authenticated (the VAPID public key is public by design; the service
+    // account fields are documented as members-visible by architecture —
+    // use a dedicated, FCM-only service account and rotate if ever needed).
     match /config/{docId} {
       allow read: if isAuthenticated();
-      allow write: if false;
+      allow create: if isAuthenticated() &&
+        docId == 'push' &&
+        fieldStr(request.resource.data, 'ownerUid') == request.auth.uid;
+      allow update: if isAuthenticated() &&
+        docId == 'push' &&
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // ======================================================================
+    // Contacts — People page relationships (owner-added members by username)
+    // Doc id: {ownerUid}_{contactUid}; only the owner can read/write their
+    // own contacts. The id-prefix check prevents forging someone else's list.
+    // ======================================================================
+    match /contacts/{contactId} {
+      // Single-doc reads and per-doc writes check the doc-id prefix.
+      allow get: if isAuthenticated() && contactId.split('_')[0] == request.auth.uid;
+      // LIST (the People page's live subscription) must be verifiable from the
+      // query itself — the app always queries where ownerUid == auth.uid, so
+      // the engine can prove every result satisfies this rule.
+      allow list: if isAuthenticated() &&
+        resource.data.get('ownerUid', '') == request.auth.uid;
+      allow create: if isAuthenticated() &&
+        contactId.split('_')[0] == request.auth.uid &&
+        contactId == fieldStr(request.resource.data, 'ownerUid') + '_' + fieldStr(request.resource.data, 'uid') &&
+        fieldStr(request.resource.data, 'ownerUid') == request.auth.uid &&
+        fieldStr(request.resource.data, 'uid') != request.auth.uid;
+      allow update: if isAuthenticated() &&
+        contactId.split('_')[0] == request.auth.uid &&
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid;
+      allow delete: if isAuthenticated() &&
+        contactId.split('_')[0] == request.auth.uid;
     }
 
     // ======================================================================
     // Spaces
     // ======================================================================
     match /spaces/{spaceId} {
-      allow read: if isAuthenticated();
+      // Public intro: a Space is readable by signed-out visitors ONLY when its
+      // admin explicitly set isPublic:true — and only the space doc (name,
+      // description, code for the join button, member count) is exposed.
+      allow get: if isAuthenticated() || resource.data.get('isPublic', false) == true;
+      allow list: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update: if isSpaceAdmin(spaceId) || (isSupportSpace(spaceId) && isAuthenticated());
       allow delete: if isSpaceAdmin(spaceId);
@@ -106,13 +148,16 @@ service cloud.firestore {
       // Members subcollection
       match /members/{memberId} {
         allow read: if isAuthenticated();
-        // Space admin can add/modify/remove members, or authenticated user can add their own membership for the support space
-        allow create: if isSpaceAdmin(spaceId) || (isUser(memberId) && isSupportSpace(spaceId));
+        // INSTANT JOIN: a member with a valid code adds THEMSELVES
+        // (isUser(memberId) — the code is validated in the app before the
+        // write is attempted); space admins add members from their contacts.
+        allow create: if isSpaceAdmin(spaceId) || isUser(memberId);
         allow update: if isSpaceAdmin(spaceId);
         allow delete: if isSpaceAdmin(spaceId) || isUser(memberId);
       }
 
-      // Join requests subcollection
+      // Legacy join-approval queue: kept ONLY so old data can still be read
+      // or cleaned up. The app no longer creates pending join requests.
       match /joinRequests/{requestId} {
         allow read: if isAuthenticated() && (isUser(requestId) || isSpaceAdmin(spaceId));
         allow create: if isUser(requestId);
@@ -272,8 +317,25 @@ service cloud.firestore {
     // Any member may bump the play counter, but ONLY that field. Likes use
     // the same likedBy pattern as the feed.
     // ======================================================================
+    // Opt-in public posts: a mirror of a feed post with ONLY public fields,
+    // written by the author when they tick "Public web page". Readable by
+    // ANYONE (the public website is signed-out), writable only by the author.
+    match /publicPosts/{postId} {
+      allow read: if true;
+      // A public page can only exist for a feed post the caller owns.
+      allow create: if isAuthenticated() &&
+        exists(/databases/$(database)/documents/feedPosts/$(postId)) &&
+        fieldStr(get(/databases/$(database)/documents/feedPosts/$(postId)).data, 'authorId') == request.auth.uid;
+      allow update, delete: if isAuthenticated() &&
+        exists(/databases/$(database)/documents/feedPosts/$(postId)) &&
+        fieldStr(get(/databases/$(database)/documents/feedPosts/$(postId)).data, 'authorId') == request.auth.uid;
+    }
+
     match /games/{gameId} {
-      allow read: if isAuthenticated();
+      // Public game pages: a single game is readable signed-out ONLY when the
+      // author set isPublic:true. Listing still requires sign-in.
+      allow get: if isAuthenticated() || resource.data.get('isPublic', false) == true;
+      allow list: if isAuthenticated();
       allow create: if isAuthenticated() &&
         fieldStr(request.resource.data, 'authorId') == request.auth.uid;
       allow update: if isAuthenticated() && (

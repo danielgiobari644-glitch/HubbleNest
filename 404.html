@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-theme">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page not found — HubbleNest</title>
+  <meta name="description" content="That page does not exist on HubbleNest." />
+  <link rel="canonical" href="https://danielgiobari644-glitch.github.io/HubbleNest/404.html" />
+  <meta name="robots" content="noindex,follow" />
+  <meta name="theme-color" content="#070a12" />
+  <meta property="og:title" content="Page not found — HubbleNest" />
+  <meta property="og:description" content="That page does not exist on HubbleNest." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://danielgiobari644-glitch.github.io/HubbleNest/hero-cosmic.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="./style.css?v=13" />
+  <link rel="stylesheet" href="./public.css?v=13" />
+</head>
+<body class="public-body">
+  <header class="pub-header">
+    <a class="pub-brand" href="./index.html" aria-label="HubbleNest home"><img src="./icon.svg" alt="" width="30" height="30" /><span>HubbleNest</span></a>
+    <nav class="pub-nav" aria-label="Site">
+      <a href="./features.html">Features</a><a href="./spaces.html">Spaces</a><a href="./feed.html">Feed</a><a href="./games.html">Games</a><a href="./help.html">Help</a>
+    </nav>
+    <a class="pub-cta" href="./index.html">Open HubbleNest</a>
+  </header>
+  <main class="pub-main">
+    <div class="pub-doc pub-missing">
+      <h1>Page not found</h1>
+      <p class="pub-p">Taking you to the right place…</p>
+      <a class="btn btn-primary" href="./index.html">HubbleNest home</a>
+    </div>
+  </main>
+  <footer class="pub-footer">
+    <div class="pub-footer-base">© <span id="pub-year">2026</span> HubbleNest. <a class="pub-link" href="./privacy.html">Privacy</a> · <a class="pub-link" href="./terms.html">Terms</a> · <a class="pub-link" href="./community-guidelines.html">Guidelines</a></div>
+  </footer>
+  <script>document.getElementById('pub-year').textContent = new Date().getFullYear();</script>
+  <script>
+    // GitHub Pages clean-URL bridge: /HubbleNest/features → features.html,
+    // /feed/post/ID → post.html?id=ID, /games/ID, /spaces/ID, /help/SLUG,
+    // /join/CODE → index.html?join=CODE. Human-friendly URLs keep working
+    // after refresh; canonical URLs in the sitemap point at the real files.
+    (function () {
+      var path = decodeURIComponent(location.pathname).replace(/\/+$/, '');
+      var seg = path.split('/').filter(Boolean);
+      var file = seg.pop() || '';
+      var m;
+      if (/^HN-[A-Z0-9]{6}$/i.test(file)) {
+        location.replace('./index.html?join=' + encodeURIComponent(file.toUpperCase())); return;
+      }
+      if ((m = file.match(/^(.*)\.html?$/i))) { location.replace('./' + m[1] + '.html'); return; }
+      if (file === 'features' || file === 'spaces' || file === 'feed' || file === 'games' ||
+          file === 'use-cases' || file === 'about' || file === 'contact' || file === 'privacy' ||
+          file === 'terms' || file === 'community-guidelines' || file === 'for-schools' ||
+          file === 'for-churches' || file === 'for-teams' || file === 'for-communities') {
+        location.replace('./' + file + '.html'); return;
+      }
+      if (file === 'help') {
+        var slug = seg[seg.length - 1];
+        location.replace('./help.html' + (slug ? '#' + slug : '')); return;
+      }
+      if (file === 'join' && seg.length) {
+        location.replace('./index.html?join=' + encodeURIComponent(seg[seg.length - 1].toUpperCase())); return;
+      }
+      if (file === 'post') { location.replace('./post.html' + (seg.length ? '?id=' + encodeURIComponent(seg[seg.length - 1]) : '')); return; }
+      if (file === 'games' || file === 'game') { location.replace('./game.html' + (seg.length ? '?id=' + encodeURIComponent(seg[seg.length - 1]) : '')); return; }
+      if (file === 'spaces' || file === 'space') { location.replace('./space.html' + (seg.length ? '?id=' + encodeURIComponent(seg[seg.length - 1]) : '')); return; }
+      location.replace('./index.html');
+    })();
+  </script>
+</body>
+</html>

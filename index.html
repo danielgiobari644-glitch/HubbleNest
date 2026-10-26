@@ -3,24 +3,47 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HubbleNest</title>
-  <meta name="description" content="A modern digital space for private groups, classrooms, communities, and teams with real-time conversations, private messaging, file sharing, and QR access." />
-  <meta property="og:title" content="HubbleNest" />
-  <meta property="og:description" content="Your people. Your space. Everything connected." />
+  <title>HubbleNest — Connect, Communicate &amp; Grow Together</title>
+  <meta name="description" content="HubbleNest is a modern community platform for creating Spaces, connecting with people, chatting, sharing files, playing games, and building communities together." />
+  <link rel="canonical" href="https://danielgiobari644-glitch.github.io/HubbleNest/" />
+  <meta name="robots" content="index,follow" />
+  <meta property="og:site_name" content="HubbleNest" />
+  <meta property="og:title" content="HubbleNest — Connect, Communicate &amp; Grow Together" />
+  <meta property="og:description" content="HubbleNest is a modern community platform for creating Spaces, connecting with people, chatting, sharing files, playing games, and building communities together." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="./hero-cosmic.png" />
+  <meta property="og:url" content="https://danielgiobari644-glitch.github.io/HubbleNest/" />
+  <meta property="og:image" content="https://danielgiobari644-glitch.github.io/HubbleNest/hero-cosmic.png" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="HubbleNest — Connect, Communicate &amp; Grow Together" />
+  <meta name="twitter:description" content="A modern community platform for Spaces, private chat, file sharing and community games." />
+  <meta name="twitter:image" content="https://danielgiobari644-glitch.github.io/HubbleNest/hero-cosmic.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "HubbleNest",
+    "applicationCategory": "SocialNetworkingApplication",
+    "operatingSystem": "Web",
+    "url": "https://danielgiobari644-glitch.github.io/HubbleNest/",
+    "description": "HubbleNest is a modern community platform for creating Spaces, connecting with people, chatting, sharing files, playing games, and building communities together.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
 
   <!-- Fonts: fetched in parallel (was a render-serial @import inside style.css) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
-  <!-- Kick off the two ES-module entry points while the CSS parses -->
-  <link rel="modulepreload" href="./app.js" />
+  <!-- Kick off the two ES-module entry points while the CSS parses.
+       NOTE: the app.js URLs carry the deploy version (?v=13) so a new release
+       is never served from a stale cache; the firebase.js preload must match
+       the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
+       would download the module twice. -->
+  <link rel="modulepreload" href="./app.js?v=13" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=13" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -72,8 +95,14 @@
         'openDirectShareView', 'setShareMode', 'createDirectShare', 'addFilesToShare',
         'copyShareLink', 'closeDirectShare', 'backToSharePicker', 'connectToShare',
         'runFirestoreDoctor', 'retryActiveDirectChat', 'handleDirectComposerKey',
-        'chatWithPerson', 'loginWithEmail',
-        'handleSaveProfileFromPage', 'dismissInstallBanner'
+        'handleHomeComposerKey', 'chatWithPerson', 'loginWithEmail',
+        'handleSaveProfileFromPage', 'dismissInstallBanner',
+        'loadMyContacts', 'addContactByUsername', 'addFoundContact',
+        'removeContactFromList', 'addContactFromProfile', 'removeContactFromProfile',
+        'removeSpaceMemberByUid', 'toggleSpaceContactsPicker', 'addSpaceMemberFromContacts',
+        'savePushConfigFromSettings', 'testPushFromSettings',
+        'toggleGameFullscreen', 'handleGameFilesUpload', 'removeGameFile',
+        'setGameEntry', 'clearGameFiles', 'rtWrap'
       ];
       for (var i = 0; i < HANDLERS.length; i++) {
         (function (name) {
@@ -856,32 +885,32 @@
 
         <nav class="sidebar-nav">
           <div class="nav-link active" id="nav-dash" onclick="window.HubbleNest.loadDashboard()" title="Home">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <span class="hn-ic" data-hn-icon="home"></span>
             <span>Home</span>
           </div>
           <div class="nav-link" id="sidebar-nav-spaces" onclick="window.HubbleNest.openSpacesSection()" title="Your Spaces">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+            <span class="hn-ic" data-hn-icon="spaces"></span>
             <span>Spaces</span>
           </div>
           <div class="nav-link" id="nav-people" onclick="window.HubbleNest.openPeopleView()" title="People">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span class="hn-ic" data-hn-icon="people"></span>
             <span>People</span>
           </div>
           <div class="nav-link" id="nav-direct" onclick="window.HubbleNest.openDirectMessagesView()" title="Messages">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="hn-ic" data-hn-icon="chat"></span>
             <span>Messages</span>
             <span class="nav-badge" id="direct-requests-badge" style="display: none;">0</span>
           </div>
           <div class="nav-link" id="nav-arcade" onclick="window.HubbleNest.openArcadeView()" title="Arcade">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
+            <span class="hn-ic" data-hn-icon="game"></span>
             <span>Arcade</span>
           </div>
           <div class="nav-link" id="nav-direct-share" onclick="window.HubbleNest.openDirectShareView()" title="Direct Share">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98"/><path d="m15.41 6.51-6.82 3.98"/></svg>
+            <span class="hn-ic" data-hn-icon="share"></span>
             <span>Direct Share</span>
           </div>
           <div class="nav-link" id="sidebar-nav-notifications" onclick="window.HubbleNest.toggleNotificationsMenu()" title="Notifications">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+            <span class="hn-ic" data-hn-icon="bell"></span>
             <span>Notifications</span>
             <span class="nav-badge" id="sidebar-notif-badge" style="display: none;">0</span>
           </div>
@@ -910,7 +939,7 @@
             </span>
           </button>
           <button type="button" class="icon-btn sidebar-settings-btn" id="sidebar-settings-btn" onclick="window.HubbleNest.openProfilePage()" title="Settings" aria-label="Settings">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span class="hn-ic" data-hn-icon="settings"></span>
           </button>
         </div>
       </aside>
@@ -942,7 +971,15 @@
                 <span class="composer-avatar">
                   <img id="home-composer-avatar" src="" class="avatar-img" alt="Avatar" />
                 </span>
-                <input type="text" id="home-composer-input" class="composer-pill" placeholder="Share your thoughts..." onkeydown="if(event.key === 'Enter') window.HubbleNest.handleHomePost()" />
+                <div class="rt-toolbar" role="toolbar" aria-label="Text formatting">
+                  <button type="button" class="rt-btn" title="Bold" aria-label="Bold" onclick="window.HubbleNest.rtWrap('home-composer-input','bold')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg></button>
+                  <button type="button" class="rt-btn" title="Italic" aria-label="Italic" onclick="window.HubbleNest.rtWrap('home-composer-input','italic')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
+                  <button type="button" class="rt-btn" title="Underline" aria-label="Underline" onclick="window.HubbleNest.rtWrap('home-composer-input','underline')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/></svg></button>
+                  <button type="button" class="rt-btn" title="Heading" aria-label="Heading" onclick="window.HubbleNest.rtWrap('home-composer-input','h')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v16"/><path d="M14 4v16"/><path d="M6 12h8"/></svg></button>
+                  <button type="button" class="rt-btn" title="Bulleted list" aria-label="Bulleted list" onclick="window.HubbleNest.rtWrap('home-composer-input','ul')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg></button>
+                  <button type="button" class="rt-btn" title="Inline code" aria-label="Inline code" onclick="window.HubbleNest.rtWrap('home-composer-input','code')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+                </div>
+                <textarea id="home-composer-input" class="composer-pill composer-textarea" rows="1" placeholder="Share your thoughts… (Enter to post, Shift+Enter for a new line)" onkeydown="window.HubbleNest.handleHomeComposerKey(event)"></textarea>
                 <div class="composer-tools">
                   <input type="file" id="home-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageHomeAttachment(this.files[0])" />
                   <input type="file" id="home-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageHomeAttachment(this.files[0])" />
@@ -952,6 +989,11 @@
                   <button type="button" class="composer-icon-btn" onclick="document.getElementById('home-doc-input').click()" title="Attach a file">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                   </button>
+                  <label class="composer-public-toggle" for="home-post-public" title="Also publish this post to a public web page">
+                    <input type="checkbox" id="home-post-public" />
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    Public web page
+                  </label>
                   <button type="button" class="composer-send-btn" id="home-composer-send" onclick="window.HubbleNest.handleHomePost()" title="Post" aria-label="Post">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                   </button>
@@ -1028,12 +1070,12 @@
                     <span class="rail-quick-icon tone-blue"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
                     <span>Messages</span>
                   </button>
-                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openCommunityMembers()">
-                    <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-                    <span>View Members</span>
+                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openMySpacesPage()">
+                    <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/></svg></span>
+                    <span>My Spaces</span>
                   </button>
-                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.openCommunitySpace()">
-                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
+                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.runFirestoreDoctor()">
+                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
                     <span>Get Help</span>
                   </button>
                 </div>
@@ -1041,7 +1083,7 @@
 
               <div class="rail-card" onclick="window.HubbleNest.openPeopleView()" style="cursor: pointer;" title="Browse members">
                 <div class="rail-head-row">
-                  <h3 class="rail-title">Members Online</h3>
+                  <h3 class="rail-title">My Contacts</h3>
                   <span class="rail-muted" id="rail-members-count">—</span>
                 </div>
                 <div class="rail-avatar-stack" id="rail-members-avatars"></div>
@@ -1196,7 +1238,13 @@
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                   </button>
 
-                  <input type="text" id="chat-input-text" class="composer-input" placeholder="Type a message or reply... (Press Enter to send)" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendMessage()" />
+                  <div class="rt-toolbar rt-toolbar-compact" role="toolbar" aria-label="Text formatting">
+                  <button type="button" class="rt-btn" title="Bold" onclick="window.HubbleNest.rtWrap('chat-input-text','bold')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg></button>
+                  <button type="button" class="rt-btn" title="Italic" onclick="window.HubbleNest.rtWrap('chat-input-text','italic')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
+                  <button type="button" class="rt-btn" title="Code" onclick="window.HubbleNest.rtWrap('chat-input-text','code')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+                  <button type="button" class="rt-btn" title="Bulleted list" onclick="window.HubbleNest.rtWrap('chat-input-text','ul')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg></button>
+                </div>
+                <input type="text" id="chat-input-text" class="composer-input" placeholder="Type a message or reply... (Press Enter to send)" onkeydown="if(event.key === 'Enter') window.HubbleNest.handleSendMessage()" />
                   <button type="button" class="btn btn-primary btn-sm" id="btn-send-chat-msg" onclick="window.HubbleNest.handleSendMessage()">
                     Send
                   </button>
@@ -1346,6 +1394,13 @@
                 <textarea id="edit-space-desc-tab" class="form-textarea" rows="3"></textarea>
               </div>
 
+              <div class="form-group">
+                <label class="form-check" for="edit-space-public-tab">
+                  <input type="checkbox" id="edit-space-public-tab" />
+                  <span><b>Public intro on the web</b> — shows only the Space name, category, member count and this description on a public page. The conversation, files and member list are NEVER public.</span>
+                </label>
+              </div>
+
               <div class="settings-divider">
                 <h4 class="settings-subtitle">Space Cover Banner</h4>
                 <p class="settings-hint">Choose a clear image to give your space a distinctive header.</p>
@@ -1383,23 +1438,32 @@
 
         </div>
 
-        <!-- VIEW: PEOPLE DIRECTORY -->
+        <!-- VIEW: PEOPLE (YOUR CONTACTS) -->
         <div class="view-section" id="view-people">
           <div class="dash-header">
             <div class="dash-section-titles">
-              <h1 class="dash-title">People Directory</h1>
-              <p class="dash-subtitle">Browse members, explore profiles, and connect privately.</p>
+              <h1 class="dash-title">Contacts</h1>
+              <p class="dash-subtitle">Only people you added are listed here. Contacts chat instantly — no requests.</p>
             </div>
             <div class="dash-actions grow">
               <div class="search-field">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" id="people-search-input" class="form-input bare" placeholder="Search people by name or @username..." oninput="window.HubbleNest.handlePeopleSearch(this.value)" />
+                <input type="text" id="people-search-input" class="form-input bare" placeholder="Search your contacts..." oninput="window.HubbleNest.handlePeopleSearch(this.value)" />
               </div>
             </div>
           </div>
 
+          <div class="add-contact-bar">
+            <div class="add-contact-row">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="add-contact-glyph"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+              <input type="text" id="add-contact-username" class="form-input" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Add someone by their exact username — e.g. stellar_sam" onkeydown="if(event.key==='Enter') window.HubbleNest.addContactByUsername()" />
+              <button type="button" class="btn btn-primary" id="add-contact-btn" onclick="window.HubbleNest.addContactByUsername()">Add contact</button>
+            </div>
+            <div class="add-contact-result" id="add-contact-result" style="display: none;"></div>
+          </div>
+
           <div class="people-grid" id="people-directory-grid">
-            <div class="grid-loading">Loading members...</div>
+            <div class="grid-loading">Loading your contacts...</div>
           </div>
         </div>
 
@@ -1497,7 +1561,12 @@
                       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                     </button>
 
-                    <textarea id="direct-message-input" class="composer-input composer-textarea" rows="1" placeholder="Message… (Enter to send, Shift+Enter for a new line)" onkeydown="window.HubbleNest.handleDirectComposerKey(event)"></textarea>
+                    <div class="rt-toolbar rt-toolbar-compact" role="toolbar" aria-label="Text formatting">
+                  <button type="button" class="rt-btn" title="Bold" onclick="window.HubbleNest.rtWrap('direct-message-input','bold')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg></button>
+                  <button type="button" class="rt-btn" title="Italic" onclick="window.HubbleNest.rtWrap('direct-message-input','italic')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
+                  <button type="button" class="rt-btn" title="Code" onclick="window.HubbleNest.rtWrap('direct-message-input','code')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+                </div>
+                <textarea id="direct-message-input" class="composer-input composer-textarea" rows="1" placeholder="Message… (Enter to send, Shift+Enter for a new line)" onkeydown="window.HubbleNest.handleDirectComposerKey(event)"></textarea>
                     <button type="button" class="btn btn-primary btn-sm" id="btn-send-direct-msg" onclick="window.HubbleNest.handleSendDirectMessage()">
                       Send
                     </button>
@@ -1570,6 +1639,12 @@
                 <label for="game-desc-input">Short description</label>
                 <input type="text" id="game-desc-input" maxlength="300" placeholder="Catch falling stars, dodge the bombs, beat your best score." />
               </div>
+              <div class="game-editor-field game-editor-public-field">
+                <label class="form-check" for="game-public-input">
+                  <input type="checkbox" id="game-public-input" />
+                  <span><b>Public on the web</b> — the game gets a shareable public page with the title, description, author and playable preview (if it has an HTML entry).</span>
+                </label>
+              </div>
             </div>
 
             <div class="game-editor-layout">
@@ -1578,10 +1653,22 @@
                   <button type="button" class="feed-tab feed-tab-active" id="game-tab-html" onclick="window.HubbleNest.setCodePane('html')">HTML</button>
                   <button type="button" class="feed-tab" id="game-tab-css" onclick="window.HubbleNest.setCodePane('css')">CSS</button>
                   <button type="button" class="feed-tab" id="game-tab-js" onclick="window.HubbleNest.setCodePane('js')">JavaScript</button>
+                  <button type="button" class="feed-tab" id="game-tab-files" onclick="window.HubbleNest.setCodePane('files')">Files <span class="game-files-badge" id="game-files-badge"></span></button>
                 </div>
                 <div id="game-pane-html" class="game-code-pane"><textarea id="game-code-html" class="game-code-textarea" spellcheck="false" placeholder="Your game's HTML body…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
                 <div id="game-pane-css" class="game-code-pane" style="display:none;"><textarea id="game-code-css" class="game-code-textarea" spellcheck="false" placeholder="Your game's styles…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
                 <div id="game-pane-js" class="game-code-pane" style="display:none;"><textarea id="game-code-js" class="game-code-textarea" spellcheck="false" placeholder="Your game's JavaScript…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
+                <div id="game-pane-files" class="game-code-pane" style="display:none;">
+                  <div class="game-files-upload-row">
+                    <input type="file" id="game-files-input" multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
+                    <input type="file" id="game-folder-input" webkitdirectory directory multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
+                    <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('game-files-input').click()">Upload files</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-folder-input').click()">Upload a whole folder</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameFiles()">Clear all</button>
+                  </div>
+                  <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
+                  <div class="game-files-list" id="game-files-list"></div>
+                </div>
                 <div class="game-editor-footnote">
                   Games run in a locked sandbox: no network, no cookies, no access to HubbleNest or other pages. Pressing keys is fine — the sandbox is not.
                   <span id="game-editor-status"></span>
@@ -1607,6 +1694,10 @@
               <div class="page-header-actions">
                 <span id="player-meta" class="player-meta"></span>
                 <button type="button" class="feed-action" id="player-like-btn" onclick="window.HubbleNest.gameToggleLike(window.HubbleNest._playerGameId)"></button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.toggleGameFullscreen()" title="Fullscreen">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                  Fullscreen
+                </button>
               </div>
             </div>
             <div class="game-player-frame-wrap">
@@ -1663,9 +1754,20 @@
                     <b>Add files</b>
                     <span class="nav-badge" id="ds-file-count">0 / 10 files</span>
                   </div>
+                  <div class="ds-transfer-beam" id="ds-transfer-beam" aria-hidden="true"></div>
                   <input type="file" id="ds-file-input" multiple style="display: none;" onchange="window.HubbleNest.addFilesToShare(this.files)" />
-                  <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('ds-file-input').click()">Choose files to add</button>
-                  <div class="ds-upload-status" id="ds-upload-status"></div>
+                  <div class="ds-dropzone" id="ds-dropzone"
+                       onclick="document.getElementById('ds-file-input').click()"
+                       ondragover="event.preventDefault(); this.classList.add('ds-drop-over')"
+                       ondragleave="this.classList.remove('ds-drop-over')"
+                       ondrop="event.preventDefault(); this.classList.remove('ds-drop-over'); window.HubbleNest.addFilesToShare(event.dataTransfer.files)"
+                       role="button" tabindex="0" aria-label="Choose files or drop them here"
+                       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('ds-file-input').click();}">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                    <b>Drop files here</b> or click to choose — every file type is welcome (code, archives, docs, media)
+                  </div>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('ds-file-input').click()">Choose files to add</button>
+                  <div class="ds-upload-status" id="ds-upload-status" style="display: none;"></div>
                   <div id="ds-send-files-list"></div>
                 </div>
               </div>
@@ -1915,6 +2017,36 @@
                 </div>
               </div>
 
+              <div class="settings-divider">
+                <h4 class="settings-subtitle">Off-App Push Notifications — one-time setup</h4>
+                <p class="settings-hint">
+                  Saved here once, stored in this project's Firestore, and reused by every future deploy —
+                  you never paste keys into files again. Get the Web Push key from Firebase Console →
+                  Project Settings → Cloud Messaging → Web Push certificates. The service account fields
+                  (Firebase Console → Project settings → Service accounts) enable background delivery
+                  through Firebase Cloud Messaging.
+                </p>
+                <div class="push-config-status" id="push-config-status">
+                  <div class="push-status-loading">Reading your push configuration…</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="push-vapid-input">Web Push certificate key (VAPID public key)</label>
+                  <input type="text" id="push-vapid-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="B…87-character public key (safe to expose)" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="push-client-email-input">Service account client email (optional — background delivery)</label>
+                  <input type="text" id="push-client-email-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="firebase-adminsdk-…@hubblenest.iam.gserviceaccount.com" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="push-private-key-input">Service account private key (optional — leave blank to keep the saved one)</label>
+                  <textarea id="push-private-key-input" class="form-textarea" rows="3" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----"></textarea>
+                </div>
+                <div class="push-config-actions">
+                  <button type="button" class="btn btn-primary" id="push-save-btn" onclick="window.HubbleNest.savePushConfigFromSettings()">Save push configuration</button>
+                  <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.testPushFromSettings()">Send a test push to this device</button>
+                </div>
+              </div>
+
               <div class="form-footer">
                 <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.loadDashboard()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="window.HubbleNest.handleSaveProfileFromPage()">Save Profile Changes</button>
@@ -1949,23 +2081,23 @@
     <!-- Mobile Bottom Navigation Bar (<900px) -->
     <nav class="mobile-bottom-nav">
       <button class="mobile-nav-btn active" id="mob-nav-spaces" onclick="window.HubbleNest.loadDashboard()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="hn-ic" data-hn-icon="home"></span>
         <span>Home</span>
       </button>
       <button class="mobile-nav-btn" id="mob-nav-people" onclick="window.HubbleNest.openPeopleView()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span class="hn-ic" data-hn-icon="people"></span>
         <span>People</span>
       </button>
       <button class="mobile-nav-btn" id="mob-nav-direct" onclick="window.HubbleNest.openDirectMessagesView()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="hn-ic" data-hn-icon="chat"></span>
         <span>Direct</span>
       </button>
       <button class="mobile-nav-btn" id="mob-nav-join" onclick="window.HubbleNest.openJoinSpacePage()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01"/><path d="M17 7h.01"/><path d="M7 17h.01"/><path d="M17 17h.01"/></svg>
+        <span class="hn-ic" data-hn-icon="plus"></span>
         <span>Join</span>
       </button>
       <button class="mobile-nav-btn" id="mob-nav-profile" onclick="window.HubbleNest.openProfilePage()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+        <span class="hn-ic" data-hn-icon="user"></span>
         <span>Profile</span>
       </button>
     </nav>
@@ -2353,7 +2485,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=13"></script>
 
 </body>
 </html>

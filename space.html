@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-theme">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Public Space — HubbleNest</title>
+  <meta name="description" content="The public introduction of a HubbleNest Space (only what its admins chose to publish)." />
+  <link rel="canonical" href="https://danielgiobari644-glitch.github.io/HubbleNest/spaces/" />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#070a12" />
+  <meta property="og:title" content="Public Space — HubbleNest" />
+  <meta property="og:description" content="The public introduction of a HubbleNest Space (only what its admins chose to publish)." />
+  <meta property="og:type" content="article" />
+  <meta property="og:image" content="https://danielgiobari644-glitch.github.io/HubbleNest/hero-cosmic.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="./style.css?v=13" />
+  <link rel="stylesheet" href="./public.css?v=13" />
+</head>
+<body class="public-body">
+  <header class="pub-header">
+    <a class="pub-brand" href="./index.html" aria-label="HubbleNest home"><img src="./icon.svg" alt="" width="30" height="30" /><span>HubbleNest</span></a>
+    <nav class="pub-nav" aria-label="Site">
+      <a href="./features.html">Features</a><a href="./spaces.html">Spaces</a><a href="./feed.html">Feed</a><a href="./games.html">Games</a><a href="./help.html">Help</a>
+    </nav>
+    <a class="pub-cta" href="./index.html">Open HubbleNest</a>
+  </header>
+  <main class="pub-main">
+    <div class="pub-doc" id="pub-doc">
+      <div class="pub-doc-head">
+        <div class="pub-doc-meta" id="space-meta"><span>Loading…</span></div>
+        <h1 class="pub-doc-title" id="space-title">Public Space</h1>
+      </div>
+      <div class="pub-doc-body rich-text" id="space-desc"></div>
+      <p class="pub-p" style="margin-top:26px;"><a class="pub-link" href="./index.html?join=" id="space-join">Join this Space on HubbleNest →</a></p>
+    </div>
+  </main>
+  <footer class="pub-footer">
+    <div class="pub-footer-base">© <span id="pub-year">2026</span> HubbleNest. <a class="pub-link" href="./privacy.html">Privacy</a> · <a class="pub-link" href="./terms.html">Terms</a> · <a class="pub-link" href="./community-guidelines.html">Guidelines</a></div>
+  </footer>
+  <script>document.getElementById('pub-year').textContent = new Date().getFullYear();</script>
+  <script type="module">
+    // Public Space intro — only Spaces whose admin enabled the public intro.
+    // Conversation, files and members are NEVER shown here.
+    import { db, doc, getDoc } from './firebase.js';
+    import { renderRichText } from './format.js';
+    import { escapeHtml } from './utils.js';
+
+    const id = new URLSearchParams(location.search).get('id') || '';
+    try {
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error('bad-id');
+      const snap = await getDoc(doc(db, 'spaces', id));
+      if (!snap.exists() || snap.data().isPublic !== true) throw new Error('missing');
+      const sp = snap.data();
+      document.title = `${sp.name || 'Space'} — HubbleNest`;
+      document.getElementById('space-meta').innerHTML = `
+        <span class="pub-chip">${escapeHtml(sp.category || 'Space')}</span>
+        <span>${sp.memberCount || 1} member${(sp.memberCount || 1) === 1 ? '' : 's'}</span>
+        <span class="pub-chip">Public intro</span>`;
+      document.getElementById('space-title').textContent = sp.name || 'A HubbleNest Space';
+      document.getElementById('space-desc').innerHTML = renderRichText(sp.description || '');
+      const join = document.getElementById('space-join');
+      join.setAttribute('href', `./index.html?join=${encodeURIComponent(sp.code || '')}`);
+    } catch (err) {
+      document.getElementById('pub-doc').innerHTML = `<div class="pub-missing">
+        <h1>This Space is not public</h1>
+        <p class="pub-p">It may not exist, or its administrators have not enabled a public introduction. Private Spaces never appear on the web.</p>
+        <a class="btn btn-primary" href="./index.html">Open HubbleNest</a></div>`;
+    }
+  </script>
+</body>
+</html>

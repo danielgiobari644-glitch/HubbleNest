@@ -2338,7 +2338,7 @@ h1, h2, h3, h4 {
 /* Composer */
 .composer-card {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 13px;
   background: var(--bg-glass);
   backdrop-filter: blur(14px);
@@ -2378,6 +2378,21 @@ h1, h2, h3, h4 {
 .composer-pill::placeholder { color: var(--text-muted); }
 
 .composer-pill:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+/* Home feed composer is a textarea: Enter posts, Shift+Enter newline, and it
+   auto-grows while typing (height managed by handleHomeComposerKey in app.js).
+   The avatar + action buttons anchor to its bottom edge (align-items flex-end
+   above) like mainstream social composers. */
+.composer-card .composer-textarea {
+  min-height: 42px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.composer-card .composer-textarea:focus {
   outline: none;
   border-color: var(--border-focus);
 }
@@ -5497,3 +5512,665 @@ h1, h2, h3, h4 {
   .feed-post-delete { opacity: 1; }
   .feed-rank-chip { display: none; }
 }
+
+/* ==========================================================================
+   TASK 16 — RICH TEXT SYSTEM (real formatting, vertical multi-line layout)
+   ========================================================================== */
+
+.rich-text .rt-p,
+.rt-msg,
+.feed-post-text.rich-text,
+.feed-comment-text.rich-text,
+.announcement-content.rich-text {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.rich-text .rt-p { margin: 0 0 10px; line-height: 1.6; }
+.rich-text .rt-p:last-child { margin-bottom: 0; }
+
+.rich-text .rt-h {
+  margin: 14px 0 6px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.rich-text .rt-h:first-child { margin-top: 0; }
+.rich-text .rt-h1 { font-size: 1.3rem; }
+.rich-text .rt-h2 { font-size: 1.15rem; }
+.rich-text .rt-h3 { font-size: 1.02rem; }
+
+.rich-text .rt-ul,
+.rich-text .rt-ol {
+  margin: 6px 0 12px;
+  padding-left: 22px;
+  display: grid;
+  gap: 4px;
+}
+.rich-text .rt-ul li { list-style: disc; }
+.rich-text .rt-ol li { list-style: decimal; }
+.rich-text li::marker { color: var(--accent-primary); }
+
+.rich-text .rt-quote {
+  margin: 8px 0 12px;
+  padding: 8px 14px;
+  border-left: 3px solid var(--accent-primary);
+  background: var(--bg-surface-elevated);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.rich-text .rt-pre {
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+.light-mode .rich-text .rt-pre { background: rgba(15, 23, 42, 0.06); }
+.rich-text .rt-pre code { background: none; padding: 0; }
+
+.rich-text .rt-code {
+  background: rgba(139, 92, 246, 0.14);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.86em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.rich-text .rt-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.rich-text .rt-link:hover { filter: brightness(1.15); }
+
+.rich-text strong { font-weight: 700; color: var(--text-primary); }
+.rich-text em { font-style: italic; }
+.rich-text del { opacity: 0.72; }
+.rich-text u { text-underline-offset: 2px; }
+
+.rich-text .rt-hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: 12px 0;
+}
+
+/* Group description area (space header) */
+.space-detail-desc.rich-text,
+#space-detail-desc.rich-text { line-height: 1.55; }
+.space-desc-empty { color: var(--text-muted); }
+
+/* Chat message text keeps vertical layout inside bubbles */
+.msg-bubble .rt-msg { display: block; }
+.msg-bubble .rt-msg .rt-p { margin: 0 0 8px; }
+.msg-bubble .rt-msg .rt-p:last-child { margin-bottom: 0; }
+.msg-bubble .rt-msg .rt-pre { font-size: 0.8rem; }
+.msg-bubble .rt-msg .rt-h { margin: 8px 0 4px; }
+
+/* ==========================================================================
+   COMPOSE TOOLBAR
+   ========================================================================== */
+
+.rt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+  margin-bottom: 6px;
+  width: fit-content;
+}
+.rt-toolbar-compact { padding: 2px 4px; margin: 0 0 6px; }
+.rt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .1s ease;
+}
+.rt-btn:hover { background: rgba(139, 92, 246, 0.16); color: var(--accent-primary); }
+.rt-btn:active { transform: scale(0.94); }
+.rt-btn:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+
+/* ==========================================================================
+   CONTACTS — People page (add by username)
+   ========================================================================== */
+
+.add-contact-bar {
+  margin: 4px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(90, 93, 240, 0.08), rgba(139, 92, 246, 0.05));
+}
+.add-contact-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.add-contact-glyph { color: var(--accent-primary); flex-shrink: 0; }
+.add-contact-row .form-input { flex: 1; min-width: 220px; }
+.add-contact-result { margin-top: 12px; }
+.add-contact-searching,
+.add-contact-miss {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+}
+.add-contact-miss b { color: var(--text-primary); }
+.add-contact-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  animation: hnFadeUp .28s ease both;
+}
+.add-contact-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
+.add-contact-info { flex: 1; min-width: 0; }
+.add-contact-name { font-weight: 700; font-size: 0.95rem; }
+.add-contact-handle { color: var(--accent-primary); font-size: 0.82rem; }
+.add-contact-bio {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-contact-already {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.person-card { cursor: default; }
+.person-header { cursor: pointer; }
+
+/* ==========================================================================
+   SPACE MEMBER MANAGEMENT (admin: add from contacts / remove)
+   ========================================================================== */
+
+.space-contacts-admin {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--bg-surface-elevated);
+}
+.space-contacts-admin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.space-contacts-admin-sub { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
+.space-contacts-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 4px; }
+
+/* ==========================================================================
+   PUSH SETTINGS CARD (one-time config)
+   ========================================================================== */
+
+.push-config-status { display: grid; gap: 8px; margin: 10px 0 16px; }
+.push-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+}
+.push-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+.push-status-ok .push-status-dot { background: var(--status-success, #34d399); box-shadow: 0 0 8px rgba(52, 211, 153, .6); }
+.push-status-warn .push-status-dot { background: var(--status-warning, #f59e0b); box-shadow: 0 0 8px rgba(245, 158, 11, .6); }
+.push-status-info .push-status-dot { background: var(--accent-primary); }
+.push-config-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
+/* ==========================================================================
+   ARCADE — files pane + player polish
+   ========================================================================== */
+
+.game-files-badge {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  margin-left: 4px;
+}
+.game-files-upload-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.game-files-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.game-files-list { display: grid; gap: 6px; max-height: 340px; overflow-y: auto; }
+.game-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 0.82rem;
+  animation: hnFadeUp .25s ease both;
+}
+.game-file-entry { border-color: rgba(139, 92, 246, 0.45); }
+.game-file-path {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-file-size { color: var(--text-muted); font-size: 0.74rem; flex-shrink: 0; }
+.game-file-entry-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #5a5df0, #8b5cf6);
+  border-radius: 999px;
+  padding: 2px 9px;
+  flex-shrink: 0;
+}
+.game-file-btn { font-size: 0.74rem; padding: 3px 8px; flex-shrink: 0; }
+.game-file-remove:hover { color: var(--status-danger); }
+.game-files-empty { color: var(--text-muted); font-size: 0.82rem; line-height: 1.55; }
+
+/* Game card thumbnails */
+.game-card-thumb { position: relative; }
+.game-thumb-initials {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 14px rgba(2, 6, 23, 0.5);
+}
+.game-thumb-files {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #e0e7ff;
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(129, 140, 248, 0.4);
+  border-radius: 999px;
+  padding: 2px 8px;
+  backdrop-filter: blur(4px);
+}
+.game-thumb-play {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg, rgba(90, 93, 240, .95), rgba(139, 92, 246, .95));
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.45);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.game-card:hover .game-thumb-play { opacity: 1; transform: translateY(0); }
+.game-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Player frame: one clean, prominent height with bezel + glow */
+.game-player-frame-wrap { position: relative; }
+.game-player-frame-wrap iframe {
+  width: 100%;
+  height: clamp(430px, 68vh, 760px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #0b1020;
+  box-shadow: 0 10px 44px rgba(2, 6, 23, 0.5), 0 0 0 1px rgba(99, 102, 241, 0.12);
+}
+.game-player-frame-wrap:fullscreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #05070f;
+  padding: 0;
+}
+.game-player-frame-wrap:fullscreen iframe {
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+}
+.player-files-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.16);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* ==========================================================================
+   DIRECT SHARE — "HubbleNest Energy Transfer"
+   Real states only: progress comes from the actual upload callback and the
+   success/delivered animations fire only after the Firestore write lands.
+   ========================================================================== */
+
+@keyframes hnFadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hnSweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes hnPing {
+  0% { transform: scale(1); opacity: .55; }
+  80%, 100% { transform: scale(1.9); opacity: 0; }
+}
+@keyframes hnLiveDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.8); }
+}
+@keyframes hnShimmer {
+  0% { background-position: -220px 0; }
+  100% { background-position: 260px 0; }
+}
+@keyframes hnCardIn {
+  0% { opacity: 0; transform: translateY(14px) scale(.96); box-shadow: 0 0 0 rgba(99, 102, 241, 0); }
+  60% { opacity: 1; box-shadow: 0 0 26px rgba(99, 102, 241, 0.35); }
+  100% { opacity: 1; transform: translateY(0) scale(1); box-shadow: 0 0 0 rgba(99, 102, 241, 0); }
+}
+@keyframes hnBeamPulse {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+@keyframes hnParticle {
+  0% { left: 0%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+@keyframes hnSuccessPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* QR radar: two sweeping cones prove the share is live */
+.ds-qr-live { position: relative; overflow: hidden; }
+.ds-qr-sweep {
+  position: absolute;
+  inset: -30%;
+  background: conic-gradient(from 0deg, rgba(99, 102, 241, 0.35), transparent 70deg, transparent 360deg);
+  animation: hnSweep 3.4s linear infinite;
+  pointer-events: none;
+  border-radius: 50%;
+}
+.ds-qr-sweep-delay { animation-delay: 1.7s; opacity: .6; }
+
+/* Transfer progress card (per file, tied to real XHR progress) */
+.ds-upload-status { flex-direction: column; }
+.ds-transfer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(90, 93, 240, 0.12), rgba(139, 92, 246, 0.08));
+  animation: hnFadeUp .3s ease both;
+}
+.ds-transfer-icon {
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.18);
+  animation: hnBeamPulse 1.4s ease-in-out infinite;
+}
+.ds-transfer-info { flex: 1; min-width: 0; }
+.ds-transfer-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-transfer-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.16);
+  overflow: hidden;
+  position: relative;
+}
+.ds-transfer-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5a5df0, #8b5cf6, #a78bfa);
+  transition: width .25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.ds-transfer-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  background-size: 220px 100%;
+  background-repeat: no-repeat;
+  animation: hnShimmer 1.1s linear infinite;
+}
+.ds-transfer-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #c7d2fe;
+  min-width: 40px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.ds-transfer-done { animation: hnSuccessPop .5s ease; }
+.ds-transfer-done .ds-transfer-icon { animation: none; color: var(--status-success, #34d399); }
+
+/* Top beam: energy line that lights while a transfer is in flight */
+.ds-transfer-beam {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  background: rgba(99, 102, 241, 0.12);
+  opacity: 0;
+  transition: opacity .3s ease;
+}
+.ds-transfer-beam::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, #6366f1, #a78bfa, transparent);
+  transform: translateX(-100%);
+}
+.ds-beam-active { opacity: 1; }
+.ds-beam-active::after { animation: dsBeamRun 1.15s ease-in-out infinite; }
+@keyframes dsBeamRun {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Dropzone */
+.ds-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  margin-bottom: 10px;
+  border: 2px dashed rgba(99, 102, 241, 0.45);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, transform .12s ease;
+  background: rgba(99, 102, 241, 0.05);
+}
+.ds-dropzone b { color: var(--text-primary); }
+.ds-dropzone svg { color: var(--accent-primary); flex-shrink: 0; }
+.ds-dropzone:hover { border-color: var(--accent-primary); background: rgba(99, 102, 241, 0.1); }
+.ds-drop-over { border-color: var(--accent-primary); background: rgba(99, 102, 241, 0.16); transform: scale(1.01); }
+.ds-dropzone:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+
+/* File cards: entrance glow for brand-new arrivals only */
+.ds-file-card-in { animation: hnCardIn .55s cubic-bezier(.2, .8, .25, 1) both; }
+
+/* Receiver: incoming pulse rings around the sender's avatar */
+.ds-peer-card { position: relative; }
+.ds-peer-rings { position: absolute; left: 0; top: 0; width: 52px; height: 52px; pointer-events: none; }
+.ds-peer-rings::before,
+.ds-peer-rings::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.55);
+  animation: hnPing 1.8s cubic-bezier(.2, .6, .35, 1) infinite;
+}
+.ds-peer-rings::after { animation-delay: .9s; }
+.ds-peer-receiving .ds-peer-rings::before,
+.ds-peer-receiving .ds-peer-rings::after { border-color: rgba(167, 139, 250, 0.85); }
+.ds-live-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--status-success, #34d399);
+  margin-right: 7px;
+  animation: hnLiveDot 1.4s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(52, 211, 153, .65);
+}
+.ds-download-btn { position: relative; overflow: hidden; }
+.ds-download-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-120%);
+}
+.ds-download-btn:hover::after { transition: transform .6s ease; transform: translateX(120%); }
+
+/* Reduced motion: every effect above collapses to instant, visible states */
+@media (prefers-reduced-motion: reduce) {
+  .ds-qr-sweep,
+  .ds-transfer-icon,
+  .ds-transfer-fill::after,
+  .ds-transfer-beam::after,
+  .ds-peer-rings::before,
+  .ds-peer-rings::after,
+  .ds-live-dot { animation: none !important; }
+  .ds-file-card-in,
+  .ds-transfer,
+  .add-contact-card,
+  .game-file-row { animation: none !important; }
+  .ds-beam-active { opacity: .35; }
+}
+
+/* ==========================================================================
+   PUBLIC-WEB TOGGLES + CHECK ROWS
+   ========================================================================== */
+
+.form-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.form-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.form-check span b { color: var(--text-primary); }
+
+.composer-public-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+  white-space: nowrap;
+}
+.composer-public-toggle:hover { color: var(--accent-primary); border-color: rgba(99, 102, 241, 0.45); }
+.composer-public-toggle input { accent-color: var(--accent-primary); margin: 0; }
+
+.game-editor-public-field { display: flex; align-items: center; }
+.game-editor-public-field .form-check { margin-top: 24px; }
+
+/* Source-only project panel in the Arcade player */
+.game-source-panel { padding: 22px; }
+.game-source-title { margin: 0 0 10px; font-size: 1.05rem; font-weight: 700; }
+.game-source-note { color: var(--text-secondary); font-size: 0.88rem; line-height: 1.65; margin: 0 0 16px; }

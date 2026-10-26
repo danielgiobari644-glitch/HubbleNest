@@ -56,6 +56,84 @@ let activeNotifUnsubscribe = null;
  */
 const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquVuPlHHHZKYaOzGUOCqp7z--H328TFz0Zpua7xeszYo';
 
+/* ========================================================================
+   ONE-TIME push configuration (survives every redeploy)
+   ------------------------------------------------------------------------
+   The Web Push certificate key and the background-push service account live
+   in the Firestore document `config/push` — server data, NOT in the zip.
+   Configure them once from Profile & Settings → "Off-App Notifications"
+   and they persist no matter how many times the app is redeployed.
+   Fields: { publicKey, clientEmail, privateKey, ownerUid, configuredAt }
+   ======================================================================== */
+
+let pushConfigStatusCache = null;
+
+/**
+ * Read the current push configuration status (what the Settings page shows).
+ * @returns {{ publicKey: string|null, publicKeyIsEmbedded: boolean,
+ *             senderConfigured: boolean, ownerUid: string|null }}
+ */
+export async function getPushConfigStatus() {
+  const status = {
+    publicKey: null,
+    publicKeyIsEmbedded: true,
+    senderConfigured: false,
+    ownerUid: null
+  };
+  try {
+    const snap = await getDoc(doc(db, 'config', 'push'));
+    if (snap.exists()) {
+      const d = snap.data();
+      if (d.publicKey && isValidVapidKey(d.publicKey)) {
+        status.publicKey = d.publicKey;
+        status.publicKeyIsEmbedded = false;
+      }
+      status.senderConfigured = !!(d.clientEmail && d.privateKey);
+      status.ownerUid = d.ownerUid || null;
+    }
+  } catch (err) {
+    console.warn('[HubbleNest Push] config/push unreadable:', err?.code || err);
+  }
+  pushConfigStatusCache = status;
+  return status;
+}
+
+/**
+ * Save the one-time push configuration to Firestore `config/push`.
+ * Empty/blank fields leave the stored value untouched.
+ * @param {{ publicKey?: string, clientEmail?: string, privateKey?: string }} cfg
+ * @param {object} profile  signed-in user (becomes the config owner)
+ */
+export async function savePushConfig(cfg, profile) {
+  const uid = profile?.uid || window.HubbleNest?._state?.currentUser?.uid;
+  if (!uid) throw new Error('Sign in first.');
+
+  const patch = {
+    ownerUid: uid,
+    configuredAt: serverTimestamp()
+  };
+  if (cfg.publicKey !== undefined) {
+    const key = String(cfg.publicKey || '').trim();
+    if (key && !isValidVapidKey(key)) {
+      throw new Error('That Web Push certificate key is malformed — it must be 87 base64url characters starting with "B".');
+    }
+    patch.publicKey = key || DEFAULT_VAPID_PUBLIC_KEY;
+  }
+  if (cfg.clientEmail !== undefined) patch.clientEmail = String(cfg.clientEmail || '').trim();
+  if (cfg.privateKey !== undefined) patch.privateKey = String(cfg.privateKey || '').trim();
+
+  await setDoc(doc(db, 'config', 'push'), patch, { merge: true });
+
+  // Invalidate this session's caches so the new values take effect at once.
+  try {
+    const sender = await import('./fcm-sender.js');
+    sender.invalidatePushConfigCache();
+  } catch (e) { /* module already loaded or unavailable — non-fatal */ }
+  pushConfigStatusCache = null;
+
+  return getPushConfigStatus();
+}
+
 /**
  * A valid P-256 Web Push public key is 87 base64url characters starting
  * with "B" (an uncompressed EC point: 65 bytes → 87 unpadded base64url chars).
@@ -184,7 +262,8 @@ export async function initWebPushNotifications(userId, opts = {}) {
       return false;
     }
 
-    // Prefer a project-specific Web Push certificate if the owner configured one.
+    // Prefer the owner's one-time configuration (config/push in Firestore —
+    // survives redeploys) and fall back to the embedded certificate key.
     let vapidKey = DEFAULT_VAPID_PUBLIC_KEY;
     try {
       const configSnap = await getDoc(doc(db, 'config', 'push'));

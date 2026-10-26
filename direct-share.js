@@ -40,6 +40,21 @@ let activeShareId = null;   // doc id == share code
 let activeShareRole = null; // 'sender' | 'receiver'
 const MAX_FILES_PER_SHARE = 10;
 
+/* Files already rendered — only NEW ones get the entrance animation. */
+let seenShareFiles = new Set();
+
+function fileKey(f) {
+  return `${f.url || ''}|${f.originalFilename || ''}|${f.addedAt || 0}`;
+}
+
+function markSeenFiles(files) {
+  (files || []).forEach((f) => seenShareFiles.add(fileKey(f)));
+}
+
+function freshFileKey(file) {
+  return !seenShareFiles.has(fileKey(file));
+}
+
 /* Unambiguous alphabet: no I/O/0/1/L confusion when read aloud or typed. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -65,6 +80,7 @@ function stopShareListener() {
 
 export function stopDirectShare() {
   stopShareListener();
+  seenShareFiles = new Set();
   setSenderPanelVisible(false);
   setReceiverPanelVisible(false);
   const picker = document.getElementById('ds-mode-picker');
@@ -201,6 +217,17 @@ function enterSenderMode(code) {
 
   // Live mirror of the share (own doc) so file list updates instantly.
   subscribeShareDoc(code, renderSenderShare);
+
+  // Radar sweep around the QR while the share is open — eye-catching,
+  // modern, and it doubles as the "this share is live" indicator.
+  const qrBox = document.getElementById('ds-qr-box');
+  if (qrBox && !qrBox.querySelector('.ds-qr-sweep')) {
+    qrBox.classList.add('ds-qr-live');
+    qrBox.insertAdjacentHTML('beforeend', '<span class="ds-qr-sweep" aria-hidden="true"></span><span class="ds-qr-sweep ds-qr-sweep-delay" aria-hidden="true"></span>');
+  }
+
+  const beam = document.getElementById('ds-transfer-beam');
+  if (beam) beam.classList.remove('ds-beam-active');
 }
 
 export async function addFilesToShare(fileList) {
@@ -215,18 +242,42 @@ export async function addFilesToShare(fileList) {
     return;
   }
 
+  const beam = document.getElementById('ds-transfer-beam');
+  if (beam) beam.classList.add('ds-beam-active');
+
   for (const file of files) {
     try {
-      validateFile(file, 100);
+      // Direct Share accepts EVERY file type — code, archives, anything.
+      validateFile(file, 100, true);
     } catch (err) {
       showToast(err.message, 'error');
       continue;
     }
-    if (statusEl) statusEl.textContent = `Uploading ${file.name}…`;
+
+    // Animated per-file transfer card (eye-catching progress with shimmer).
+    if (statusEl) {
+      statusEl.style.display = 'flex';
+      statusEl.innerHTML = `
+        <div class="ds-transfer">
+          <span class="ds-transfer-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          </span>
+          <div class="ds-transfer-info">
+            <div class="ds-transfer-name">${escapeHtml(file.name)}</div>
+            <div class="ds-transfer-bar"><span class="ds-transfer-fill" style="width:0%"></span></div>
+          </div>
+          <span class="ds-transfer-pct" id="ds-transfer-pct">0%</span>
+        </div>`;
+    }
+
     try {
       const res = await uploadToCloudinary(file, (percent) => {
-        if (statusEl) statusEl.textContent = `Uploading ${file.name}… ${Math.round(percent)}%`;
-      }, 100);
+        const fill = statusEl?.querySelector('.ds-transfer-fill');
+        const pct = document.getElementById('ds-transfer-pct');
+        const p = Math.round(percent);
+        if (fill) fill.style.width = `${p}%`;
+        if (pct) pct.textContent = `${p}%`;
+      }, 100, true);
       await updateDoc(doc(db, 'directShares', activeShareId), {
         files: arrayUnion({
           url: res.url,
@@ -237,15 +288,27 @@ export async function addFilesToShare(fileList) {
         }),
         updatedAt: serverTimestamp()
       });
-      if (statusEl) statusEl.textContent = '';
+      // Success flash on the transfer card before it clears.
+      if (statusEl) {
+        statusEl.classList.add('ds-transfer-done');
+        const pct = document.getElementById('ds-transfer-pct');
+        if (pct) pct.textContent = '✓';
+        setTimeout(() => { statusEl.classList.remove('ds-transfer-done'); }, 700);
+      }
     } catch (err) {
       console.error('Upload to share failed:', err);
-      if (statusEl) statusEl.textContent = '';
       showToast(`Upload failed for ${file.name}: ${err.message || 'error'}`, 'error');
     }
   }
 
-  if (statusEl) statusEl.textContent = '';
+  if (statusEl) {
+    setTimeout(() => {
+      statusEl.style.display = 'none';
+      statusEl.innerHTML = '';
+    }, 650);
+  }
+  if (beam) setTimeout(() => beam.classList.remove('ds-beam-active'), 900);
+
   const input = document.getElementById('ds-file-input');
   if (input) input.value = '';
 }
@@ -291,6 +354,7 @@ function renderSenderShare(share) {
   const list = document.getElementById('ds-send-files-list');
   if (!list) return;
   list.innerHTML = renderFileCards(share, true);
+  markSeenFiles(share.files || []);
   const count = document.getElementById('ds-file-count');
   if (count) count.textContent = `${(share.files || []).length} / ${MAX_FILES_PER_SHARE} files`;
 }
@@ -352,17 +416,20 @@ function renderReceiverShare(share) {
   if (!body) return;
 
   const files = share.files || [];
+  const incoming = files.filter(freshFileKey).length;
   body.innerHTML = `
-    <div class="ds-peer-card">
+    <div class="ds-peer-card ${incoming > 0 ? 'ds-peer-receiving' : ''}">
+      <span class="ds-peer-rings" aria-hidden="true"></span>
       <img src="${getAvatarUrl(share.ownerPhoto, share.ownerName)}" alt="" />
       <div>
         <div class="ds-peer-name">${escapeHtml(share.ownerName || 'Member')}</div>
-        <div class="ds-peer-sub">is sharing ${files.length} file${files.length === 1 ? '' : 's'} with you · live</div>
+        <div class="ds-peer-sub"><span class="ds-live-dot"></span>is sharing ${files.length} file${files.length === 1 ? '' : 's'} with you · live</div>
       </div>
     </div>
     ${files.length === 0
       ? `<div class="ds-connecting">No files yet — they appear here the moment the sender adds them.</div>`
       : renderFileCards(share, false)}`;
+  markSeenFiles(files);
 }
 
 /* ========================================================================
@@ -386,14 +453,17 @@ function renderFileCards(share, senderView) {
     } else if (isVid) {
       preview = `<video src="${f.url}" controls preload="metadata" class="ds-file-video"></video>`;
     }
+    // Brand-new files (just arrived on this snapshot) slide in with a glow;
+    // older ones render without re-animating.
+    const isNew = freshFileKey(f);
     return `
-      <div class="ds-file-card">
+      <div class="ds-file-card ${isNew ? 'ds-file-card-in' : ''}">
         ${preview}
         <div class="ds-file-info">
           <div class="ds-file-name" title="${escapeHtml(f.originalFilename || '')}">${escapeHtml(f.originalFilename || 'File')}</div>
           <div class="ds-file-meta">${formatBytes(f.size || 0)} · ${escapeHtml(f.resourceType || 'file')} · ${formatTimeAgo(f.addedAt)}</div>
         </div>
-        <a class="btn btn-primary btn-sm" href="${f.url}" target="_blank" rel="noopener noreferrer" download="${escapeHtml(f.originalFilename || 'file')}">Download</a>
+        <a class="btn btn-primary btn-sm ds-download-btn" href="${f.url}" target="_blank" rel="noopener noreferrer" download="${escapeHtml(f.originalFilename || 'file')}">Download</a>
       </div>`;
   }).join('') + `</div>`;
 }
