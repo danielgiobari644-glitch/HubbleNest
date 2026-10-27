@@ -198,6 +198,8 @@ import {
   handleGameFilesUpload,
   removeGameFile,
   setGameEntry,
+  setGameEntryByIndex,
+  removeGameFileByIndex,
   clearGameFiles
 } from './games.js';
 
@@ -4132,6 +4134,8 @@ Object.assign(window.HubbleNest, {
   handleGameFilesUpload,
   removeGameFile,
   setGameEntry,
+  setGameEntryByIndex,
+  removeGameFileByIndex,
   clearGameFiles,
 
   // Push notifications — one-time configuration (survives redeploys)

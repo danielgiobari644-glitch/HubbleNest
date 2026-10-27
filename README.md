@@ -175,16 +175,21 @@ before any browser can register for push, and both are owner-only fixes:
    - Firebase Console → ⚙️ **Project settings** → **Cloud Messaging** →
      **Web Push certificates** → **Generate key pair** (if none exists) and
      copy the 87-character key that starts with `B`.
-   - Put it in **`notifications.js` → `DEFAULT_VAPID_PUBLIC_KEY`** (top of
-     the file), or alternatively in the Firestore `config/push` document as
-     the `publicKey` field. Redeploy/re-upload the changed file.
-   - **Verify the running app actually uses your key:** with the app open,
-     the console now prints e.g.
+   - Save it **once** in the app: open HubbleNest → **Profile & Settings →
+     Off-App Push Notifications** → paste the key → **Save push
+     configuration**. It is stored in the Firestore `config/push` document
+     and survives every future redeploy — you never edit code for this
+     again. (The embedded `DEFAULT_VAPID_PUBLIC_KEY` in `notifications.js`
+     is only a bootstrap fallback.)
+   - After saving, send the test push from the same card. **Verify which key
+     the running app uses:** the console prints e.g.
      `[HubbleNest] Web Push: using VAPID key BLeL1k63W4…sxYo (source:
-     embedded constant)`. If the suffix does NOT match the key you pasted,
-     the browser is running a stale cached copy of `notifications.js` —
-     hard-refresh once (Ctrl+Shift+R), or unregister the old service worker
-     (see the stale-service-worker entry above).
+     embedded constant)`. `(source: embedded constant)` means the Settings
+     key has not been saved/read yet; `(source: config/push doc)` means the
+     one-time configuration is live. A mismatch means you are looking at a
+     stale cached copy — hard-refresh once (Ctrl+Shift+R). Automatic
+     background retries pause for the session after the first 401; explicit
+     user actions (nudge / test-push buttons) always retry deliberately.
 3. If your Google Cloud **Web API key** has restrictions (Google Cloud
    Console → APIs & Services → **Credentials** → the browser key used by
    `firebase.js`): either set *Application restrictions* → **None**, or add

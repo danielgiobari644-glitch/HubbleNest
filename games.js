@@ -49,7 +49,7 @@ import { formatBytes } from './cloudinary.js';
 
 import { handlePermissionError } from './firestore-doctor.js';
 
-import { buildSrcDocFromFiles, detectLanguages } from './public-game-builder.js';
+import { buildSrcDocFromFiles, buildSrcDoc, detectLanguages, normalizeGamePath } from './public-game-builder.js';
 
 /* ========================================================================
    State
@@ -104,15 +104,15 @@ const STARTER_CSS = `html,body{margin:0;height:100%;background:#0b1020;color:#ee
 .bomb{background:radial-gradient(circle at 35% 35%,#ff8f8f,#c0392b);box-shadow:0 0 18px rgba(248,113,113,.8)}`;
 
 const STARTER_JS = `function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
-function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function lsSet(k,v){try{return localStorage.setItem(k,v)}catch(e){}}
 var stage=document.getElementById('stage');
 var launcher=document.getElementById('launcher');
 var scoreEl=document.getElementById('score'),timeEl=document.getElementById('time'),bestEl=document.getElementById('best');
 var best=Number(lsGet('orbit-best')||0);
 bestEl.textContent=best;
-var score=0,time=30,misses=0,running=false,spawner=null,ticker=null;
+var score=0,time=30,misses=0,running=false,spawner=null,lastTick=0;
 
-function end(msg){running=false;clearInterval(spawner);clearInterval(ticker);
+function end(msg){running=false;clearInterval(spawner);
   document.querySelectorAll('.star').forEach(function(s){s.remove()});
   if(score>best){best=score;lsSet('orbit-best',String(best));bestEl.textContent=best;}
   launcher.style.display='flex';
@@ -127,38 +127,46 @@ function spawn(){
   s.style.width=s.style.height=size+'px';
   s.style.left=(6+Math.random()*88)+'vw';
   s.style.top='-40px';
+  s.dataset.speed=String(2.2+Math.random()*1.6+(30-time)*0.06);
   stage.appendChild(s);
-  var fall=(function(el){
-    var y=-40,v=2.2+Math.random()*1.6+(30-time)*0.06;
-    return function(){if(!running){return;}
-      y+=v;el.style.top=y+'px';
-      if(y>window.innerHeight+40&&!el.dataset.done){el.dataset.done='1';
-        if(!el.classList.contains('bomb')){misses++;if(misses>=3){end('Three slipped past.');}}
-        el.remove();}};
-  })(s);
   s.addEventListener('pointerdown',function(ev){if(!running||s.dataset.done)return;s.dataset.done='1';
     if(s.classList.contains('bomb')){end('You caught a red bomb!');s.remove();return;}
     score++;scoreEl.textContent=score;s.classList.add('boom');setTimeout(function(){s.remove()},180);});
-  setIntervalSafe(fall);}
+}
 
-function setIntervalSafe(fn){var id=setInterval(fn,16);var old=ticker;clearInterval(old);ticker=id;}
+/* ONE animation loop drives every star. The old build gave each star its own
+   setInterval but cleared the shared previous timer on every spawn, which
+   froze earlier stars in mid-air; a single rAF loop keeps them all falling. */
+function loop(ts){
+  if(!running)return;
+  if(!lastTick)lastTick=ts;
+  var dt=Math.min((ts-lastTick)/16.66,3);lastTick=ts;
+  var stars=document.querySelectorAll('.star');
+  for(var i=0;i<stars.length;i++){
+    var el=stars[i];if(el.dataset.done)continue;
+    var y=parseFloat(el.style.top)||-40;
+    y+=Number(el.dataset.speed||2)*dt;
+    el.style.top=y+'px';
+    if(y>window.innerHeight+40){el.dataset.done='1';
+      if(!el.classList.contains('bomb')){misses++;if(misses>=3){end('Three slipped past.');}}
+      el.remove();}
+  }
+  requestAnimationFrame(loop);
+}
+
+setInterval(function(){if(!running)return;time--;timeEl.textContent=time;if(time<=0){end('Time!');}},1000);
 
 document.getElementById('start').addEventListener('click',function(){
-  score=0;time=30;misses=0;running=true;
+  score=0;time=30;misses=0;running=true;lastTick=0;
   scoreEl.textContent='0';timeEl.textContent='30';
   launcher.style.display='none';
   spawner=setInterval(spawn,650);
-  ticker=setInterval(function(){time--;timeEl.textContent=time;if(time<=0){end('Time!');}},1000);
+  requestAnimationFrame(loop);
   spawn();});`;
 
-function buildSrcDoc(html, css, js) {
-  // Neutralise script-closing sequences so member code can't break the wrapper.
-  const safe = (s) => String(s || '').replace(/<\/script/gi, '<\\/script');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${safe(css)}</style></head><body>${safe(html)}
-<script>${safe(js)}<\/script></body></html>`;
-}
+/* buildSrcDoc (classic wrapper) and normalizeGamePath are shared with the
+   public game pages — they live in public-game-builder.js and are imported
+   above. Keeping ONE definition avoids drift between preview and player. */
 
 /* ========================================================================
    Subscription
@@ -515,6 +523,19 @@ export function setGameEntry(path) {
   showToast(`Entry file set to ${path}.`, 'info');
 }
 
+/** Index-based wrappers — safe against quotes/apostrophes in file paths. */
+export function setGameEntryByIndex(idx) {
+  const paths = Object.keys(editorFiles).sort();
+  const p = paths[Number(idx)];
+  if (p) setGameEntry(p);
+}
+
+export function removeGameFileByIndex(idx) {
+  const paths = Object.keys(editorFiles).sort();
+  const p = paths[Number(idx)];
+  if (p) removeGameFile(p);
+}
+
 export function clearGameFiles() {
   if (Object.keys(editorFiles).length === 0) return;
   if (!window.confirm('Remove all uploaded project files from this game?')) return;
@@ -536,7 +557,7 @@ function renderGameFilesPane() {
     pane.innerHTML = `<div class="game-files-empty">No project files uploaded yet — add a folder of code (HTML, CSS, JS, JSON, Python, any text language) and it runs from its own index.html.</div>`;
     return;
   }
-  pane.innerHTML = paths.map((p) => {
+  pane.innerHTML = paths.map((p, idx) => {
     const isEntry = p === editorEntry;
     const isHtml = /\.html?$/i.test(p);
     return `
@@ -545,10 +566,22 @@ function renderGameFilesPane() {
         <span class="game-file-size">${formatBytes(editorFiles[p].length)}</span>
         ${isEntry
           ? `<span class="game-file-entry-chip">Entry</span>`
-          : (isHtml ? `<button type="button" class="btn-ghost game-file-btn" onclick="window.HubbleNest.setGameEntry('${escapeHtml(p)}')">Set entry</button>` : '')}
-        <button type="button" class="btn-ghost game-file-btn game-file-remove" title="Remove file" onclick="window.HubbleNest.removeGameFile('${escapeHtml(p)}')">✕</button>
+          : (isHtml ? `<button type="button" class="btn-ghost game-file-btn" data-game-set-entry="${idx}">Set entry</button>` : '')}
+        <button type="button" class="btn-ghost game-file-btn game-file-remove" title="Remove file" data-game-remove="${idx}">✕</button>
       </div>`;
   }).join('');
+
+  // Delegated clicks resolved through INDEX lookups — file paths may contain
+  // quotes or apostrophes that would break inline onclick="…'${p}'…" strings.
+  if (wrap && !wrap.dataset.gameFilesWired) {
+    wrap.dataset.gameFilesWired = '1';
+    wrap.addEventListener('click', (ev) => {
+      const setBtn = ev.target.closest('[data-game-set-entry]');
+      if (setBtn) { setGameEntryByIndex(Number(setBtn.dataset.gameSetEntry)); return; }
+      const rmBtn = ev.target.closest('[data-game-remove]');
+      if (rmBtn) removeGameFileByIndex(Number(rmBtn.dataset.gameRemove));
+    });
+  }
 }
 
 export async function saveCurrentGame() {

@@ -56,6 +56,17 @@ let activeNotifUnsubscribe = null;
  */
 const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquVuPlHHHZKYaOzGUOCqp7z--H328TFz0Zpua7xeszYo';
 
+/* ---- Session failure latch --------------------------------------------
+   A 401 from fcmregistrations.googleapis.com (FCM API disabled / VAPID key
+   mismatch / Web-API-key restriction) is PROJECT-side: retrying it over and
+   over in the same session only spams the console with identical errors and
+   burns FCM quota. After the first hard failure we stop automatic attempts
+   for the rest of the session; explicit user actions (nudge button, the
+   Settings "test push" button) pass { force: true } and retry deliberately.
+   Saving a new one-time configuration (savePushConfig) resets the latch.  */
+let pushSetupHardFailed = false;
+let pushInitInflight = null;
+
 /* ========================================================================
    ONE-TIME push configuration (survives every redeploy)
    ------------------------------------------------------------------------
@@ -130,6 +141,8 @@ export async function savePushConfig(cfg, profile) {
     sender.invalidatePushConfigCache();
   } catch (e) { /* module already loaded or unavailable — non-fatal */ }
   pushConfigStatusCache = null;
+  // A new configuration gives this session a fresh chance to activate push.
+  pushSetupHardFailed = false;
 
   return getPushConfigStatus();
 }
@@ -235,19 +248,34 @@ function urlBase64ToUint8Array(base64String) {
  * deliver pushes to this user even when the app is closed.
  *
  * @param {string} userId
- * @param {{silent?: boolean}} [opts]  silent (default true): never surface
- *        UI toasts for background token refreshes — only user-initiated
- *        opt-ins (nudge/settings) pass { silent: false }.
+ * @param {{silent?: boolean, force?: boolean}} [opts]
+ *        silent (default true): never surface UI toasts for background token
+ *        refreshes — only user-initiated opt-ins (nudge/settings) pass
+ *        { silent: false }.
+ *        force (default false): retry even after a hard failure earlier in
+ *        this session (used by explicit user actions only).
  * @returns {Promise<boolean>} true when a token was minted and stored.
  */
 export async function initWebPushNotifications(userId, opts = {}) {
   const silent = opts.silent !== false;
+  const force = opts.force === true;
 
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     console.log('Push notifications are not supported in this browser.');
     return false;
   }
 
+  // One hard failure per session is enough — silent background retries
+  // (auth refreshes, view switches) must not re-spam FCM and the console.
+  if (pushSetupHardFailed && !force) {
+    return false;
+  }
+  // Concurrent calls share one attempt (boot can trigger several at once).
+  if (pushInitInflight && !force) {
+    return pushInitInflight;
+  }
+
+  const attempt = (async () => {
   try {
     const registration = await navigator.serviceWorker.register('./service-worker.js');
 
@@ -311,7 +339,7 @@ export async function initWebPushNotifications(userId, opts = {}) {
     }
 
     return true;
-  } catch (err) {
+    } catch (err) {
     console.warn('Web push setup error:', err);
     const code = err?.code || '';
     const msg = String(err?.message || '');
@@ -324,15 +352,16 @@ export async function initWebPushNotifications(userId, opts = {}) {
 
     if (authProblem) {
       // 401 on fcmregistrations.googleapis.com — the receiving side of push
-      // needs PROJECT-side configuration that only the owner can do:
-      //   1) enable the "Firebase Cloud Messaging API" for the project, and
-      //   2) generate a Web Push certificate (VAPID) in THAT project and use
-      //      its key here (embedded constant or config/push.publicKey).
-      console.error(
-        '[HubbleNest] Push notifications cannot activate — project configuration required.\n' +
-        '  1. Google Cloud Console → select the \'hubblenest\' project → APIs & Services → Library → enable "Firebase Cloud Messaging API".\n' +
+      // needs PROJECT-side configuration that only the owner can do. The
+      // latch stops every further automatic attempt this session; explicit
+      // user actions (nudge / Settings test) retry via { force: true }.
+      pushSetupHardFailed = true;
+      console.warn(
+        '[HubbleNest] Push notifications cannot activate — project configuration required (further automatic attempts paused for this session).\n' +
+        '  1. Google Cloud Console → select the \'hubblenest\' project → APIs & Services → Library → enable "Firebase Cloud Messaging API":\n' +
+        '     https://console.developers.google.com/apis/api/fcm.googleapis.com/overview?project=hubblenest\n' +
         '  2. Firebase Console → Project Settings (gear) → Cloud Messaging → Web Push certificates → "Generate key pair" and copy it.\n' +
-        '  3. Paste that key into notifications.js → DEFAULT_VAPID_PUBLIC_KEY (or the config/push doc\'s publicKey field), and redeploy.\n' +
+        '  3. Open the app → Profile & Settings → "Off-App Push Notifications" → paste the key → Save (stored in Firestore config/push — one-time, survives redeploys).\n' +
         '  4. If the Web API key has HTTP-referrer/API restrictions (Google Cloud Console → Credentials), allow this site or remove the restriction.\n' +
         '  Full walkthrough: README → Troubleshooting → "Web push notifications return 401".'
       );
@@ -341,6 +370,14 @@ export async function initWebPushNotifications(userId, opts = {}) {
       }
     }
     return false;
+  }
+})();
+
+  pushInitInflight = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (pushInitInflight === attempt) pushInitInflight = null;
   }
 }
 
@@ -354,8 +391,10 @@ export async function requestPushPermission(userId) {
 
   const permission = await Notification.requestPermission();
   if (permission === 'granted') {
-    // User-initiated — surface setup problems with a visible toast.
-    const ok = await initWebPushNotifications(userId, { silent: false });
+    // User-initiated — surface setup problems with a visible toast, and
+    // deliberately RETRY even if an automatic attempt failed earlier
+    // (the failure latch only pauses background attempts).
+    const ok = await initWebPushNotifications(userId, { silent: false, force: true });
     return ok;
   }
   return false;

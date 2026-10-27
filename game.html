@@ -16,8 +16,8 @@
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
-  <link rel="stylesheet" href="./style.css?v=13" />
-  <link rel="stylesheet" href="./public.css?v=13" />
+  <link rel="stylesheet" href="./style.css?v=14" />
+  <link rel="stylesheet" href="./public.css?v=14" />
 </head>
 <body class="public-body">
   <header class="pub-header">
@@ -73,7 +73,10 @@
         stage.innerHTML = `<div class="pub-frame-wrap"><iframe id="pub-game-frame" title="${escapeHtml(g.title || 'Game')}" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe></div>`;
         const frame = document.getElementById('pub-game-frame');
         // Reuse the app's exact sandboxed builder (relative refs → data: URLs).
-        const { default: build } = await import('./public-game-builder.js');
+        // NOTE: public-game-builder.js has NAMED exports only — destructuring
+        // `default` here used to yield undefined and every public game page
+        // fell into its catch block ("This game is not public").
+        const { buildSrcDocFromFiles: build } = await import('./public-game-builder.js');
         frame.srcdoc = build(g.files, g.entryPath);
       } else if (g.files) {
         stage.innerHTML = `<div class="pub-note">This is a source project without an HTML entry — browsers cannot execute ${(g.languages || []).join(', ') || 'these languages'}. The full source is listed below.</div>`;

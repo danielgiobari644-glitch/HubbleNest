@@ -3,11 +3,18 @@
  * Uses relative asset paths so the app works when hosted from ANY base path
  * (domain root, GitHub Pages project subpath, Firebase Hosting, etc.)
  *
- * CACHING STRATEGY (v13 — "deploys land on the NEXT load, no mixed versions"):
+ * CACHING STRATEGY (v14 — "the module graph can NEVER mix deploy versions"):
  * - App navigations:            network-first with cache:'reload' (revalidates
  *                               the HTML shell, never trusting the browser's
  *                               max-age=600 HTTP cache) → cache → cached shell
- * - Same-origin shell assets:   STALE-WHILE-REVALIDATE with no-cache
+ * - Same-origin JS + CSS:       NETWORK-FIRST with cache:'no-cache'. A module
+ *                               graph (app.js → spaces.js → …) must always
+ *                               come from ONE deploy: serving any cached
+ *                               module stale-while-revalidate let a fresh
+ *                               app.js?v=13 link against a STALE spaces.js
+ *                               ("does not provide an export named …") during
+ *                               a deploy window. Offline falls back to cache.
+ * - Other same-origin assets:   STALE-WHILE-REVALIDATE with no-cache
  *                               revalidation — served instantly from cache
  *                               while a freshly-validated copy replaces it.
  *                               Matching ignores the ?v= deploy-version query,
@@ -27,8 +34,8 @@
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v13';
-const IMAGE_CACHE = 'hubblenest-images-v13';
+const CACHE_NAME = 'hubblenest-v14';
+const IMAGE_CACHE = 'hubblenest-images-v14';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',
@@ -164,6 +171,43 @@ async function staleWhileRevalidate(request, cacheName = CACHE_NAME, matchOpts =
   });
 }
 
+// NETWORK-FIRST for same-origin JS/CSS — the module-graph consistency fix.
+// Every stylesheet/script of the app shell is fetched from the network
+// (bypassing BOTH the SW cache and the max-age=600 HTTP cache) whenever the
+// device is online; the cache copy is only used when offline. This makes a
+// mixed-version module graph (fresh app.js + stale spaces.js →
+// "SyntaxError: does not provide an export named …") impossible while
+// online, and still boots instantly from the precache when offline.
+// On success, BOTH the exact request URL and the canonical query-stripped
+// entry are refreshed so the precache self-heals too.
+async function networkFirstCode(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request, { cache: 'no-cache' });
+    if (isCacheableResponse(response)) {
+      cache.put(request, response.clone()).catch(() => {});
+      const canonical = new URL(request.url);
+      if (canonical.search) {
+        canonical.search = '';
+        cache.put(new Request(canonical.href), response.clone()).catch(() => {});
+      }
+    }
+    return response;
+  } catch (networkError) {
+    // Offline (or the request failed): exact match first, then any version
+    // of the same file, then give up.
+    const exact = await cache.match(request).catch(() => null);
+    if (exact) return exact;
+    const anyVersion = await cache.match(request, { ignoreSearch: true }).catch(() => null);
+    if (anyVersion) return anyVersion;
+    return new Response('Offline', {
+      status: 503,
+      statusText: 'Offline',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
+  }
+}
+
 // Keep the Cloudinary image cache bounded (FIFO trim)
 async function trimImageCache() {
   try {
@@ -266,12 +310,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Everything else on our own origin (css/js/png/svg/webmanifest):
-  // stale-while-revalidate with no-cache revalidation — zero perceived latency
-  // (instant cached response) AND deploy freshness on the next load.
-  // ignoreSearch makes versioned URLs (app.js?v=12) hit canonical entries.
+  // Everything else on our own origin:
+  // - JS + CSS: NETWORK-FIRST (see networkFirstCode — module graphs must
+  //   never mix deploy versions during a deploy window).
+  // - Everything else (images, manifest, fonts we host…):
+  //   stale-while-revalidate with no-cache revalidation — zero perceived
+  //   latency AND deploy freshness on the next load. ignoreSearch makes
+  //   versioned URLs (app.js?v=12) hit canonical entries.
   if (url.origin === self.location.origin) {
-    event.respondWith(staleWhileRevalidate(request, CACHE_NAME, { ignoreSearch: true }, true));
+    const isCodeAsset =
+      request.destination === 'script' ||
+      request.destination === 'style' ||
+      /\.(m?js|css)(?:[?#]|$)/i.test(url.pathname);
+    if (isCodeAsset) {
+      event.respondWith(networkFirstCode(request));
+    } else {
+      event.respondWith(staleWhileRevalidate(request, CACHE_NAME, { ignoreSearch: true }, true));
+    }
   }
 });
 

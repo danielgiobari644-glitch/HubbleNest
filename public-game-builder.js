@@ -61,8 +61,23 @@ function dataUrlFor(path, content) {
   return `data:${mimeForPath(path)};charset=utf-8;base64,${utf8ToBase64(content)}`;
 }
 
-function normalizeGamePath(p) {
+/** Normalise a project-relative path (backslashes, ./ and leading /). */
+export function normalizeGamePath(p) {
   return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+}
+
+/**
+ * Classic single-file sandbox wrapper (HTML/CSS/JS editor fields).
+ * Exported so both the Arcade editor and this module's multi-file builder
+ * share one escaping rule for `</script`.
+ */
+export function buildSrcDoc(html, css, js) {
+  // Neutralise script-closing sequences so member code can't break the wrapper.
+  const safe = (s) => String(s || '').replace(/<\/script/gi, '<\\/script');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>${safe(css)}</style></head><body>${safe(html)}
+<script>${safe(js)}<\/script></body></html>`;
 }
 
 /** Resolve a relative reference against the entry file's directory. */
@@ -108,7 +123,7 @@ function neutralizeInlineScripts(html) {
 export function buildSrcDocFromFiles(files, entry) {
   const entryDir = entry.includes('/') ? entry.slice(0, entry.lastIndexOf('/')) : '';
   let html = files[entry] || '';
-  if (!html) return buildSrcDoc('<p>This game has no entry file.</p>', '', '');
+  if (!html) return buildSrcDoc('<p>This game has no entry file.</p>', '', ''); // buildSrcDoc is defined in THIS module above
 
   // Pre-convert every non-entry file into a data URL, rewriting url() in CSS.
   const resolved = {};
