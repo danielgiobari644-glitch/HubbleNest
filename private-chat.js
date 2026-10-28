@@ -32,7 +32,8 @@ import {
   encryptPrivateMessage, 
   decryptPrivateMessage, 
   decryptLegacyEcdhMessage,
-  generateConversationSeed 
+  generateConversationSeed,
+  UNDECRYPTABLE_TEXT
 } from './encryption.js';
 
 import { showToast } from './utils.js';
@@ -48,27 +49,24 @@ export function getConversationId(uid1, uid2) {
 }
 
 /**
- * Get or create a 1-to-1 conversation document
+ * Get or create a 1-to-1 conversation document.
+ *
+ * Runs in a TRANSACTION so the key seed can never be clobbered: if both
+ * participants open a brand-new chat at the same instant (or one device is
+ * offline and retries), Firestore serialises the attempts and EVERY side
+ * converges on the SAME seed instead of the last writer silently replacing
+ * the first one (which would orphan any messages already encrypted with it).
+ *
+ * Always returns conversation data that INCLUDES a keySeed:
+ *   - doc exists with a seed       → returned as-is
+ *   - doc exists WITHOUT a seed    → legacy doc, seed backfilled exactly once
+ *   - doc missing                  → created with a fresh seed
  */
 export async function getOrCreateConversation(currentUser, peerUser) {
   const convId = getConversationId(currentUser.uid, peerUser.uid);
   const convRef = doc(db, 'conversations', convId);
 
-  // The existence check must NEVER be a hard failure: if the read is denied
-  // (stale rules) or the device is briefly offline, we still try to create
-  // the conversation — the create rule is the real gatekeeper.
-  let snap = null;
-  try {
-    snap = await getDoc(convRef);
-  } catch (readErr) {
-    console.warn('Conversation existence check failed — will attempt to create it:', readErr?.code || readErr);
-  }
-
-  if (snap && snap.exists()) {
-    return snap.data();
-  }
-
-  const convData = {
+  const buildConvData = () => ({
     id: convId,
     participants: [currentUser.uid, peerUser.uid],
     participantData: {
@@ -90,43 +88,70 @@ export async function getOrCreateConversation(currentUser, peerUser) {
     keySeed: generateConversationSeed(),
     lastMessage: null,
     updatedAt: serverTimestamp()
-  };
-  await setDoc(convRef, convData);
-  return convData;
+  });
+
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(convRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.keySeed) return { ...data, id: convId };
+        // Legacy conversation created before the seed scheme existed:
+        // backfill the seed exactly once, inside this same transaction.
+        const seed = generateConversationSeed();
+        tx.update(convRef, { keySeed: seed });
+        return { ...data, id: convId, keySeed: seed };
+      }
+      const convData = buildConvData();
+      tx.set(convRef, convData);
+      return convData;
+    });
+  } catch (txErr) {
+    // A denied/failed transaction must never produce a half-created
+    // conversation. Surface it — sendPrivateMessage turns this into a
+    // visible, retryable error instead of encrypting with an unverifiable key.
+    console.warn('[HubbleNest] Conversation create/read failed:', txErr?.code || txErr);
+    throw txErr;
+  }
 }
 
 /**
- * Return the conversation's key seed, creating one for legacy conversations
- * that predate the seed scheme.
+ * Return the conversation's key seed — or null when it cannot be read YET.
  *
- * Concurrency-safe: the legacy backfill runs in a transaction so two
- * participants opening the same old chat at the same time converge on ONE
- * seed instead of overwriting each other's (which would orphan messages).
- * If the conversation document itself is missing or unreadable, a local seed
- * is returned so the UI still works — a conversation created later by
- * getOrCreateConversation carries its own seed and replaces this one.
+ * ⚠ NEVER invents a local seed. The previous behaviour (generating a random
+ * seed when the conversation document did not exist yet) was the exact cause
+ * of every message — including the sender's own — rendering as
+ * "[Encrypted message - cannot be decrypted on this device]" with a console
+ * full of OperationError: the listener froze a seed that matched nothing.
+ * A missing seed is now a normal, recoverable state: callers show a
+ * placeholder for one snapshot and self-heal by re-reading the real seed
+ * (see subscribeToPrivateMessages).
+ *
+ * Concurrency-safe: the legacy backfill (doc exists without a seed) runs in
+ * a transaction so two participants opening the same old chat at the same
+ * time converge on ONE seed instead of overwriting each other's.
  */
 export async function ensureConversationKeySeed(convId) {
   const convRef = doc(db, 'conversations', convId);
   try {
     const snap = await getDoc(convRef);
-    if (snap.exists()) {
-      const existingSeed = snap.data().keySeed;
-      if (existingSeed) return existingSeed;
-      return await runTransaction(db, async (tx) => {
-        const fresh = await tx.get(convRef);
-        if (fresh.exists() && fresh.data().keySeed) {
-          return fresh.data().keySeed;
-        }
-        const seed = generateConversationSeed();
-        tx.update(convRef, { keySeed: seed });
-        return seed;
-      });
-    }
+    if (!snap.exists()) return null;
+    const existingSeed = snap.data().keySeed;
+    if (existingSeed) return existingSeed;
+    // Very old conversation without a seed — backfill exactly once.
+    return await runTransaction(db, async (tx) => {
+      const fresh = await tx.get(convRef);
+      if (fresh.exists() && fresh.data().keySeed) {
+        return fresh.data().keySeed;
+      }
+      const seed = generateConversationSeed();
+      tx.update(convRef, { keySeed: seed });
+      return seed;
+    });
   } catch (err) {
-    console.warn('Conversation key seed unavailable, using a local one:', err?.code || err);
+    console.warn('[HubbleNest] Conversation key seed not readable right now:', err?.code || err);
+    return null;
   }
-  return generateConversationSeed();
 }
 
 /**
@@ -181,13 +206,36 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
   // by then the conversation exists and the same rules allow the read.
   let privateListenerRetried = false;
 
-  // Resolve the conversation key seed once per subscription; every snapshot
-  // decryption reuses it. Failure-tolerant: null seed → placeholder text,
-  // the listener itself stays healthy.
-  const seedPromise = ensureConversationKeySeed(convId).catch(() => null);
+  // ---------------------------------------------------------------------
+  // Self-healing key seed (v2.1).
+  //
+  // The seed is READ FROM FIRESTORE, never invented locally, and is
+  // RE-FETCHED automatically whenever a message fails to decrypt. This
+  // heals every real-world race that used to permanently break a chat:
+  //   • the chat was opened BEFORE the conversation existed (the standard
+  //     "Chat" button flow on a brand-new DM) — the first snapshot used to
+  //     freeze a random local seed, after which EVERY message, including
+  //     the sender's own, rendered as undecryptable (OperationError);
+  //   • the peer backfilled the seed a moment after our first read;
+  //   • our own first message created the conversation milliseconds ago.
+  // ---------------------------------------------------------------------
+  let seed = null;
+  let seedFetch = null;
+  async function getSeed(forceRefresh = false) {
+    if (!forceRefresh && seed) return seed;
+    if (forceRefresh || !seedFetch) {
+      seedFetch = ensureConversationKeySeed(convId)
+        .then((s) => { if (s) seed = s; return s || null; })
+        .catch(() => null);
+    }
+    return seedFetch;
+  }
+  getSeed(); // warm-up in the background; the first snapshot awaits it
 
   activePrivateUnsubscribe = onSnapshot(q, async (snap) => {
-    const seed = seedPromise ? await seedPromise : null;
+    // At most ONE forced re-read per snapshot: a backfill of 50 undecryptable
+    // legacy messages must not fire 50 Firestore reads.
+    let refreshedThisSnapshot = false;
     const decryptedList = [];
     for (const d of snap.docs) {
       const raw = d.data();
@@ -196,9 +244,22 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
       if (raw.isEncrypted && raw.ciphertext && raw.iv) {
         // Primary path: the conversation-seed key (v2 scheme — always works,
         // on every device, for sender and receiver alike).
-        decryptedContent = seed
-          ? await decryptPrivateMessage(raw.ciphertext, raw.iv, convId, seed)
-          : { text: '[Encrypted message - cannot be decrypted on this device]', isDecryptionError: true };
+        const attemptSeed = await getSeed();
+        decryptedContent = attemptSeed
+          ? await decryptPrivateMessage(raw.ciphertext, raw.iv, convId, attemptSeed)
+          : { text: UNDECRYPTABLE_TEXT, isDecryptionError: true };
+
+        // SELF-HEAL: a failure almost always means our seed is stale or the
+        // conversation document appeared after this listener attached.
+        // Re-read the REAL seed from Firestore once and retry immediately —
+        // no reload, no reopen, sender and receiver both recover live.
+        if (decryptedContent.isDecryptionError && !refreshedThisSnapshot) {
+          refreshedThisSnapshot = true;
+          const freshSeed = await getSeed(true);
+          if (freshSeed && freshSeed !== attemptSeed) {
+            decryptedContent = await decryptPrivateMessage(raw.ciphertext, raw.iv, convId, freshSeed);
+          }
+        }
 
         // Fallback: messages written by the old per-device ECDH scheme carry
         // no scheme marker. Try the legacy key path once before giving up —
@@ -214,6 +275,13 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
             );
             if (legacy && !legacy.isDecryptionError) decryptedContent = legacy;
           } catch (e) { /* keep the placeholder */ }
+        }
+
+        if (decryptedContent.isDecryptionError) {
+          // ONE calm, actionable line per failing message — the per-attempt
+          // OperationError stack spam the console used to fill with is gone
+          // (decryption attempts themselves are deliberately silent).
+          console.warn('[HubbleNest] One message could not be decrypted (wrong or tampered key). It will recover automatically once the conversation key is readable.');
         }
       }
 
@@ -266,6 +334,11 @@ export async function sendPrivateMessage(currentUser, peerUser, { text, attachme
   const convId = convData.id || getConversationId(currentUser.uid, peerUser.uid);
   const convRef = doc(db, 'conversations', convId);
   const seed = convData.keySeed || await ensureConversationKeySeed(convId);
+  if (!seed) {
+    // Never encrypt with an unverifiable seed: that ciphertext could never
+    // be read again. The user gets a visible, retryable error instead.
+    throw new Error('This conversation could not be secured (key unavailable). Reopen the chat and try again.');
+  }
 
   // 2. Encrypt payload locally in the browser — plaintext never leaves it.
   const payloadToEncrypt = {

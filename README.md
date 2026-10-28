@@ -221,14 +221,24 @@ scheme's fatal flaw — it paired a per-device ECDH private key (localStorage)
 with a public key on the profile, so ANY drift (signing in on a second
 device, clearing site data, regenerating keys on one device only) made the
 two sides derive different keys and permanently orphaned every message.
-The current build (v2) derives one AES-256-GCM key per CONVERSATION from a
+The current build (v2.1) derives one AES-256-GCM key per CONVERSATION from a
 random 256-bit seed stored on the conversation document (readable only by
 participants under the security rules), so messages decrypt identically on
 every device — sender included — and can never drift. Nothing to configure.
-Messages written by the v1 scheme carry no scheme marker: they are
-attempted with the legacy key path first (still readable where the old
-keypair matches) and otherwise show the placeholder. New messages are
-always readable for both participants.
+Two hardening fixes closed the last two real-world failure modes:
+(1) the key seed is NEVER invented locally — when the conversation document
+is not readable yet the listener shows a placeholder for that one snapshot
+and re-reads the real seed from Firestore, so opening a brand-new chat and
+sending the first message decrypt live, including the sender's own message;
+(2) conversation creation runs in a transaction, so two participants opening
+the same new chat at the same instant converge on ONE seed instead of
+clobbering each other's. A failing decrypt attempt is silent; if a message
+still cannot be authenticated you get ONE calm console warning (wrong or
+tampered data), never the old OperationError stack spam. Messages written
+by the v1 scheme carry no scheme marker: they are attempted with the legacy
+key path first (still readable where the old keypair matches) and otherwise
+show the placeholder. New messages are always readable for both
+participants.
 
 **Login says "Incorrect email or password" (auth/invalid-credential):**
 that is Firebase's exact answer for a wrong email OR wrong password —

@@ -32,6 +32,14 @@
 const KEY_CACHE = new Map();
 const KEY_DOMAIN = 'hn-dm2';
 
+/**
+ * Readable placeholder shown for a message whose ciphertext cannot be
+ * authenticated with the conversation key (wrong/missing seed or tampered
+ * data). Shared by encryption.js and private-chat.js so the wording stays
+ * identical everywhere.
+ */
+export const UNDECRYPTABLE_TEXT = '[Encrypted message - cannot be decrypted on this device]';
+
 export function bufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -113,12 +121,23 @@ export async function encryptPrivateMessage(payloadObj, convId, seedB64) {
 }
 
 /**
- * Decrypt a message. Never throws — an undecryptable message (wrong/tampered
- * data, foreign conversation) comes back with a readable placeholder so the
+ * Decrypt a message. Never throws — an undecryptable message (missing seed,
+ * wrong key, tampered data) comes back with a readable placeholder so the
  * chat keeps working and the failure is visible, not fatal.
+ *
+ * Deliberately QUIET: a failed attempt is an EXPECTED step of the self-heal
+ * loop in private-chat.js (stale seed → re-read the real seed → retry), so
+ * this function no longer console-warns per attempt. The caller emits ONE
+ * calm warning only when every attempt for a message has failed.
  */
 export async function decryptPrivateMessage(ciphertextBase64, ivBase64, convId, seedB64) {
   try {
+    if (!ciphertextBase64 || !ivBase64 || !convId || !seedB64) {
+      // Missing key material (e.g. the conversation document was not readable
+      // YET) — a recoverable state, not a crypto failure.
+      return { text: UNDECRYPTABLE_TEXT, isDecryptionError: true, failureReason: 'missing-key-material' };
+    }
+
     const key = await getConversationKey(convId, seedB64);
     const iv = new Uint8Array(base64ToBuffer(ivBase64));
     const ciphertext = base64ToBuffer(ciphertextBase64);
@@ -131,10 +150,12 @@ export async function decryptPrivateMessage(ciphertextBase64, ivBase64, convId, 
 
     return JSON.parse(new TextDecoder().decode(decryptedBuffer));
   } catch (err) {
-    console.warn('Decryption error:', err);
+    // Silent by design (see docstring); the failure reason is surfaced to
+    // the caller via the placeholder object for one-shot diagnostics.
     return {
-      text: '[Encrypted message - cannot be decrypted on this device]',
-      isDecryptionError: true
+      text: UNDECRYPTABLE_TEXT,
+      isDecryptionError: true,
+      failureReason: err?.name || 'DecryptError'
     };
   }
 }
