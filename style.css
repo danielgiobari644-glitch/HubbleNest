@@ -6174,3 +6174,150 @@ h1, h2, h3, h4 {
 .game-source-panel { padding: 22px; }
 .game-source-title { margin: 0 0 10px; font-size: 1.05rem; font-weight: 700; }
 .game-source-note { color: var(--text-secondary); font-size: 0.88rem; line-height: 1.65; margin: 0 0 16px; }
+
+/* ==========================================================================
+   COMPOSER OPTIONS DROPDOWN — all post config in one menu so the textarea
+   stays tall and the composer never clusters (task 19).
+   ========================================================================== */
+.composer-menu-wrap { position: relative; display: inline-flex; }
+
+.composer-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: -4px;
+  min-width: 230px;
+  background: var(--bg-card, #171c33);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 8px;
+  box-shadow: 0 22px 60px rgba(5, 8, 22, 0.55);
+  z-index: 80;
+  animation: composerMenuIn 0.16s ease;
+  transform-origin: bottom left;
+}
+@keyframes composerMenuIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.composer-menu-title {
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 7px 10px 4px;
+}
+
+.composer-menu-sep {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 6px 4px;
+}
+
+.composer-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.composer-menu-item:hover { background: var(--accent-subtle); color: var(--accent-primary); }
+.composer-menu-item svg { flex-shrink: 0; opacity: 0.8; }
+
+.composer-menu-toggle input { accent-color: var(--accent-primary); margin: 0; }
+
+/* Taller post textarea — the whole point of the dropdown rework */
+.composer-textarea-tall {
+  min-height: 116px;
+  max-height: 280px;
+  border-radius: 18px !important;
+  line-height: 1.55;
+}
+
+/* ==========================================================================
+   CHAT SEND / RECEIVE ENTRY ANIMATIONS (task 19)
+   Applied ONLY to messages that appear after the initial history render —
+   own messages slide in from the right, received from the left with a soft
+   accent glow pulse. Classes are added by renderChatMessages /
+   renderDirectMessages in app.js (spaceAnimatedIds / directAnimatedIds).
+   ========================================================================== */
+@keyframes hnMsgInOwn {
+  from { opacity: 0; transform: translateX(28px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes hnMsgInRecv {
+  from { opacity: 0; transform: translateX(-28px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes hnRecvGlow {
+  0%   { box-shadow: 0 0 0 0 rgba(108, 111, 245, 0.42); }
+  100% { box-shadow: 0 0 0 16px rgba(108, 111, 245, 0); }
+}
+.message-row.msg-enter-send .msg-bubble-box {
+  animation: hnMsgInOwn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.message-row.msg-enter-recv .msg-bubble-box {
+  animation: hnMsgInRecv 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.message-row.msg-enter-recv .msg-bubble {
+  animation: hnRecvGlow 1.05s ease-out 0.08s 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-row.msg-enter-send .msg-bubble-box,
+  .message-row.msg-enter-recv .msg-bubble-box,
+  .message-row.msg-enter-recv .msg-bubble {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   ARCADE — AI GAME BUILDER PANEL (task 19)
+   ========================================================================== */
+.game-ai-panel {
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.10), rgba(56, 189, 248, 0.08));
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+}
+.game-ai-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.game-ai-spark { font-size: 1.3rem; line-height: 1; }
+.game-ai-head-text { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; color: var(--text-secondary); }
+.game-ai-head-text b { font-size: 0.92rem; color: var(--text-primary); }
+.game-ai-prompt {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  resize: vertical;
+  min-height: 64px;
+}
+.game-ai-prompt:focus { outline: none; border-color: rgba(139, 92, 246, 0.55); }
+.game-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.game-ai-generate-status { font-size: 0.78rem; color: var(--text-secondary); }

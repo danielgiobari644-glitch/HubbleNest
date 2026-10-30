@@ -34,8 +34,8 @@
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v15';
-const IMAGE_CACHE = 'hubblenest-images-v15';
+const CACHE_NAME = 'hubblenest-v16';
+const IMAGE_CACHE = 'hubblenest-images-v16';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',
@@ -63,6 +63,7 @@ const PRECACHE_ASSETS = [
   './utils.js',
   './community.js',
   './games.js',
+  './ai-game-builder.js',
   './direct-share.js',
   './firestore-doctor.js',
   './format.js',

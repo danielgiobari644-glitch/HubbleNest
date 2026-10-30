@@ -17,6 +17,7 @@ import {
   doc, 
   getDoc,
   getDocs,
+  setDoc,
   collection,
   deleteDoc,
   addDoc,
@@ -200,7 +201,11 @@ import {
   setGameEntry,
   setGameEntryByIndex,
   removeGameFileByIndex,
-  clearGameFiles
+  clearGameFiles,
+  toggleAiPanel,
+  refreshAiPanelStatus,
+  generateGameFromPrompt,
+  scaffoldProjectWithAi
 } from './games.js';
 
 import {
@@ -266,6 +271,12 @@ const state = {
    ========================================================================== */
 
 let deferredInstallPrompt = null;
+
+/* Chat message entry animations (task 19). Ids already on screen NEVER
+   animate again — only genuinely NEW messages play the send/receive motion.
+   null means "first render of this conversation": history loads silently. */
+let spaceAnimatedIds = null;
+let directAnimatedIds = null;
 
 // Register the service worker as early as possible so the PWA is
 // installable even on the public landing page (and works offline there).
@@ -1209,6 +1220,7 @@ export async function openSpace(spaceId) {
   }
 
   state.activeSpace = { id: spaceSnap.id, ...spaceSnap.data() };
+  spaceAnimatedIds = null; // new Space → chat history loads silently
   state.activeSpaceRole = await getMembershipState(spaceId, state.currentUser.uid);
 
   renderSpaceHeader();
@@ -1403,6 +1415,59 @@ function initChatListener() {
   });
 }
 
+/** Close the composer options dropdown if a click lands outside it. */
+export function closeComposerMenu() {
+  const menu = document.getElementById('composer-menu');
+  const btn = document.getElementById('composer-menu-btn');
+  if (menu) menu.setAttribute('hidden', '');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+/** Toggle the composer options dropdown (＋ button under the post box). */
+export function toggleComposerMenu(ev) {
+  if (ev) { ev.stopPropagation(); }
+  const menu = document.getElementById('composer-menu');
+  const btn = document.getElementById('composer-menu-btn');
+  if (!menu) return;
+  const isOpen = !menu.hasAttribute('hidden');
+  if (isOpen) {
+    closeComposerMenu();
+  } else {
+    menu.removeAttribute('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+/** Apply a formatting action from the dropdown, then close it. */
+export function composerMenuApply(inputId, kind) {
+  closeComposerMenu();
+  const el = document.getElementById(inputId);
+  if (el) { el.focus({ preventScroll: true }); }
+  if (typeof window.HubbleNest?.rtWrap === 'function') {
+    window.HubbleNest.rtWrap(inputId, kind);
+  }
+}
+
+/** Pick an image / any file from the dropdown. */
+export function composerMenuPickImage() {
+  closeComposerMenu();
+  document.getElementById('home-image-input')?.click();
+}
+export function composerMenuPickFile() {
+  closeComposerMenu();
+  document.getElementById('home-doc-input')?.click();
+}
+
+// Click-outside + Escape close the composer dropdown (registered once).
+document.addEventListener('click', (ev) => {
+  if (ev.target && typeof ev.target.closest === 'function' && !ev.target.closest('.composer-menu-wrap')) {
+    closeComposerMenu();
+  }
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') closeComposerMenu();
+});
+
 function getFileIcon(type, filename = '') {
   const t = (type || '').toLowerCase();
   const ext = (filename.split('.').pop() || '').toLowerCase();
@@ -1449,6 +1514,16 @@ function renderChatMessages() {
   container.innerHTML = state.spaceMessages.map(msg => {
     const isOwn = msg.senderId === state.currentUser.uid;
     const canDelete = isOwn || state.activeSpaceRole === 'admin';
+
+    // Entry animation ONLY for messages that appeared after the initial
+    // history render — sends slide in from the right, receives from the left.
+    let enterCls = '';
+    if (!spaceAnimatedIds) {
+      spaceAnimatedIds = new Set(state.spaceMessages.map((m) => m.id));
+    } else if (!spaceAnimatedIds.has(msg.id)) {
+      spaceAnimatedIds.add(msg.id);
+      enterCls = isOwn ? 'msg-enter-send' : 'msg-enter-recv';
+    }
 
     // Reactions render
     const reactions = msg.reactions || {};
@@ -1519,7 +1594,7 @@ function renderChatMessages() {
     }
 
     return `
-      <div class="message-row ${isOwn ? 'msg-own' : ''}">
+      <div class="message-row ${isOwn ? 'msg-own' : ''} ${enterCls}">
         <div class="msg-avatar">
           <img src="${getAvatarUrl(msg.senderPhoto, msg.senderName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
         </div>
@@ -2772,6 +2847,7 @@ export async function selectConversation(convId, peerUid) {
   state.activeDirectPeer = peerData;
   state.activeConversation = { id: convId };
   state.directMessages = [];
+  directAnimatedIds = null; // new conversation → first batch loads silently
   state.directChatRetried = false;
 
   // Update header with peer's details
@@ -2866,8 +2942,7 @@ export function retryActiveDirectChat() {
 
 /**
  * Home feed composer: Enter posts, Shift+Enter inserts a newline, and the
- * textarea auto-grows while the member types (up to 140px, then scrolls).
- * Mirrors the private-chat composer behaviour.
+ * textarea auto-grows while the member types (up to 280px, then scrolls).
  */
 export function handleHomeComposerKey(event) {
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -2880,7 +2955,7 @@ export function handleHomeComposerKey(event) {
   const el = event.target;
   if (el && el.tagName === 'TEXTAREA') {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 280) + 'px';
   }
 }
 
@@ -2896,7 +2971,7 @@ export function handleDirectComposerKey(event) {
   const el = event.target;
   if (el && el.tagName === 'TEXTAREA') {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 280) + 'px';
   }
 }
 
@@ -2924,6 +2999,16 @@ function renderDirectMessages() {
     const decrypted = msg.decrypted || { text: '...' };
     const senderPhoto = isOwn ? state.userProfile.photoURL : state.activeDirectPeer?.photoURL;
     const senderName = isOwn ? state.userProfile.displayName : state.activeDirectPeer?.displayName;
+
+    // Entry animation ONLY for messages that arrived after the first render
+    // (sends slide from the right, receives from the left with a soft glow).
+    let enterCls = '';
+    if (!directAnimatedIds) {
+      directAnimatedIds = new Set(state.directMessages.map((m) => m.id));
+    } else if (!directAnimatedIds.has(msg.id)) {
+      directAnimatedIds.add(msg.id);
+      enterCls = isOwn ? 'msg-enter-send' : 'msg-enter-recv';
+    }
 
     // Day divider between messages sent on different calendar days
     const ts = msg.createdAt?.toDate ? msg.createdAt.toDate() : (msg.createdAt?.seconds ? new Date(msg.createdAt.seconds * 1000) : null);
@@ -3021,7 +3106,7 @@ function renderDirectMessages() {
 
     return `
       ${dividerHtml}
-      <div class="message-row ${isOwn ? 'msg-own' : ''}">
+      <div class="message-row ${isOwn ? 'msg-own' : ''} ${enterCls}">
         <div class="msg-avatar" style="width: 32px; height: 32px;">
           <img src="${getAvatarUrl(senderPhoto, senderName)}" class="avatar-img" alt="${escapeHtml(senderName || '')}" loading="lazy" decoding="async" />
         </div>
@@ -3710,6 +3795,8 @@ export function openProfilePage() {
   if (!state.userProfile) return;
   // Push notification one-time setup card (status + saved values)
   initPushSettingsUI().catch(() => {});
+  // AI Game Builder one-time setup card (Gemini key status)
+  initAiSettingsUI().catch(() => {});
   const nameInput = document.getElementById('page-profile-name');
   const handleInput = document.getElementById('page-profile-handle');
   const bioInput = document.getElementById('page-profile-bio');
@@ -4088,6 +4175,11 @@ Object.assign(window.HubbleNest, {
     handleHomePost();
   },
   handleHomeComposerKey,
+  toggleComposerMenu,
+  closeComposerMenu,
+  composerMenuApply,
+  composerMenuPickImage,
+  composerMenuPickFile,
   stageHomeAttachment: (file) => stageHomeFile(file, 100),
   removeHomeAttachment,
   clearAllHomeAttachments,
@@ -4137,10 +4229,16 @@ Object.assign(window.HubbleNest, {
   setGameEntryByIndex,
   removeGameFileByIndex,
   clearGameFiles,
+  toggleAiPanel,
+  refreshAiPanelStatus,
+  generateGameFromPrompt,
+  scaffoldProjectWithAi,
 
   // Push notifications — one-time configuration (survives redeploys)
   savePushConfigFromSettings,
   testPushFromSettings,
+  initAiSettingsUI,
+  saveAiConfigFromSettings,
 
   // Rich-text compose toolbar
   rtWrap
@@ -4269,6 +4367,74 @@ export async function testPushFromSettings() {
   } catch (err) {
     console.warn('Test push failed:', err);
     showToast('Test push could not run — see the console for the exact error.', 'warning');
+  }
+}
+
+/* ==========================================================================
+   AI GAME BUILDER CONFIG — one-time Gemini key in Firestore config/ai,
+   mirroring the push config pattern (owner claims the doc on first save).
+   ========================================================================== */
+
+export async function initAiSettingsUI() {
+  const statusEl = document.getElementById('ai-config-status');
+  if (!statusEl) return;
+  statusEl.innerHTML = `<div class="push-status-loading">Reading your AI configuration…</div>`;
+  try {
+    const snap = await getDoc(doc(db, 'config', 'ai'));
+    if (snap.exists() && snap.data().apiKey) {
+      const d = snap.data();
+      const model = d.model || 'gemini-2.0-flash';
+      statusEl.innerHTML = `
+        <div class="push-status-row push-status-ok">
+          <span class="push-status-dot"></span>
+          <span><b>Gemini connected:</b> model ${escapeHtml(model)} — Arcade prompts write fully custom games. The key survives every redeploy.</span>
+        </div>`;
+      const keyInput = document.getElementById('ai-key-input');
+      const modelInput = document.getElementById('ai-model-input');
+      if (modelInput && !modelInput.value) modelInput.value = model;
+    } else {
+      statusEl.innerHTML = `
+        <div class="push-status-row push-status-info">
+          <span class="push-status-dot"></span>
+          <span><b>No AI key yet</b> — the Arcade uses its built-in game engine (real playable games, zero config). Add a free Gemini key for fully AI-written games.</span>
+        </div>`;
+    }
+  } catch (err) {
+    console.warn('AI config status failed:', err);
+    statusEl.innerHTML = `<div class="push-status-row push-status-warn"><span class="push-status-dot"></span><span>Could not read the AI configuration (${escapeHtml(err?.code || 'error')}).</span></div>`;
+  }
+}
+
+export async function saveAiConfigFromSettings() {
+  const uid = state.currentUser?.uid;
+  if (!uid) { showToast('Sign in first.', 'info'); return; }
+  const keyInput = document.getElementById('ai-key-input');
+  const modelInput = document.getElementById('ai-model-input');
+  const btn = document.getElementById('ai-save-btn');
+  const apiKey = (keyInput?.value || '').trim();
+  const model = (modelInput?.value || '').trim() || 'gemini-2.0-flash';
+  if (!apiKey) {
+    showToast('Paste your Gemini API key first (aistudio.google.com → Get API key).', 'warning', 5000);
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await setDoc(doc(db, 'config', 'ai'), {
+      apiKey,
+      model,
+      ownerUid: uid,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    showToast('AI configuration saved — the Arcade can now write games with Gemini.', 'success', 5000);
+    if (keyInput) keyInput.value = '';
+    await initAiSettingsUI();
+  } catch (err) {
+    console.error('AI config save failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The AI config is claimed by another member — only its owner can change it.'
+      : (err.message || 'Could not save the AI configuration.'), 'error', 6000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save AI configuration'; }
   }
 }
 

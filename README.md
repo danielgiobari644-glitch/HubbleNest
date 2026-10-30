@@ -73,6 +73,21 @@ firebase deploy
 | Cloudinary cloud / upload preset | `cloudinary.js` |
 | Firestore security rules | `firestore.rules` → paste into Firebase Console → Firestore → Rules → Publish (**re-publish every time this file changes**) |
 | Background push sender (optional, see below) | Firestore document `config/push` |
+| AI Game Builder key (optional, see below) | Firestore document `config/ai` |
+
+## Files & Cloudinary
+
+Every file type is accepted everywhere (feed, chat, DMs, Direct Share, Space files) —
+images go to the image family, video/audio to the video family, and **every document,
+archive and code file is stored as raw bytes** so it stays downloadable.
+
+One-time Cloudinary console setting (**required for PDF and ZIP downloads**): Cloudinary
+blocks delivery of PDF/ZIP files on new accounts by default — links answer `401 deny or
+ACL failure`. Fix once at <https://console.cloudinary.com/settings/security> →
+"PDF and ZIP files delivery" → tick **Allow delivery of PDF and ZIP files** → Save. It
+unblocks existing and future files and takes about ten seconds. The uploader detects the
+block the moment it happens and shows you exactly this instruction instead of leaving you
+a dead link.
 
 ## Notifications
 
@@ -313,7 +328,7 @@ portfolio again (they can still reach it anytime via the account menu →
 index.html · style.css · app.js
 firebase.js · auth.js · spaces.js · chat.js · private-chat.js · chat-requests.js
 people.js · profile.js · files.js · links.js · announcements.js · members.js
-notifications.js · fcm-sender.js · cloudinary.js · encryption.js · qr.js · search.js
+notifications.js · fcm-sender.js · cloudinary.js · encryption.js · qr.js · search.js · ai-game-builder.js
 settings.js · utils.js
 community.js · games.js · public-game-builder.js · direct-share.js
 firestore-doctor.js · format.js · contacts.js · icons.js

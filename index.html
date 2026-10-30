@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=15) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=16) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=15" />
+  <link rel="modulepreload" href="./app.js?v=16" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=15" />
+  <link rel="stylesheet" href="./style.css?v=16" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -96,6 +96,10 @@
         'copyShareLink', 'closeDirectShare', 'backToSharePicker', 'connectToShare',
         'runFirestoreDoctor', 'retryActiveDirectChat', 'handleDirectComposerKey',
         'handleHomeComposerKey', 'chatWithPerson', 'loginWithEmail',
+        'toggleComposerMenu', 'closeComposerMenu', 'composerMenuApply',
+        'composerMenuPickImage', 'composerMenuPickFile',
+        'toggleAiPanel', 'refreshAiPanelStatus', 'generateGameFromPrompt',
+        'scaffoldProjectWithAi', 'saveAiConfigFromSettings', 'initAiSettingsUI',
         'handleSaveProfileFromPage', 'dismissInstallBanner',
         'loadMyContacts', 'addContactByUsername', 'addFoundContact',
         'removeContactFromList', 'addContactFromProfile', 'removeContactFromProfile',
@@ -114,6 +118,81 @@
           }
         })(HANDLERS[i]);
       }
+
+      /* ------------------------------------------------------------------
+         Module-parse watchdog.
+         "Uncaught SyntaxError: Unexpected token '<'" means the host served
+         HTML (404 page / CDN propagation placeholder) where a .js module was
+         expected — i.e. a file is momentarily missing on the web host. Left
+         alone this renders a dead page with zero explanation. The watchdog
+         (a) surfaces a clear recovery banner identifying the failing file,
+         and (b) auto-repairs ONCE per session by purging the service worker
+         + caches and reloading.
+         ------------------------------------------------------------------ */
+      (function () {
+        var repaired = false;
+        try { repaired = sessionStorage.getItem('hn-module-repair') === '1'; } catch (e) { /* ignore */ }
+
+        function showBanner(fileHint) {
+          var old = document.getElementById('hn-boot-repair');
+          if (old) return;
+          var bar = document.createElement('div');
+          bar.id = 'hn-boot-repair';
+          bar.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:99999;' +
+            'max-width:min(560px,92vw);background:#1b1030;color:#ffd9e0;border:1px solid #7c3aed;border-radius:14px;' +
+            'padding:14px 16px;font:600 13px/1.5 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.5);';
+          bar.innerHTML =
+            '<div style="font-weight:800;margin-bottom:4px;">⚠️ A code file failed to load from the web host</div>' +
+            '<div style="font-weight:500;color:#e9d5ff;">' +
+            (fileHint ? 'File: <code style="color:#fff">' + fileHint + '</code><br>' : '') +
+            'This happens right after an upload while GitHub Pages is still propagating, or when a file was missed. ' +
+            'HubbleNest already attempted an automatic repair.</div>' +
+            '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button id="hn-boot-repair-reload" style="background:#7c3aed;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">Repair &amp; reload again</button>' +
+            '<button id="hn-boot-repair-dismiss" style="background:transparent;color:#c4b5fd;border:1px solid #6d28d9;border-radius:8px;padding:7px 14px;font-weight:600;cursor:pointer;">Dismiss</button>' +
+            '</div>';
+          document.body.appendChild(bar);
+          document.getElementById('hn-boot-repair-reload').onclick = forceRepair;
+          document.getElementById('hn-boot-repair-dismiss').onclick = function () { bar.remove(); };
+        }
+
+        function forceRepair() {
+          try { sessionStorage.setItem('hn-module-repair', '1'); } catch (e) { /* ignore */ }
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            }).then(function () {
+              if (window.caches && caches.keys) {
+                return caches.keys().then(function (keys) {
+                  return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+                });
+              }
+              return null;
+            }).then(function () { location.reload(); }).catch(function () { location.reload(); });
+          } else {
+            location.reload();
+          }
+        }
+
+        window.addEventListener('error', function (ev) {
+          try {
+            var msg = (ev && ev.message) || '';
+            // Chrome: "Unexpected token '<'" · Firefox: "expected expression, got '<'"
+            var looksLikeHtmlAsJs = /Unexpected token\s*['"]?<|expected expression, got\s*['"]?<|Unexpected token '<'/.test(msg);
+            if (!looksLikeHtmlAsJs) return;
+            var file = (ev && ev.filename) || '';
+            var shortFile = file ? file.split('/').slice(-1)[0].split('?')[0] : '';
+            console.error('[HubbleNest] Boot watchdog: HTML was served instead of JavaScript' + (shortFile ? ' (' + shortFile + ')' : '') + ' — the host upload is incomplete or still propagating.');
+            if (!repaired) {
+              repaired = true;
+              try { sessionStorage.setItem('hn-module-repair', '1'); } catch (e) { /* ignore */ }
+              setTimeout(forceRepair, 400);
+            } else {
+              if (document.body) showBanner(shortFile);
+            }
+          } catch (e) { /* never break the page from the watchdog */ }
+        }, true);
+      })();
     })();
   </script>
 
@@ -972,29 +1051,42 @@
                 <span class="composer-avatar">
                   <img id="home-composer-avatar" src="" class="avatar-img" alt="Avatar" />
                 </span>
-                <div class="rt-toolbar" role="toolbar" aria-label="Text formatting">
-                  <button type="button" class="rt-btn" title="Bold" aria-label="Bold" onclick="window.HubbleNest.rtWrap('home-composer-input','bold')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg></button>
-                  <button type="button" class="rt-btn" title="Italic" aria-label="Italic" onclick="window.HubbleNest.rtWrap('home-composer-input','italic')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
-                  <button type="button" class="rt-btn" title="Underline" aria-label="Underline" onclick="window.HubbleNest.rtWrap('home-composer-input','underline')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/></svg></button>
-                  <button type="button" class="rt-btn" title="Heading" aria-label="Heading" onclick="window.HubbleNest.rtWrap('home-composer-input','h')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v16"/><path d="M14 4v16"/><path d="M6 12h8"/></svg></button>
-                  <button type="button" class="rt-btn" title="Bulleted list" aria-label="Bulleted list" onclick="window.HubbleNest.rtWrap('home-composer-input','ul')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg></button>
-                  <button type="button" class="rt-btn" title="Inline code" aria-label="Inline code" onclick="window.HubbleNest.rtWrap('home-composer-input','code')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
-                </div>
-                <textarea id="home-composer-input" class="composer-pill composer-textarea" rows="1" placeholder="Share your thoughts… (Enter to post, Shift+Enter for a new line)" onkeydown="window.HubbleNest.handleHomeComposerKey(event)"></textarea>
+                <!-- Tall multi-line textarea -- all post config lives in the + dropdown below -->
+                <textarea id="home-composer-input" class="composer-pill composer-textarea composer-textarea-tall" rows="4" placeholder="Share your thoughts… (Enter to post, Shift+Enter for a new line)" onkeydown="window.HubbleNest.handleHomeComposerKey(event)"></textarea>
                 <div class="composer-tools">
                   <input type="file" id="home-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageHomeAttachment(this.files[0])" />
-                  <input type="file" id="home-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageHomeAttachment(this.files[0])" />
-                  <button type="button" class="composer-icon-btn" onclick="document.getElementById('home-image-input').click()" title="Add an image">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                  </button>
-                  <button type="button" class="composer-icon-btn" onclick="document.getElementById('home-doc-input').click()" title="Attach a file">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                  </button>
-                  <label class="composer-public-toggle" for="home-post-public" title="Also publish this post to a public web page">
-                    <input type="checkbox" id="home-post-public" />
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    Public web page
-                  </label>
+                  <input type="file" id="home-doc-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.md,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageHomeAttachment(this.files[0])" />
+                  <div class="composer-menu-wrap">
+                    <button type="button" class="composer-icon-btn" id="composer-menu-btn" onclick="window.HubbleNest.toggleComposerMenu(event)" title="Post options — formatting, attachments &amp; visibility" aria-haspopup="true" aria-expanded="false" aria-controls="composer-menu">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                    </button>
+                    <div class="composer-menu" id="composer-menu" role="menu" aria-label="Post options" hidden>
+                      <div class="composer-menu-title">Formatting</div>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','bold')"><b style="font-size:.95rem;">B</b>&nbsp; Bold</button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','italic')"><i style="font-family:Georgia,serif;">I</i>&nbsp; Italic</button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','underline')"><u>U</u>&nbsp; Underline</button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','h')">H&nbsp; Heading</button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','ul')">•••&nbsp; Bulleted list</button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuApply('home-composer-input','code')">&lt;/&gt;&nbsp; Inline code</button>
+                      <div class="composer-menu-sep"></div>
+                      <div class="composer-menu-title">Attach</div>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuPickImage()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                        Add an image
+                      </button>
+                      <button type="button" class="composer-menu-item" role="menuitem" onclick="window.HubbleNest.composerMenuPickFile()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                        Attach any file
+                      </button>
+                      <div class="composer-menu-sep"></div>
+                      <div class="composer-menu-title">Visibility</div>
+                      <label class="composer-menu-item composer-menu-toggle" for="home-post-public" title="Also publish this post to a public web page">
+                        <input type="checkbox" id="home-post-public" />
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        Public web page
+                      </label>
+                    </div>
+                  </div>
                   <button type="button" class="composer-send-btn" id="home-composer-send" onclick="window.HubbleNest.handleHomePost()" title="Post" aria-label="Post">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                   </button>
@@ -1230,7 +1322,7 @@
 
                 <div class="composer-row">
                   <input type="file" id="chat-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageChatAttachment(this.files[0])" />
-                  <input type="file" id="chat-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageChatAttachment(this.files[0])" />
+                  <input type="file" id="chat-doc-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.md,.py,.js,.ts,.java,.c,.cpp,.cs,.rb,.go,.rs,.lua,.php,.html,.css,.sh,.yml,.yaml,.xml,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageChatAttachment(this.files[0])" />
 
                   <button type="button" class="composer-icon-btn" onclick="document.getElementById('chat-image-input').click()" title="Add an image to your message">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
@@ -1553,7 +1645,7 @@
 
                   <div class="composer-row">
                     <input type="file" id="direct-image-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.stageDirectAttachment(this.files[0])" />
-                    <input type="file" id="direct-doc-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.mp3,.wav,.mp4,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageDirectAttachment(this.files[0])" />
+                    <input type="file" id="direct-doc-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.csv,.json,.rtf,.md,.py,.js,.ts,.java,.c,.cpp,.cs,.rb,.go,.rs,.lua,.php,.html,.css,.sh,.yml,.yaml,.xml,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov,audio/*,video/*" style="display: none;" onchange="window.HubbleNest.stageDirectAttachment(this.files[0])" />
 
                     <button type="button" class="composer-icon-btn" onclick="document.getElementById('direct-image-input').click()" title="Add an image to private message">
                       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
@@ -1627,6 +1719,7 @@
               </div>
               <div class="page-header-actions">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.insertStarterGame()">Insert starter game</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="game-ai-toggle" onclick="window.HubbleNest.toggleAiPanel()" title="Create a game from a text prompt">✨ Create with AI</button>
                 <button type="button" class="btn btn-primary btn-sm" id="game-save-btn" onclick="window.HubbleNest.saveCurrentGame()">Publish to Arcade</button>
               </div>
             </div>
@@ -1648,7 +1741,21 @@
               </div>
             </div>
 
-            <div class="game-editor-layout">
+            <div class="game-ai-panel" id="game-ai-panel" hidden>
+                <div class="game-ai-head">
+                  <span class="game-ai-spark">✨</span>
+                  <div class="game-ai-head-text">
+                    <b>Create with AI</b>
+                    <span id="game-ai-status-line">Checking your AI setup…</span>
+                  </div>
+                </div>
+                <textarea id="game-ai-prompt" class="game-ai-prompt" rows="2" maxlength="600" placeholder="Describe your game — e.g. &quot;a fast neon snake game where you eat glowing orbs and avoid red mines&quot; or &quot;space shooter with asteroids, purple theme, very fast&quot;"></textarea>
+                <div class="game-ai-actions">
+                  <button type="button" class="btn btn-primary btn-sm" id="game-ai-generate" onclick="window.HubbleNest.generateGameFromPrompt()">⚡ Generate my game</button>
+                  <span class="game-ai-generate-status" id="game-ai-generate-status"></span>
+                </div>
+              </div>
+              <div class="game-editor-layout">
               <div class="game-editor-code">
                 <div class="feed-tabs game-code-tabs" role="tablist">
                   <button type="button" class="feed-tab feed-tab-active" id="game-tab-html" onclick="window.HubbleNest.setCodePane('html')">HTML</button>
@@ -1665,6 +1772,7 @@
                     <input type="file" id="game-folder-input" webkitdirectory directory multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
                     <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('game-files-input').click()">Upload files</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-folder-input').click()">Upload a whole folder</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="game-ai-scaffold" onclick="window.HubbleNest.scaffoldProjectWithAi()" title="Generate a playable browser game from your uploaded project">✨ Make it playable with AI</button>
                     <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameFiles()">Clear all</button>
                   </div>
                   <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
@@ -2045,6 +2153,30 @@
                 <div class="push-config-actions">
                   <button type="button" class="btn btn-primary" id="push-save-btn" onclick="window.HubbleNest.savePushConfigFromSettings()">Save push configuration</button>
                   <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.testPushFromSettings()">Send a test push to this device</button>
+                </div>
+              </div>
+
+              <div class="settings-divider">
+                <h4 class="settings-subtitle">AI Game Builder — one-time setup (optional)</h4>
+                <p class="settings-hint">
+                  Paste a free Google AI Studio key to have Gemini write full custom games from prompts
+                  (aistudio.google.com → Get API key). Stored once in this project's Firestore like the push
+                  config — it survives every redeploy. Without a key the Arcade still generates real playable
+                  games with its built-in game engine.
+                </p>
+                <div class="push-config-status" id="ai-config-status">
+                  <div class="push-status-loading">Reading your AI configuration…</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="ai-key-input">Gemini API key</label>
+                  <input type="password" id="ai-key-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="AIza… (leave blank to keep the saved one)" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="ai-model-input">Model</label>
+                  <input type="text" id="ai-model-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="gemini-2.0-flash" />
+                </div>
+                <div class="push-config-actions">
+                  <button type="button" class="btn btn-primary" id="ai-save-btn" onclick="window.HubbleNest.saveAiConfigFromSettings()">Save AI configuration</button>
                 </div>
               </div>
 
@@ -2486,7 +2618,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=15"></script>
+  <script type="module" src="./app.js?v=16"></script>
 
 </body>
 </html>

@@ -51,6 +51,8 @@ import { handlePermissionError } from './firestore-doctor.js';
 
 import { buildSrcDocFromFiles, buildSrcDoc, detectLanguages, normalizeGamePath } from './public-game-builder.js';
 
+import { generateGameCode, getAiConfig } from './ai-game-builder.js';
+
 /* ========================================================================
    State
    ======================================================================== */
@@ -543,6 +545,138 @@ export function clearGameFiles() {
   editorEntry = null;
   renderGameFilesPane();
   scheduleGamePreview();
+}
+
+/* ==================================================================
+   AI GAME BUILDER — create a complete game from a text prompt.
+   Uses Gemini when a key is configured (Settings → AI Game Builder),
+   and the built-in game-engine synthesizer otherwise. Both paths
+   produce a REAL playable game in the editor with a live preview.
+   ================================================================== */
+
+export function toggleAiPanel(force) {
+  const panel = document.getElementById('game-ai-panel');
+  if (!panel) return;
+  const open = typeof force === 'boolean' ? force : panel.hasAttribute('hidden');
+  if (open) {
+    panel.removeAttribute('hidden');
+    refreshAiPanelStatus();
+    const ta = document.getElementById('game-ai-prompt');
+    if (ta) ta.focus({ preventScroll: true });
+  } else {
+    panel.setAttribute('hidden', '');
+  }
+}
+
+export async function refreshAiPanelStatus() {
+  const el = document.getElementById('game-ai-status-line');
+  if (!el) return;
+  const cfg = await getAiConfig();
+  el.innerHTML = cfg.apiKey
+    ? `✨ <b>Gemini AI connected</b> (${escapeHtml(cfg.model)}) — your prompts are written into full custom games.`
+    : `Running on the <b>built-in game engine</b> — real playable games from your prompt, no key needed. For fully AI-written games add a Gemini key once in Profile &amp; Settings → AI Game Builder.`;
+}
+
+function setEditorCode({ title, description, html, css, js }) {
+  const t = document.getElementById('game-title-input');
+  const d = document.getElementById('game-desc-input');
+  const h = document.getElementById('game-code-html');
+  const c = document.getElementById('game-code-css');
+  const j = document.getElementById('game-code-js');
+  if (t && title) t.value = title;
+  if (d && description) d.value = description;
+  if (h) h.value = html || '';
+  if (c) c.value = css || '';
+  if (j) j.value = js || '';
+}
+
+/** Prompt → complete game in the classic editor triple (no files involved). */
+export async function generateGameFromPrompt() {
+  const promptEl = document.getElementById('game-ai-prompt');
+  const statusEl = document.getElementById('game-ai-generate-status');
+  const btn = document.getElementById('game-ai-generate');
+  const prompt = (promptEl?.value || '').trim();
+  if (!prompt) {
+    showToast('Describe the game you want first — e.g. "a fast neon snake game with obstacles".', 'warning');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  if (statusEl) statusEl.textContent = 'Building your game…';
+  try {
+    const result = await generateGameCode(prompt);
+    setEditorCode(result);
+    editorEntry = null; // classic triple runs (files stay untouched)
+    renderGameFilesPane();
+    setCodePane('html');
+    scheduleGamePreview();
+    saveEditorDraft();
+    if (statusEl) {
+      statusEl.textContent = result.source === 'gemini'
+        ? '✓ Game written by Gemini AI — tweak anything, then Publish.'
+        : '✓ Game built by the built-in engine' + (result.fallbackReason ? ` (Gemini unavailable: ${String(result.fallbackReason).slice(0, 90)})` : '') + ' — tweak anything, then Publish.';
+    }
+    showToast('Game generated — press Play in the live preview!', 'success', 4200);
+  } catch (err) {
+    console.error('AI game generation failed:', err);
+    if (statusEl) statusEl.textContent = 'Generation failed: ' + (err.message || 'unknown error');
+    showToast('Could not generate the game: ' + (err.message || 'unknown error'), 'error', 6000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate my game'; }
+  }
+}
+
+/** Context from an uploaded non-web project so AI can scaffold a playable shell. */
+function buildProjectContext() {
+  const paths = Object.keys(editorFiles).sort();
+  if (paths.length === 0) return '';
+  const langs = detectLanguages(editorFiles);
+  const codeExt = /\.(py|js|ts|java|c|cpp|h|hpp|cs|rb|go|rs|lua|php|swift|kt|m)$/i;
+  const mainPath = paths.find((p) => codeExt.test(p)) || paths[0];
+  const snippet = mainPath ? String(editorFiles[mainPath]).slice(0, 1400) : '';
+  return `\n\nContext: the member also uploaded a code project (${(langs || []).join(', ') || 'source files'}): ${paths.slice(0, 12).join(', ')}.` +
+    (snippet ? ` Main file ${mainPath} starts with:\n${snippet}` : '');
+}
+
+/**
+ * Uploaded a Python/Java/… project with no HTML entry? One tap generates a
+ * playable browser game INSPIRED BY the project and drops it in as
+ * index.html + ai-game.css + ai-game.js alongside the original source files
+ * (which remain browsable in the player). Uses Gemini when configured,
+ * the built-in synthesizer otherwise.
+ */
+export async function scaffoldProjectWithAi() {
+  const paths = Object.keys(editorFiles);
+  if (paths.length === 0) {
+    showToast('Upload your project files first, then generate the playable version.', 'info');
+    return;
+  }
+  const btn = document.getElementById('game-ai-scaffold');
+  const promptEl = document.getElementById('game-ai-prompt');
+  const userPrompt = (promptEl?.value || '').trim();
+  const langs = detectLanguages(editorFiles);
+  const prompt = (userPrompt || 'Create a playable browser game inspired by this uploaded code project.') + buildProjectContext();
+  if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
+  try {
+    const result = await generateGameCode(prompt);
+    // The generated game becomes REAL files so the existing player/builder
+    // machinery runs it — while the member's original sources stay listed.
+    editorFiles['index.html'] = result.html + '\n<link rel="stylesheet" href="./ai-game.css">\n<script src="./ai-game.js"><\/script>';
+    editorFiles['ai-game.css'] = result.css || '';
+    editorFiles['ai-game.js'] = result.js || '';
+    // If the uploaded project already had an index.html, the generated one wins.
+    editorEntry = 'index.html';
+    setEditorCode({ title: result.title, description: result.description, html: '', css: '', js: '' });
+    renderGameFilesPane();
+    setCodePane('files');
+    scheduleGamePreview();
+    saveEditorDraft();
+    showToast(`Playable version generated as index.html — your ${paths.length} source file${paths.length === 1 ? '' : 's'} stay${paths.length === 1 ? 's' : ''} in the project.`, 'success', 5200);
+  } catch (err) {
+    console.error('AI scaffold failed:', err);
+    showToast('Could not generate a playable version: ' + (err.message || 'unknown error'), 'error', 6000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Make it playable with AI'; }
+  }
 }
 
 function renderGameFilesPane() {

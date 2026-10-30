@@ -87,22 +87,25 @@ service cloud.firestore {
       allow delete: if isAuthenticated();
     }
 
-    // App configuration (push sender credentials). The `push` document holds
-    // the Web Push certificate key and (optionally) the background-push
-    // service account. It is configured ONCE from the app's Settings page and
-    // lives in Firestore — so redeploying the app never resets it.
+    // App configuration (push sender credentials + AI game builder key).
+    // The `push` document holds the Web Push certificate key and (optionally)
+    // the background-push service account. The `ai` document holds the
+    // Gemini API key + model for the Arcade's AI Game Builder. Both are
+    // configured ONCE from the app's Settings page and live in Firestore —
+    // so redeploying the app never resets them.
     // Ownership model: the FIRST signed-in member to save the config claims it
     // (ownerUid); afterwards only that member can change it. Reads stay
     // authenticated (the VAPID public key is public by design; the service
-    // account fields are documented as members-visible by architecture —
-    // use a dedicated, FCM-only service account and rotate if ever needed).
+    // account / API key fields are documented as members-visible by
+    // architecture — use dedicated, least-privilege credentials and rotate
+    // them if ever needed).
     match /config/{docId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() &&
-        docId == 'push' &&
+        docId in ['push', 'ai'] &&
         fieldStr(request.resource.data, 'ownerUid') == request.auth.uid;
       allow update: if isAuthenticated() &&
-        docId == 'push' &&
+        docId in ['push', 'ai'] &&
         fieldStr(resource.data, 'ownerUid') == request.auth.uid;
       allow delete: if false;
     }
