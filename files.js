@@ -21,6 +21,9 @@ import {
 import { uploadToCloudinary, getFileCategory, formatBytes } from './cloudinary.js';
 import { showToast } from './utils.js';
 
+// Universal uploads with the Firestore byte-store fallback (blocked families).
+import { uploadFileAnywhere } from './file-blob.js';
+
 let activeFilesUnsubscribe = null;
 
 /**
@@ -56,8 +59,9 @@ export function subscribeToSpaceFiles(spaceId, onFilesUpdate) {
 export async function uploadSpaceFile(spaceId, userProfile, file, onProgress, maxFileSizeMB = 100) {
   if (!userProfile) throw new Error('Must be signed in to upload files.');
 
-  // 1. Upload to Cloudinary with real progress tracking
-  const result = await uploadToCloudinary(file, onProgress, maxFileSizeMB);
+  // 1. Upload anywhere it works: Cloudinary first, the secure Firestore
+  //    byte-store when Cloudinary blocks the family (PDF/ZIP restriction).
+  const result = await uploadFileAnywhere(file, onProgress, maxFileSizeMB);
 
   // 2. Save metadata to Firestore
   const category = getFileCategory(file);
@@ -68,8 +72,10 @@ export async function uploadSpaceFile(spaceId, userProfile, file, onProgress, ma
     type: file.type || 'application/octet-stream',
     extension: (file.name.split('.').pop() || '').toLowerCase(),
     category: category,
-    cloudinaryUrl: result.url,
-    publicId: result.publicId,
+    cloudinaryUrl: result.url || '',
+    blobId: result.blobId || null,
+    fallbackStored: !!result.fallbackStored,
+    publicId: result.publicId || null,
     resourceType: result.resourceType,
     uploadedBy: userProfile.uid,
     uploaderName: userProfile.displayName || 'Member',

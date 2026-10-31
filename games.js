@@ -45,7 +45,7 @@ import {
   getAvatarUrl
 } from './utils.js';
 
-import { formatBytes } from './cloudinary.js';
+import { formatBytes, uploadToCloudinary } from './cloudinary.js';
 
 import { handlePermissionError } from './firestore-doctor.js';
 
@@ -63,6 +63,8 @@ let arcadeFilter = 'all'; // 'all' | 'mine'
 let editingGameId = null; // null = creating new
 let playerGameId = null;
 let previewTimer = null;
+let editorCoverUrl = null;   // Cloudinary URL of the game's cover image (own games can change it anytime)
+let editorCoverBusy = false; // upload in flight — save waits for it
 
 /* Multi-file game project (path → text content). Any code language: the
    files are stored verbatim in Firestore and served to the sandbox as
@@ -270,13 +272,16 @@ export function renderArcadeGrid() {
     const likes = Array.isArray(g.likedBy) ? g.likedBy.length : (g.likeCount || 0);
     const mine = g.authorId === uid;
     const sid = escapeHtml(g.id);
-    // Gradient thumbnail tile with the game's initials (reads well at any size).
+    // Cover image when the author set one; gradient initials tile otherwise.
     const initials = String(g.title || 'Game').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'GN';
     const hue = Array.from(String(g.id || g.title || '')).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+    const thumbInner = g.coverImage
+      ? `<img src="${escapeHtml(g.coverImage)}" class="game-card-cover-img" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()"/>`
+      : `<span class="game-thumb-initials">${escapeHtml(initials)}</span>`;
     return `
       <article class="game-card" onclick="window.HubbleNest.openGamePlayer('${sid}')">
-        <div class="game-card-thumb" style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));">
-          <span class="game-thumb-initials">${escapeHtml(initials)}</span>
+        <div class="game-card-thumb ${g.coverImage ? 'game-card-thumb-photo' : ''}" ${g.coverImage ? '' : `style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));"`}>
+          ${thumbInner}
           ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
           <span class="game-thumb-play">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>
@@ -338,6 +343,8 @@ export function openGameEditor(gameId) {
     if (pubInput) pubInput.checked = game.isPublic === true;
     editorFiles = (game.files && typeof game.files === 'object') ? { ...game.files } : {};
     editorEntry = game.entryPath || currentEntryCandidate();
+    editorCoverUrl = game.coverImage || null;
+    renderGameCoverPreview();
   } else {
     editorFiles = {};
     editorEntry = null;
@@ -353,6 +360,7 @@ export function openGameEditor(gameId) {
       if (jsTa) jsTa.value = draft.js ?? STARTER_JS;
       editorFiles = (draft.files && typeof draft.files === 'object') ? { ...draft.files } : {};
       editorEntry = draft.entryPath || currentEntryCandidate();
+      editorCoverUrl = draft.coverImage || null;
       if (draft.title || draft.html || Object.keys(editorFiles).length) {
         showToast('Restored your unsaved draft from this device.', 'info');
       }
@@ -362,7 +370,9 @@ export function openGameEditor(gameId) {
       if (htmlTa) htmlTa.value = STARTER_HTML;
       if (cssTa) cssTa.value = STARTER_CSS;
       if (jsTa) jsTa.value = STARTER_JS;
+      editorCoverUrl = null;
     }
+    renderGameCoverPreview();
   }
 
   if (saveBtn) saveBtn.textContent = game ? 'Save changes' : 'Publish to Arcade';
@@ -377,6 +387,66 @@ export function closeGameEditor() {
   if (editor) editor.style.display = 'none';
   if (browse) browse.style.display = 'block';
   editingGameId = null;
+  editorCoverBusy = false;
+}
+
+/* ------------------------------------------------------------------
+   Game cover image — upload / replace / remove (author's own games)
+   ------------------------------------------------------------------ */
+
+function renderGameCoverPreview() {
+  const wrap = document.getElementById('game-cover-preview');
+  const removeBtn = document.getElementById('game-cover-remove');
+  if (!wrap) return;
+  if (editorCoverUrl) {
+    wrap.innerHTML = `<img src="${escapeHtml(editorCoverUrl)}" alt="Game cover" onerror="this.parentElement.innerHTML='<span class=\"game-cover-placeholder\">🎨</span>'" />`;
+  } else {
+    wrap.innerHTML = `<span class="game-cover-placeholder">🎨</span>`;
+  }
+  if (removeBtn) removeBtn.style.display = editorCoverUrl ? 'inline-flex' : 'none';
+}
+
+/** Pick (or replace) the cover image of the game being edited. */
+export async function handleGameCoverUpload(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    showToast('Covers must be an image (PNG, JPG, WebP…).', 'warning');
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    showToast('Cover images are capped at 15 MB.', 'warning');
+    return;
+  }
+  const statusEl = document.getElementById('game-cover-status');
+  const input = document.getElementById('game-cover-input');
+  editorCoverBusy = true;
+  if (statusEl) statusEl.textContent = 'Uploading cover…';
+  try {
+    const res = await uploadToCloudinary(file, (pct) => {
+      if (statusEl) statusEl.textContent = `Uploading cover… ${Math.round(pct)}%`;
+    }, 15);
+    editorCoverUrl = res.url;
+    renderGameCoverPreview();
+    if (statusEl) statusEl.textContent = 'Cover ready ✓ (saved when you publish)';
+    showToast('Cover uploaded — press Publish / Save changes to apply it.', 'success', 3200);
+    saveEditorDraft();
+  } catch (err) {
+    console.warn('Cover upload failed:', err);
+    if (statusEl) statusEl.textContent = '';
+    showToast(err.message || 'Could not upload the cover image.', 'error', 6000);
+  } finally {
+    editorCoverBusy = false;
+    if (input) input.value = '';
+  }
+}
+
+/** Remove the cover image of the game being edited. */
+export function removeGameCover() {
+  editorCoverUrl = null;
+  renderGameCoverPreview();
+  const statusEl = document.getElementById('game-cover-status');
+  if (statusEl) statusEl.textContent = 'Cover removed — save to apply.';
+  saveEditorDraft();
 }
 
 export function setCodePane(pane) {
@@ -422,6 +492,7 @@ function saveEditorDraft() {
       js: document.getElementById('game-code-js')?.value || '',
       files: editorFiles,
       entryPath: editorEntry,
+      coverImage: editorCoverUrl,
       savedAt: Date.now()
     }));
   } catch (e) { /* quota — non-fatal */ }
@@ -745,6 +816,16 @@ export async function saveCurrentGame() {
   // shared as readable source. The player shows the file tree and explains
   // that the browser cannot execute e.g. Python without a real runtime. 
 
+  // A cover upload still in flight finishes before the save (its URL lands
+  // in the same write; no half-published covers).
+  if (editorCoverBusy) {
+    showToast('Finishing the cover upload…', 'info', 2200);
+    const waitStart = Date.now();
+    while (editorCoverBusy && Date.now() - waitStart < 20000) {
+      await new Promise(r => setTimeout(r, 120));
+    }
+  }
+
   const existing = editingGameId ? gamesCache.find(g => g.id === editingGameId) : null;
 
   const payload = {
@@ -757,6 +838,7 @@ export async function saveCurrentGame() {
     fileCount: hasFiles ? Object.keys(editorFiles).length : 0,
     languages: hasFiles ? detectLanguages(editorFiles) : [],
     runnable: hasFiles ? !!entry : !!(html.trim() || js.trim()),
+    coverImage: editorCoverUrl || null,
     authorId: uid,
     authorName: me.displayName || 'Member',
     authorPhoto: me.photoURL || '',

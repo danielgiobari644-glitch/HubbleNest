@@ -365,5 +365,32 @@ service cloud.firestore {
       allow update, delete: if isAuthenticated() &&
         fieldStr(resource.data, 'ownerId') == request.auth.uid;
     }
+
+    // ======================================================================
+    // Secure in-app file store (fileBlobs)
+    //
+    // Real file BYTES (base64 chunks) for attachments when Cloudinary accepts
+    // an upload but the account's security setting blocks its DELIVERY
+    // (401 "deny or ACL failure" on PDF/ZIP). The uploader stores bytes;
+    // any signed-in member can read them (same visibility as Cloudinary
+    // public URLs). Every chunk repeats ownerId so writes never need a get()
+    // on the parent — a batch that creates parent + chunks atomically
+    // validates against the request itself.
+    // ======================================================================
+    match /fileBlobs/{blobId} {
+      allow get, list: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'ownerId') == request.auth.uid;
+      allow update, delete: if isAuthenticated() &&
+        fieldStr(resource.data, 'ownerId') == request.auth.uid;
+
+      match /chunks/{chunkId} {
+        allow get, list: if isAuthenticated();
+        allow create: if isAuthenticated() &&
+          fieldStr(request.resource.data, 'ownerId') == request.auth.uid;
+        allow update, delete: if isAuthenticated() &&
+          fieldStr(resource.data, 'ownerId') == request.auth.uid;
+      }
+    }
   }
 }

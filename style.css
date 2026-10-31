@@ -5867,6 +5867,45 @@ h1, h2, h3, h4 {
   overflow: hidden;
 }
 
+/* Game cover images — author-uploaded cover fills the card thumb */
+.game-card-thumb-photo { border-bottom: 1px solid var(--border-subtle); }
+.game-card-cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Game editor — cover picker */
+.game-editor-cover-field .game-cover-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.game-cover-thumb {
+  width: 84px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.game-cover-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.game-cover-placeholder { font-size: 1.3rem; opacity: 0.6; }
+.game-cover-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.game-cover-status { font-size: 0.75rem; color: var(--text-muted); }
+
 /* Player frame: one clean, prominent height with bezel + glow */
 .game-player-frame-wrap { position: relative; }
 .game-player-frame-wrap iframe {

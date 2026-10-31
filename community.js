@@ -42,6 +42,9 @@ import {
 
 import { uploadToCloudinary, formatBytes } from './cloudinary.js';
 
+// Universal uploads with the Firestore byte-store fallback (blocked families).
+import { uploadFileAnywhere, isStoredAttachment } from './file-blob.js';
+
 import {
   showToast,
   escapeHtml,
@@ -291,12 +294,23 @@ function renderAttachments(p) {
         </a>`).join('') + `</div>`;
   }
   if (others.length > 0) {
-    html += others.map(a => `
-      <a class="feed-att-file" href="${a.url}" target="_blank" rel="noopener noreferrer">
-        <span class="feed-att-file-icon">${getFileIconSvg(a.resourceType, a.originalFilename)}</span>
-        <span class="feed-att-file-name">${escapeHtml(a.originalFilename || 'File')}</span>
-        <span class="feed-att-file-size">${formatBytes(a.size || 0)}</span>
-      </a>`).join('');
+    html += others.map(a => {
+      if (isStoredAttachment(a)) {
+        return `
+          <span class="feed-att-file" style="cursor: default;">
+            <span class="feed-att-file-icon">${getFileIconSvg(a.resourceType, a.originalFilename)}</span>
+            <span class="feed-att-file-name">${escapeHtml(a.originalFilename || 'File')}</span>
+            <span class="feed-att-file-size">${formatBytes(a.size || 0)} · secured</span>
+            <button type="button" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; color: var(--accent-primary);" onclick="window.HubbleNest.downloadStoredFile('${escapeHtml(a.blobId)}', '${escapeHtml(a.originalFilename || 'file')}')">Download</button>
+          </span>`;
+      }
+      return `
+        <a class="feed-att-file" href="${a.url}" target="_blank" rel="noopener noreferrer">
+          <span class="feed-att-file-icon">${getFileIconSvg(a.resourceType, a.originalFilename)}</span>
+          <span class="feed-att-file-name">${escapeHtml(a.originalFilename || 'File')}</span>
+          <span class="feed-att-file-size">${formatBytes(a.size || 0)}</span>
+        </a>`;
+    }).join('');
   }
   return html;
 }
@@ -367,9 +381,12 @@ export async function handleHomePost() {
     const attachments = [];
     for (const file of pendingAttachments) {
       showToast(`Uploading ${file.name}…`, 'info', 2200);
-      const res = await uploadToCloudinary(file, null, 100);
+      const res = await uploadFileAnywhere(file, null, 100);
       attachments.push({
-        url: res.url,
+        url: res.url || '',
+        blobId: res.blobId || null,
+        fallbackStored: !!res.fallbackStored,
+        mime: file.type || 'application/octet-stream',
         resourceType: res.resourceType,
         originalFilename: res.originalFilename || file.name,
         size: res.bytes || file.size

@@ -27,6 +27,9 @@ import {
 import { uploadToCloudinary, validateFile, formatBytes } from './cloudinary.js';
 import { generateQrDataUrl } from './qr.js';
 
+// Universal uploads with the Firestore byte-store fallback (blocked families).
+import { uploadFileAnywhere, isStoredAttachment } from './file-blob.js';
+
 import { showToast, escapeHtml, formatTimeAgo, getAvatarUrl } from './utils.js';
 
 import { handlePermissionError } from './firestore-doctor.js';
@@ -271,16 +274,19 @@ export async function addFilesToShare(fileList) {
     }
 
     try {
-      const res = await uploadToCloudinary(file, (percent) => {
+      const res = await uploadFileAnywhere(file, (percent) => {
         const fill = statusEl?.querySelector('.ds-transfer-fill');
         const pct = document.getElementById('ds-transfer-pct');
         const p = Math.round(percent);
         if (fill) fill.style.width = `${p}%`;
         if (pct) pct.textContent = `${p}%`;
-      }, 100, true);
+      }, 100);
       await updateDoc(doc(db, 'directShares', activeShareId), {
         files: arrayUnion({
-          url: res.url,
+          url: res.url || '',
+          blobId: res.blobId || null,
+          fallbackStored: !!res.fallbackStored,
+          mime: file.type || 'application/octet-stream',
           resourceType: res.resourceType,
           originalFilename: res.originalFilename || file.name,
           size: res.bytes || file.size,
@@ -448,7 +454,10 @@ function renderFileCards(share, senderView) {
     const isImg = (f.resourceType || '').startsWith('image');
     const isVid = (f.resourceType || '').startsWith('video');
     let preview = '';
-    if (isImg) {
+    if (isStoredAttachment(f)) {
+      // Stored on HubbleNest's secure store — no remote URL to preview.
+      preview = '';
+    } else if (isImg) {
       preview = `<a href="${f.url}" target="_blank" rel="noopener noreferrer" class="ds-file-preview"><img src="${f.url}" alt="${escapeHtml(f.originalFilename || '')}" loading="lazy" decoding="async" /></a>`;
     } else if (isVid) {
       preview = `<video src="${f.url}" controls preload="metadata" class="ds-file-video"></video>`;
@@ -456,14 +465,18 @@ function renderFileCards(share, senderView) {
     // Brand-new files (just arrived on this snapshot) slide in with a glow;
     // older ones render without re-animating.
     const isNew = freshFileKey(f);
+    const name = escapeHtml(f.originalFilename || 'file');
+    const downloadAction = isStoredAttachment(f)
+      ? `<button type="button" class="btn btn-primary btn-sm ds-download-btn" onclick="window.HubbleNest.downloadStoredFile('${escapeHtml(f.blobId)}', '${name}')">Download</button>`
+      : `<a class="btn btn-primary btn-sm ds-download-btn" href="${f.url}" target="_blank" rel="noopener noreferrer" download="${name}">Download</a>`;
     return `
       <div class="ds-file-card ${isNew ? 'ds-file-card-in' : ''}">
         ${preview}
         <div class="ds-file-info">
-          <div class="ds-file-name" title="${escapeHtml(f.originalFilename || '')}">${escapeHtml(f.originalFilename || 'File')}</div>
-          <div class="ds-file-meta">${formatBytes(f.size || 0)} · ${escapeHtml(f.resourceType || 'file')} · ${formatTimeAgo(f.addedAt)}</div>
+          <div class="ds-file-name" title="${name}">${name}</div>
+          <div class="ds-file-meta">${formatBytes(f.size || 0)} · ${escapeHtml(f.resourceType || 'file')} · ${formatTimeAgo(f.addedAt)}${isStoredAttachment(f) ? ' · secured on HubbleNest' : ''}</div>
         </div>
-        <a class="btn btn-primary btn-sm ds-download-btn" href="${f.url}" target="_blank" rel="noopener noreferrer" download="${escapeHtml(f.originalFilename || 'file')}">Download</a>
+        ${downloadAction}
       </div>`;
   }).join('') + `</div>`;
 }

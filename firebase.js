@@ -40,7 +40,8 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
-  runTransaction
+  runTransaction,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 import {
   getMessaging,
@@ -121,6 +122,7 @@ export {
   arrayUnion,
   arrayRemove,
   runTransaction,
+  writeBatch,
   getToken,
   onMessage
 };

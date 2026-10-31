@@ -78,18 +78,39 @@ firebase deploy
 ## Files & Cloudinary
 
 Every file type is accepted everywhere (feed, chat, DMs, Direct Share, Space files) —
-images go to the image family, video/audio to the video family, and **every document,
-archive and code file is stored as raw bytes** so it stays downloadable.
+the pickers ship with **no file-type restriction at all**, images go to the image
+family, video/audio to the video family, and **every document, archive and code file
+is stored as raw bytes** so it stays downloadable.
 
-One-time Cloudinary console setting (**required for PDF and ZIP downloads**): Cloudinary
-blocks delivery of PDF/ZIP files on new accounts by default — links answer `401 deny or
-ACL failure`. Fix once at <https://console.cloudinary.com/settings/security> →
-"PDF and ZIP files delivery" → tick **Allow delivery of PDF and ZIP files** → Save. It
-unblocks existing and future files and takes about ten seconds. The uploader detects the
-block the moment it happens and shows you exactly this instruction instead of leaving you
-a dead link — and chat/DM document cards now self-check their link too: a blocked file
-renders an actionable notice with the same fix (plus "Try opening anyway"), so nobody
-stares at a silently failing attachment.
+One-time Cloudinary console setting (**recommended for large PDF/ZIP uploads**):
+Cloudinary blocks delivery of PDF/ZIP files on new accounts by default — links answer
+`401 deny or ACL failure`. Fix once at <https://console.cloudinary.com/settings/security>
+→ "PDF and ZIP files delivery" → tick **Allow delivery of PDF and ZIP files** → Save.
+It unblocks existing and future files (including files larger than the in-app store
+cap below).
+
+**The app no longer depends on that toggle for everyday files.** Verified live against
+this Cloudinary account: even with the toggle reportedly on, PDF/ZIP delivery still
+answered `401 "deny or ACL failure"` while uploads succeeded — client code cannot
+change that account setting. So the universal uploader (`file-blob.js`) now works like
+this:
+
+1. Upload to Cloudinary (images, video, audio — always deliver fine).
+2. If Cloudinary accepts the bytes but **blocks delivery**, the file's real bytes are
+   stored **on HubbleNest's own backend (Firestore `fileBlobs`)** in ~525 KB chunks
+   (files up to **20 MB**), and the attachment renders as a *secured on HubbleNest*
+   card with working **Open** / **Download** buttons that pull the exact bytes back
+   out of Firestore. PDFs, ZIPs and every other type keep working with no account
+   setting required.
+3. Files larger than 20 MB (only possible for blocked families) fail loud with the
+   exact Cloudinary console fix from above.
+
+The byte store needs its Firestore rules — **re-publish `firestore.rules` once after
+deploying this version** (the rules file adds the `fileBlobs` collection; signed-in
+members read, only the uploader writes). Until republished, blocked-family uploads
+say exactly that instead of failing mysteriously. Chat/DM document cards also
+self-check their Cloudinary link and render an actionable notice for blocked ones
+(plus "Try opening anyway").
 
 ## Notifications
 
@@ -218,9 +239,12 @@ before any browser can register for push, and both are owner-only fixes:
    `danielgiobari644-glitch.github.io/*` to the allowed HTTP referrers and
    keep the FCM/Installations APIs allowed under *API restrictions*.
 4. In the app, press **Turn on notifications** again — the device now
-   registers successfully. (The app validates the key shape, logs a numbered
-   fix list to the console on failure, and only shows the error toast when
-   you explicitly opt in — never during silent background refreshes.)
+   registers successfully. (The app validates the key shape, keeps the
+   console calm on failure — ONE compact line naming the fix — and renders
+   the live failure state with the exact steps in **Profile & Settings →
+   Off-App Push Notifications**, where the owner acts on it. The error toast
+   only appears when you explicitly opt in — never during silent background
+   refreshes.)
 
 **Google Sign-In popup closes instantly or logs
 "Cross-Origin-Opener-Policy policy would block the window.closed call":**
@@ -302,7 +326,10 @@ portfolio again (they can still reach it anytime via the account menu →
   preserved, 600 KB cap). Projects with an HTML entry are playable in a
   locked sandbox; source-only projects (Python, Java, C, C++, C#, PHP, Ruby,
   Go, Rust, Lua…) are stored with a browsable file tree and an honest
-  "cannot execute in a browser" note. Games can be published to a public page
+  "cannot execute in a browser" note. Games can be published to a public page.
+  **Every game gets an editable cover image** — upload/replace/remove it in
+  the editor; the Arcade grid and the public game page show it (it also
+  becomes the page's `og:image`)
 - **Direct Share** — hand files of ANY type to another member with a
   6-character code or a scannable QR deep link; drag & drop, animated
   "Energy Transfer" progress tied to the real upload, radar-pulse receiver

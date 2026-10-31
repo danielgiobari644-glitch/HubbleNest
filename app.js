@@ -124,16 +124,27 @@ import {
   requestPushPermission,
   initWebPushNotifications,
   getPushConfigStatus,
+  getPushActivationError,
   savePushConfig,
   sendPushToUser
 } from './notifications.js';
 
-import { 
-  uploadToCloudinary, 
-  formatBytes, 
-  getFileCategory, 
-  checkDocumentDelivery 
+import {
+  uploadToCloudinary,
+  formatBytes,
+  getFileCategory,
+  checkDocumentDelivery
 } from './cloudinary.js';
+
+// Universal uploads: Cloudinary first, Firestore byte-store fallback when
+// Cloudinary blocks delivery of a family (PDF/ZIP account restriction) —
+// attachments keep working with no account setting required.
+import {
+  uploadFileAnywhere,
+  downloadStoredFile,
+  openStoredFile,
+  isStoredAttachment
+} from './file-blob.js';
 
 import { 
   renderQrToCanvas, 
@@ -206,7 +217,9 @@ import {
   toggleAiPanel,
   refreshAiPanelStatus,
   generateGameFromPrompt,
-  scaffoldProjectWithAi
+  scaffoldProjectWithAi,
+  handleGameCoverUpload,
+  removeGameCover
 } from './games.js';
 
 import {
@@ -1498,6 +1511,30 @@ function getFileIcon(type, filename = '') {
 }
 
 /**
+ * Render an attachment that lives in the app's own secure Firestore store
+ * (used when Cloudinary blocks a file family). Open + Download both pull the
+ * REAL bytes back out of Firestore — nothing simulated.
+ */
+function storedFileCardHtml(att, replyOnclick = null) {
+  const name = escapeHtml(att.originalFilename || 'File');
+  const size = att.size ? ` · ${formatBytes(att.size)}` : '';
+  return `
+    <div class="msg-attachment-preview msg-attachment-doc stored-file-card" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+        <span>${getFileIcon(att.resourceType, att.originalFilename)}</span>
+        <span style="font-weight: 500; font-size: 0.85rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
+        <span style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap;">${size} · secured on HubbleNest</span>
+      </div>
+      <div style="display: inline-flex; gap: 6px; align-items: center;">
+        <button type="button" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; color: var(--accent-primary);" onclick="window.HubbleNest.openStoredFile('${escapeHtml(att.blobId)}', '${name}')">Open ↗</button>
+        <button type="button" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; color: var(--accent-primary);" onclick="window.HubbleNest.downloadStoredFile('${escapeHtml(att.blobId)}', '${name}')">Download</button>
+        ${replyOnclick || ''}
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Post-render delivery audit for document attachments (Space chat + DMs).
  * Cloudinary accounts ship with "PDF and ZIP delivery" disabled, which turns
  * every uploaded document link into a 401 the user only discovers on click.
@@ -1617,6 +1654,13 @@ function renderChatMessages() {
             </div>
           `;
         } else {
+          if (isStoredAttachment(att)) {
+            return storedFileCardHtml(att, `
+              <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary);" onclick="window.HubbleNest.replyToFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Document')}', '', '${att.resourceType || 'document'}', '${escapeHtml(att.blobId)}')">
+                ↩ Reply
+              </button>
+            `);
+          }
           return `
             <div class="msg-attachment-preview msg-attachment-doc" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
@@ -1652,9 +1696,9 @@ function renderChatMessages() {
                   <div style="min-width: 0; flex: 1;">
                     <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
                     <div>
-                      <a href="${msg.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">
-                        ${escapeHtml(msg.replyTo.fileName || msg.replyTo.text)} ↗
-                      </a>
+                      ${msg.replyTo.fileBlobId
+                        ? `<a href="javascript:void(0)" class="reply-file-link" onclick="event.stopPropagation(); window.HubbleNest.openStoredFile('${escapeHtml(msg.replyTo.fileBlobId)}', '${escapeHtml(msg.replyTo.fileName || msg.replyTo.text)}')">${escapeHtml(msg.replyTo.fileName || msg.replyTo.text)} ↗</a>`
+                        : `<a href="${msg.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">${escapeHtml(msg.replyTo.fileName || msg.replyTo.text)} ↗</a>`}
                     </div>
                   </div>
                 </div>
@@ -1763,13 +1807,14 @@ function renderChatPendingAttachments() {
   if (area) area.style.display = 'block';
 }
 
-export function replyToFile(fileId, fileName, fileUrl, fileType = 'document') {
+export function replyToFile(fileId, fileName, fileUrl, fileType = 'document', fileBlobId = null) {
   state.replyingTo = {
     id: fileId,
     senderName: 'File',
     text: fileName,
     fileName: fileName,
     fileUrl: fileUrl,
+    fileBlobId: fileBlobId || null,
     fileType: fileType,
     isFileReply: true
   };
@@ -1811,9 +1856,12 @@ export async function handleSendMessage() {
       for (let i = 0; i < pendingFiles.length; i++) {
         const file = pendingFiles[i];
         showToast(`Uploading ${file.name} (${i + 1}/${pendingFiles.length})...`, 'info', 2500);
-        const result = await uploadToCloudinary(file, () => {}, state.activeSpace?.settings?.maxFileSizeMB || 100);
+        const result = await uploadFileAnywhere(file, () => {}, state.activeSpace?.settings?.maxFileSizeMB || 100);
         attachments.push({
-          url: result.url,
+          url: result.url || '',
+          blobId: result.blobId || null,
+          fallbackStored: !!result.fallbackStored,
+          mime: file.type || 'application/octet-stream',
           resourceType: result.resourceType,
           originalFilename: result.originalFilename || file.name,
           size: result.bytes || file.size
@@ -1828,8 +1876,9 @@ export async function handleSendMessage() {
             type: file.type || 'application/octet-stream',
             extension: (file.name.split('.').pop() || '').toLowerCase(),
             category: getFileCategory(file),
-            cloudinaryUrl: result.url,
-            publicId: result.publicId,
+            cloudinaryUrl: result.url || '',
+            blobId: result.blobId || null,
+            publicId: result.publicId || null,
             resourceType: result.resourceType,
             uploadedBy: state.userProfile.uid,
             uploaderName: state.userProfile.displayName || 'Member',
@@ -1931,12 +1980,11 @@ function renderFilesLibrary() {
           </div>
         </div>
         <div class="file-actions">
-          <a href="${f.cloudinaryUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">
-            Open
-          </a>
-          <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${f.id}', '${escapeHtml(f.name)}', '${escapeHtml(f.cloudinaryUrl)}', '${f.category || 'document'}')">
-            ↩ Reply in Chat
-          </button>
+          ${f.blobId
+            ? `<button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.openStoredFile('${escapeHtml(f.blobId)}', '${escapeHtml(f.name)}')">Open</button>
+               <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${f.id}', '${escapeHtml(f.name)}', '', '${f.category || 'document'}', '${escapeHtml(f.blobId)}')">↩ Reply in Chat</button>`
+            : `<a href="${f.cloudinaryUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">Open</a>
+               <button type="button" class="btn-file-reply" onclick="window.HubbleNest.replyToFile('${f.id}', '${escapeHtml(f.name)}', '${escapeHtml(f.cloudinaryUrl)}', '${f.category || 'document'}')">↩ Reply in Chat</button>`}
           ${canDelete ? `
             <button class="btn btn-sm btn-ghost" style="color: var(--status-danger);" onclick="window.HubbleNest.deleteFile('${f.id}')">
               Delete
@@ -3102,6 +3150,13 @@ function renderDirectMessages() {
             </div>
           `;
         } else {
+          if (isStoredAttachment(att)) {
+            return storedFileCardHtml(att, `
+              <button type="button" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; color: var(--accent-primary);" onclick="window.HubbleNest.replyToDirectFile('${msg.id}', '${escapeHtml(att.originalFilename || 'Document')}', '', '${att.resourceType || 'document'}', '${escapeHtml(att.blobId)}')">
+                ↩ Reply
+              </button>
+            `);
+          }
           return `
             <div class="msg-attachment-preview msg-attachment-doc" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
@@ -3129,9 +3184,9 @@ function renderDirectMessages() {
             <div style="min-width: 0; flex: 1;">
               <div style="font-size: 0.72rem; color: var(--accent-primary); font-weight: 700; text-transform: uppercase;">Replying to File</div>
               <div>
-                <a href="${decrypted.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">
-                  ${escapeHtml(decrypted.replyTo.fileName || decrypted.replyTo.text)} ↗
-                </a>
+                ${decrypted.replyTo.fileBlobId
+                  ? `<a href="javascript:void(0)" class="reply-file-link" onclick="event.stopPropagation(); window.HubbleNest.openStoredFile('${escapeHtml(decrypted.replyTo.fileBlobId)}', '${escapeHtml(decrypted.replyTo.fileName || decrypted.replyTo.text)}')">${escapeHtml(decrypted.replyTo.fileName || decrypted.replyTo.text)} ↗</a>`
+                  : `<a href="${decrypted.replyTo.fileUrl || '#'}" target="_blank" rel="noopener noreferrer" class="reply-file-link" onclick="event.stopPropagation();">${escapeHtml(decrypted.replyTo.fileName || decrypted.replyTo.text)} ↗</a>`}
               </div>
             </div>
           </div>
@@ -3279,13 +3334,14 @@ export function replyToDirectMessage(id, senderName, text) {
   document.getElementById('direct-message-input')?.focus();
 }
 
-export function replyToDirectFile(fileId, fileName, fileUrl, fileType = 'document') {
+export function replyToDirectFile(fileId, fileName, fileUrl, fileType = 'document', fileBlobId = null) {
   state.directReplyingTo = {
     id: fileId,
     senderName: 'File',
     text: fileName,
     fileName: fileName,
     fileUrl: fileUrl,
+    fileBlobId: fileBlobId || null,
     fileType: fileType,
     isFileReply: true
   };
@@ -3346,9 +3402,12 @@ export async function handleSendDirectMessage() {
       for (let i = 0; i < pendingFiles.length; i++) {
         const file = pendingFiles[i];
         showToast(`Uploading ${file.name}...`, 'info', 2500);
-        const result = await uploadToCloudinary(file, () => {}, 100);
+        const result = await uploadFileAnywhere(file, () => {}, 100);
         attachments.push({
-          url: result.url,
+          url: result.url || '',
+          blobId: result.blobId || null,
+          fallbackStored: !!result.fallbackStored,
+          mime: file.type || 'application/octet-stream',
           resourceType: result.resourceType,
           originalFilename: result.originalFilename || file.name,
           size: result.bytes || file.size
@@ -4116,6 +4175,12 @@ Object.assign(window.HubbleNest, {
   openGamePlayer,
   closeGamePlayer,
   gameToggleLike,
+  handleGameCoverUpload,
+  removeGameCover,
+
+  // Secure in-app file store (Firestore fallback for blocked Cloudinary families)
+  downloadStoredFile,
+  openStoredFile,
 
   // Direct Share (code / QR file handoff)
   openDirectShareView: openDirectShareViewWrapper,
@@ -4331,6 +4396,7 @@ export async function initPushSettingsUI() {
   statusEl.innerHTML = `<div class="push-status-loading">Reading your push configuration…</div>`;
   try {
     const st = await getPushConfigStatus();
+    const activationErr = getPushActivationError();
     const vapidShort = st.publicKey
       ? `${st.publicKey.slice(0, 10)}…${st.publicKey.slice(-6)}`
       : null;
@@ -4347,6 +4413,15 @@ export async function initPushSettingsUI() {
           ? 'configured — members can push to each other even when the app is closed'
           : 'not configured — in-app alerts work; background pushes need the service account below'}</span>
       </div>
+      ${activationErr ? `
+      <div class="push-status-row push-status-warn">
+        <span class="push-status-dot"></span>
+        <span><b>Activation failed on this device</b> (${escapeHtml(activationErr.code || 'error')}) —
+          this needs the one-time project fix: enable the
+          <a href="https://console.developers.google.com/apis/api/fcm.googleapis.com/overview?project=hubblenest" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary);">Firebase Cloud Messaging API</a>,
+          generate a Web Push certificate in Firebase Console → Project Settings → Cloud Messaging, then save it below.
+          If the Web API key is restricted (Google Cloud Console → Credentials), allow this site.</span>
+      </div>` : ''}
       <div class="push-status-row push-status-info">
         <span class="push-status-dot"></span>
         <span>Reminder: the Firebase Cloud Messaging API must stay <b>enabled</b> for the hubblenest project (Google Cloud Console → APIs &amp; Services). That project setting also persists — it is never affected by re-uploading the app.</span>

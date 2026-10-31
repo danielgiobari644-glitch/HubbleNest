@@ -16,8 +16,8 @@
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
-  <link rel="stylesheet" href="./style.css?v=17" />
-  <link rel="stylesheet" href="./public.css?v=17" />
+  <link rel="stylesheet" href="./style.css?v=18" />
+  <link rel="stylesheet" href="./public.css?v=18" />
 </head>
 <body class="public-body">
   <header class="pub-header">
@@ -29,11 +29,12 @@
   </header>
   <main class="pub-main">
     <div class="pub-doc" id="pub-doc">
-      <div class="pub-doc-head">
+      <div class="pub-doc-head" id="pub-doc-head">
         <div class="pub-doc-meta" id="game-meta"><span>Loading…</span></div>
         <h1 class="pub-doc-title" id="game-title">Public game</h1>
         <div id="game-chips"></div>
       </div>
+      <div id="game-cover-wrap"></div>
       <p class="pub-p" id="game-desc"></p>
       <div id="game-stage"></div>
       <div class="pub-files" id="game-files"></div>
@@ -68,6 +69,15 @@
       document.getElementById('game-desc').innerHTML = renderRichText(g.description || '');
       const chips = (g.languages || []).map(l => `<span class="pub-chip">${escapeHtml(l)}</span>`).join('');
       document.getElementById('game-chips').innerHTML = chips;
+
+      // Author-uploaded cover: shown above the description + used as og:image.
+      if (g.coverImage) {
+        const coverUrl = String(g.coverImage);
+        document.getElementById('game-cover-wrap').innerHTML =
+          `<img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(g.title || 'Game')} cover" style="width:100%;max-height:340px;object-fit:cover;border-radius:16px;border:1px solid rgba(148,163,184,.2);margin:6px 0 14px;" loading="lazy" decoding="async" />`;
+        const og = document.querySelector('meta[property="og:image"]');
+        if (og) og.setAttribute('content', coverUrl);
+      }
 
       if (g.entryPath && g.files) {
         stage.innerHTML = `<div class="pub-frame-wrap"><iframe id="pub-game-frame" title="${escapeHtml(g.title || 'Game')}" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe></div>`;

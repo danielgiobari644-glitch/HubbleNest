@@ -67,6 +67,18 @@ const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquV
 let pushSetupHardFailed = false;
 let pushInitInflight = null;
 
+/** Last hard activation failure on this device (surfaced in Settings). */
+let lastPushActivationError = null;
+export function getPushActivationError() {
+  return lastPushActivationError;
+}
+
+/** Clear the sticky failure state after a successful activation. */
+function markPushActivationSuccess() {
+  pushSetupHardFailed = false;
+  lastPushActivationError = null;
+}
+
 /* ---- Live config watcher ----------------------------------------------
    Once the first activation attempt has run, this session listens to the
    Firestore `config/push` document. The moment the owner saves a valid Web
@@ -175,6 +187,7 @@ export async function savePushConfig(cfg, profile) {
   pushConfigStatusCache = null;
   // A new configuration gives this session a fresh chance to activate push.
   pushSetupHardFailed = false;
+  lastPushActivationError = null;
 
   return getPushConfigStatus();
 }
@@ -374,9 +387,9 @@ export async function initWebPushNotifications(userId, opts = {}) {
       }, { merge: true });
     }
 
+    markPushActivationSuccess();
     return true;
     } catch (err) {
-    console.warn('Web push setup error:', err);
     const code = err?.code || '';
     const msg = String(err?.message || '');
     const authProblem =
@@ -392,18 +405,20 @@ export async function initWebPushNotifications(userId, opts = {}) {
       // latch stops every further automatic attempt this session; explicit
       // user actions (nudge / Settings test) retry via { force: true }.
       pushSetupHardFailed = true;
+      lastPushActivationError = { code: code || 'messaging/token-subscribe-failed', at: Date.now() };
+      // ONE compact, calm line — the full step-by-step fix lives where the
+      // owner acts on it: Settings → Off-App Push Notifications (rendered
+      // from getPushActivationError) and README → Troubleshooting.
       console.warn(
-        '[HubbleNest] Push notifications cannot activate — project configuration required (further automatic attempts paused for this session).\n' +
-        '  1. Google Cloud Console → select the \'hubblenest\' project → APIs & Services → Library → enable "Firebase Cloud Messaging API":\n' +
-        '     https://console.developers.google.com/apis/api/fcm.googleapis.com/overview?project=hubblenest\n' +
-        '  2. Firebase Console → Project Settings (gear) → Cloud Messaging → Web Push certificates → "Generate key pair" and copy it.\n' +
-        '  3. Open the app → Profile & Settings → "Off-App Push Notifications" → paste the key → Save (stored in Firestore config/push — one-time, survives redeploys).\n' +
-        '  4. If the Web API key has HTTP-referrer/API restrictions (Google Cloud Console → Credentials), allow this site or remove the restriction.\n' +
-        '  Full walkthrough: README → Troubleshooting → "Web push notifications return 401".'
+        `[HubbleNest] Push activation blocked (${lastPushActivationError.code}) — one-time project fix needed. Open Profile & Settings → Off-App Push Notifications for the exact steps (also in README → Troubleshooting).`
       );
       if (!silent) {
-        showToast('Push could not be activated: this Firebase project needs its Cloud Messaging API enabled and a matching Web Push certificate (VAPID). The project owner can fix it in ~2 minutes — see README → Troubleshooting → "Web push notifications return 401".', 'error', 10000);
+        showToast('Push could not be activated: this Firebase project needs its Cloud Messaging API enabled and a matching Web Push certificate (VAPID). The project owner can fix it in ~2 minutes — see Profile & Settings → Off-App Push Notifications.', 'error', 10000);
       }
+    } else {
+      // Non-auth failures (transient network, unsupported browser) — keep the
+      // original error visible but do not latch: the next attempt may succeed.
+      console.warn('Web push setup error:', err);
     }
     return false;
   }
