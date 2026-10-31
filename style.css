@@ -6321,3 +6321,14 @@ h1, h2, h3, h4 {
   flex-wrap: wrap;
 }
 .game-ai-generate-status { font-size: 0.78rem; color: var(--text-secondary); }
+
+/* ==========================================================================
+   Blocked-document attachment card (Cloudinary PDF/ZIP delivery setting off)
+   Swaps the dead document link for an actionable notice with the exact fix.
+   ========================================================================== */
+.msg-attachment-doc.msg-doc-blocked {
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.06);
+}
+.msg-doc-blocked a { text-decoration: none; }
+.msg-doc-blocked a:hover { text-decoration: underline; }

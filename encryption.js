@@ -263,7 +263,11 @@ export async function decryptLegacyEcdhMessage(ciphertextBase64, ivBase64, myUse
 
     return JSON.parse(new TextDecoder().decode(decryptedBuffer));
   } catch (err) {
-    console.warn('Legacy decryption failed (device keys drifted):', err?.name || err);
+    // Silent by design: a failed legacy attempt is EXPECTED on any device
+    // whose keypair no longer matches the one that wrote the message (device
+    // drift). The caller shows the placeholder and reports a single calm line
+    // per conversation — a per-attempt console.warn here used to multiply
+    // that into a stack for every old message on every snapshot.
     return null;
   }
 }

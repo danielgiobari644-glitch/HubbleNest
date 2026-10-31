@@ -34,8 +34,8 @@
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v16';
-const IMAGE_CACHE = 'hubblenest-images-v16';
+const CACHE_NAME = 'hubblenest-v17';
+const IMAGE_CACHE = 'hubblenest-images-v17';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',

@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=16) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=17) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=16" />
+  <link rel="modulepreload" href="./app.js?v=17" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=16" />
+  <link rel="stylesheet" href="./style.css?v=17" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -104,7 +104,7 @@
         'loadMyContacts', 'addContactByUsername', 'addFoundContact',
         'removeContactFromList', 'addContactFromProfile', 'removeContactFromProfile',
         'removeSpaceMemberByUid', 'toggleSpaceContactsPicker', 'addSpaceMemberFromContacts',
-        'savePushConfigFromSettings', 'testPushFromSettings',
+        'savePushConfigFromSettings', 'testPushFromSettings', 'retryPushActivation',
         'toggleGameFullscreen', 'handleGameFilesUpload', 'removeGameFile',
         'setGameEntry', 'setGameEntryByIndex', 'removeGameFileByIndex',
         'clearGameFiles', 'rtWrap'
@@ -2618,7 +2618,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=16"></script>
+  <script type="module" src="./app.js?v=17"></script>
 
 </body>
 </html>

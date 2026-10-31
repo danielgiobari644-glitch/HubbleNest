@@ -99,6 +99,36 @@ const DELIVERY_BLOCKED_HINT =
   'tick "Allow delivery of PDF and ZIP files" → Save. Then re-upload this file.';
 
 /**
+ * Delivery audit for ALREADY-UPLOADED documents (feed/DM/file cards).
+ * Cloudinary accounts ship with "PDF and ZIP files delivery" disabled, so a
+ * document link can sit in a chat looking perfectly normal while answering
+ * 401 on every open. One cached HEAD per URL classifies it:
+ *   'ok'      → delivers (or Cloudinary answered anything but 401/403)
+ *   'blocked' → the account-level security setting is denying this file
+ *   'unknown' → probe failed (network/CORS) — never used to flag a file
+ * The UI turns 'blocked' into an actionable card instead of a dead link.
+ */
+const docDeliveryStatusCache = new Map();
+
+export async function checkDocumentDelivery(url) {
+  if (!url || typeof url !== 'string') return 'unknown';
+  if (docDeliveryStatusCache.has(url)) return docDeliveryStatusCache.get(url);
+
+  let status = 'unknown';
+  try {
+    const res = await fetch(url, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
+    if (res.status === 401 || res.status === 403) status = 'blocked';
+    else status = 'ok';
+  } catch (err) {
+    // A CORS/network rejection must NOT mark a file blocked — ambiguous.
+    status = 'unknown';
+  }
+
+  docDeliveryStatusCache.set(url, status);
+  return status;
+}
+
+/**
  * Verify the freshly uploaded asset actually DELIVERS (the 401 "deny or ACL
  * failure" case). Runs one GET; a 401 becomes an actionable error, a 404 is
  * tolerated for a moment (CDN lag on brand-new raw assets) and any other

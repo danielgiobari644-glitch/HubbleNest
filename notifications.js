@@ -67,6 +67,38 @@ const DEFAULT_VAPID_PUBLIC_KEY = 'BLeL1k63W4sqLo4kCVXvK7r1FWEcJl1MJbVjO6lgvkGquV
 let pushSetupHardFailed = false;
 let pushInitInflight = null;
 
+/* ---- Live config watcher ----------------------------------------------
+   Once the first activation attempt has run, this session listens to the
+   Firestore `config/push` document. The moment the owner saves a valid Web
+   Push certificate (from ANY device — Settings → Off-App Notifications),
+   every open client resets its failure latch and re-runs activation
+   immediately: no reload, no redeploy, no manual retry. */
+let pushConfigWatchAttached = false;
+let lastAttemptedVapid = null;
+
+function attachPushConfigWatcher(userId) {
+  if (pushConfigWatchAttached || !userId) return;
+  pushConfigWatchAttached = true;
+  try {
+    onSnapshot(
+      doc(db, 'config', 'push'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const key = snap.data().publicKey;
+        if (!key || !isValidVapidKey(key)) return;
+        if (!pushSetupHardFailed) return;          // nothing stuck — nothing to heal
+        if (key === lastAttemptedVapid) return;    // same key that already failed
+        console.info('[HubbleNest Push] New Web Push certificate detected in config/push — retrying activation now.');
+        pushSetupHardFailed = false;
+        initWebPushNotifications(userId, { silent: true, force: true });
+      },
+      () => { /* config/push read denied for this role — watcher stays passive */ }
+    );
+  } catch (e) {
+    pushConfigWatchAttached = false;
+  }
+}
+
 /* ========================================================================
    ONE-TIME push configuration (survives every redeploy)
    ------------------------------------------------------------------------
@@ -317,6 +349,10 @@ export async function initWebPushNotifications(userId, opts = {}) {
       `[HubbleNest] Web Push: using VAPID key ${vapidKey.slice(0, 10)}…${vapidKey.slice(-6)} ` +
       `(source: ${vapidKey === DEFAULT_VAPID_PUBLIC_KEY ? 'embedded constant' : 'config/push doc'})`
     );
+    lastAttemptedVapid = vapidKey.trim();
+
+    // From now on, saving a fresh config/push key re-activates push live.
+    attachPushConfigWatcher(userId);
 
     const token = await getToken(messaging, {
       vapidKey: vapidKey.trim(),

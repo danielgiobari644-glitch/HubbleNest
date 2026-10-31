@@ -87,7 +87,9 @@ ACL failure`. Fix once at <https://console.cloudinary.com/settings/security> →
 "PDF and ZIP files delivery" → tick **Allow delivery of PDF and ZIP files** → Save. It
 unblocks existing and future files and takes about ten seconds. The uploader detects the
 block the moment it happens and shows you exactly this instruction instead of leaving you
-a dead link.
+a dead link — and chat/DM document cards now self-check their link too: a blocked file
+renders an actionable notice with the same fix (plus "Try opening anyway"), so nobody
+stares at a silently failing attachment.
 
 ## Notifications
 
@@ -204,7 +206,12 @@ before any browser can register for push, and both are owner-only fixes:
      one-time configuration is live. A mismatch means you are looking at a
      stale cached copy — hard-refresh once (Ctrl+Shift+R). Automatic
      background retries pause for the session after the first 401; explicit
-     user actions (nudge / test-push buttons) always retry deliberately.
+     user actions (nudge / test-push / **Retry activation on this device**
+     button) always retry deliberately.
+   - **Live activation:** the app now watches `config/push` in real time —
+     the moment a valid certificate key is saved (from any device), every
+     open HubbleNest client retries activation on its own. No reload, no
+     redeploy. Saving from Settings also re-runs activation immediately.
 3. If your Google Cloud **Web API key** has restrictions (Google Cloud
    Console → APIs & Services → **Credentials** → the browser key used by
    `firebase.js`): either set *Application restrictions* → **None**, or add
@@ -217,18 +224,22 @@ before any browser can register for push, and both are owner-only fixes:
 
 **Google Sign-In popup closes instantly or logs
 "Cross-Origin-Opener-Policy policy would block the window.closed call":**
-GitHub Pages (and some hosts) send restrictive COOP headers. HubbleNest
-automatically falls back to the full-page redirect sign-in, so this is handled.
-Also make sure your domain is authorized: Firebase Console → Authentication →
-Settings → **Authorized domains** → add `danielgiobari644-glitch.github.io`.
+fixed in the current build — Google sign-in now uses the full-page REDIRECT
+flow as its primary path, which is immune to COOP: the console no longer
+shows the popup.ts `window.closed` warnings (a popup is kept only as a
+fallback for embedded browsers that refuse redirects). Also make sure your
+domain is authorized: Firebase Console → Authentication → Settings →
+**Authorized domains** → add `danielgiobari644-glitch.github.io`.
 
 **"Banner not shown: beforeinstallpromptevent.preventDefault() called"
-in the console:** fixed in the current build — the app now only captures the
-install event when it will actually show its own Install banner (bottom-left
-on desktop, above the bottom nav on mobile). When the banner is suppressed
-(already installed, or dismissed in the last 3 days) the event is left alone
-so the browser's native install UI handles the prompt itself. If you still
-see the note on an old cached copy, hard-refresh once (Ctrl+Shift+R).
+in the console:** fixed in the current build — the app no longer calls
+`preventDefault()` at all. Chrome keeps its own native install banner
+available, and HubbleNest additionally shows its branded Install banner
+(bottom-left on desktop, above the bottom nav on mobile) whose Install
+button and the hero "Download App" button both call `prompt()` from a real
+tap. The branded banner hides while the app is already installed and stays
+dismissed for 3 days after "Not now". If you still see the note on an old
+cached copy, hard-refresh once (Ctrl+Shift+R).
 
 **Private messages show "[Encrypted message - cannot be decrypted on this
 device]" / `Decryption error: OperationError`:** this was the v1 encryption
@@ -247,13 +258,15 @@ and re-reads the real seed from Firestore, so opening a brand-new chat and
 sending the first message decrypt live, including the sender's own message;
 (2) conversation creation runs in a transaction, so two participants opening
 the same new chat at the same instant converge on ONE seed instead of
-clobbering each other's. A failing decrypt attempt is silent; if a message
-still cannot be authenticated you get ONE calm console warning (wrong or
-tampered data), never the old OperationError stack spam. Messages written
-by the v1 scheme carry no scheme marker: they are attempted with the legacy
-key path first (still readable where the old keypair matches) and otherwise
-show the placeholder. New messages are always readable for both
-participants.
+clobbering each other's. A failing decrypt attempt is silent; if messages
+still cannot be authenticated you get ONE calm console warning per
+conversation with a count ("N message(s) … cannot be decrypted on this
+device"), never the old per-snapshot OperationError stack spam. Messages
+written by the v1 scheme carry no scheme marker: they are attempted with the
+legacy key path first (still readable where the old keypair matches) and
+otherwise show the placeholder — once the device keys are known to have
+drifted, further legacy attempts are skipped instead of retried per message.
+New messages are always readable for both participants.
 
 **Login says "Incorrect email or password" (auth/invalid-credential):**
 that is Firebase's exact answer for a wrong email OR wrong password —

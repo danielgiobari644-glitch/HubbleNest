@@ -232,11 +232,20 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
   }
   getSeed(); // warm-up in the background; the first snapshot awaits it
 
+  // Console hygiene: every message that ends up undecryptable is reported
+  // ONCE for the life of this subscription (not once per snapshot), and the
+  // legacy ECDH path is attempted only until we learn the device keys have
+  // drifted — after that first failure the outcome is deterministic for
+  // every other legacy message, so further WebCrypto work is pure waste.
+  const warnedUndecryptableIds = new Set();
+  let legacyKeysKnownDrifted = false;
+
   activePrivateUnsubscribe = onSnapshot(q, async (snap) => {
     // At most ONE forced re-read per snapshot: a backfill of 50 undecryptable
     // legacy messages must not fire 50 Firestore reads.
     let refreshedThisSnapshot = false;
     const decryptedList = [];
+    const freshUndecryptableIds = [];
     for (const d of snap.docs) {
       const raw = d.data();
       let decryptedContent = { text: raw.ciphertext };
@@ -263,8 +272,10 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
 
         // Fallback: messages written by the old per-device ECDH scheme carry
         // no scheme marker. Try the legacy key path once before giving up —
-        // on the device where that keypair still matches, history stays readable.
-        if (decryptedContent.isDecryptionError && raw.scheme !== 'seed') {
+        // on the device where that keypair still matches, history stays
+        // readable. Once a legacy attempt FAILS on this device, the same
+        // keys would fail every other legacy message too — skip the rest.
+        if (decryptedContent.isDecryptionError && raw.scheme !== 'seed' && !legacyKeysKnownDrifted) {
           try {
             const legacy = await decryptLegacyEcdhMessage(
               raw.ciphertext,
@@ -273,15 +284,18 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
               peerUser.uid,
               peerUser.publicKeyJwk
             );
-            if (legacy && !legacy.isDecryptionError) decryptedContent = legacy;
-          } catch (e) { /* keep the placeholder */ }
+            if (legacy && !legacy.isDecryptionError) {
+              decryptedContent = legacy;
+            } else {
+              legacyKeysKnownDrifted = true;
+            }
+          } catch (e) {
+            legacyKeysKnownDrifted = true; /* keep the placeholder */
+          }
         }
 
         if (decryptedContent.isDecryptionError) {
-          // ONE calm, actionable line per failing message — the per-attempt
-          // OperationError stack spam the console used to fill with is gone
-          // (decryption attempts themselves are deliberately silent).
-          console.warn('[HubbleNest] One message could not be decrypted (wrong or tampered key). It will recover automatically once the conversation key is readable.');
+          freshUndecryptableIds.push(d.id);
         }
       }
 
@@ -291,6 +305,18 @@ export function subscribeToPrivateMessages(convId, currentUser, peerUser, onMess
         decrypted: decryptedContent
       });
     }
+    // ONE calm line per newly-failing message, never repeated on later
+    // snapshots of the same conversation (the old code warned per snapshot,
+    // which read like an ongoing failure even when nothing had changed).
+    if (freshUndecryptableIds.length) {
+      freshUndecryptableIds.forEach((id) => warnedUndecryptableIds.add(id));
+      console.warn(
+        `[HubbleNest] ${warnedUndecryptableIds.size} message(s) in this chat cannot be decrypted on this device ` +
+        '(written with a key this device no longer has — typically messages from before the seed scheme). ' +
+        'New messages are NOT affected.'
+      );
+    }
+
     onMessages(decryptedList);
   }, (err) => {
     // Errors were previously unhandled here, which surfaced as the SDK's

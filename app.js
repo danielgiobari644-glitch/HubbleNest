@@ -131,7 +131,8 @@ import {
 import { 
   uploadToCloudinary, 
   formatBytes, 
-  getFileCategory 
+  getFileCategory, 
+  checkDocumentDelivery 
 } from './cloudinary.js';
 
 import { 
@@ -337,18 +338,17 @@ function refreshHeroInstallButton() {
 }
 
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Only capture the event when we will actually show our own banner.
-  // Chrome REQUIRES prompt() to be called after preventDefault() — capturing
-  // the event and then suppressing the banner (already installed / dismissed
-  // in the last 3 days) left prompt() uncalled and logged
+  // We deliberately do NOT call e.preventDefault() here. Chrome logs
   // "Banner not shown: beforeinstallpromptevent.preventDefault() called.
-  // The page must call prompt()" on every load. When we don't capture, the
-  // browser's native install UI runs instead and prompts by itself.
-  if (isStandaloneDisplay() || installBannerRecentlyDismissed()) return;
-  e.preventDefault();
+  // The page must call beforeinstallpromptevent.prompt()" on every load when
+  // the event is suppressed — and the banner stays invisible whenever prompt()
+  // is never reached. Leaving the event un-prevented keeps Chrome's own
+  // install banner alive AND still hands us the event, so the branded banner
+  // and the hero button below can call prompt() from a real user gesture.
+  if (isStandaloneDisplay()) return; // already running installed — nothing to offer
   deferredInstallPrompt = e;
   refreshHeroInstallButton();
-  showInstallBanner();
+  showInstallBanner(); // no-op while the banner was dismissed recently
 });
 
 window.addEventListener('appinstalled', () => {
@@ -420,11 +420,12 @@ function hideBootSplash() {
 
 /* ==========================================================================
    PWA INSTALL BANNER
-   Chrome suppresses its native mini-infobar because the app captures
-   beforeinstallprompt (preventDefault). The contract then is: the page MUST
-   call prompt() — we do that from this always-visible banner (and the hero
-   button). Shows bottom-left on desktop / above the mobile nav, hides while
-   running installed, and stays dismissed for 3 days after the user says no.
+   The beforeinstallprompt event is captured WITHOUT preventDefault, so the
+   browser's native install banner stays available and Chrome never logs
+   "Banner not shown". This branded banner is shown alongside it — bottom-left
+   on desktop / above the mobile nav — and its Install button (plus the hero
+   button) calls prompt() from a real user gesture. Hides while running
+   installed, and stays dismissed for 3 days after the user says no.
    ========================================================================== */
 
 const INSTALL_BANNER_DISMISS_KEY = 'hn-install-banner-dismissed-at';
@@ -1172,7 +1173,7 @@ function renderSpacesGrid() {
     const coverUrl = sp.imageURL || '';
     const isAdmin = sp.userRole === 'admin';
 
-    return `class="space-card" onclick="window.HubbleNest.openSpace('${sp.id}')">
+    return `<div class="space-card" data-space-id="${sp.id}" onclick="window.HubbleNest.openSpace('${sp.id}')">
         <div class="space-card-cover">
           ${coverUrl ? `<img src="${coverUrl}" class="space-card-cover-img" alt="${escapeHtml(sp.name)}" loading="lazy" decoding="async"/>` : `
             <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); color: #3b82f6; font-size: 2rem; font-weight: 800;">
@@ -1496,6 +1497,46 @@ function getFileIcon(type, filename = '') {
   return svg('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/>');
 }
 
+/**
+ * Post-render delivery audit for document attachments (Space chat + DMs).
+ * Cloudinary accounts ship with "PDF and ZIP delivery" disabled, which turns
+ * every uploaded document link into a 401 the user only discovers on click.
+ * Each doc link is probed once (HEAD, cached); a blocked file swaps the dead
+ * link for a card that names the exact one-time fix.
+ */
+async function enhanceDocumentDelivery(rootEl) {
+  if (!rootEl || !rootEl.querySelectorAll) return;
+  const links = rootEl.querySelectorAll('a.msg-doc-link[data-doc-url]');
+  for (const a of links) {
+    if (a.dataset.deliveryChecked === '1') continue;
+    a.dataset.deliveryChecked = '1';
+    const url = a.getAttribute('data-doc-url');
+    if (!url || !url.includes('res.cloudinary.com')) continue;
+    let status = 'unknown';
+    try { status = await checkDocumentDelivery(url); } catch (e) { status = 'unknown'; }
+    if (status !== 'blocked' || !a.isConnected) continue;
+    const card = a.closest('.msg-attachment-doc');
+    if (!card) continue;
+    card.classList.add('msg-doc-blocked');
+    card.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--status-warning, #fbbf24); font-weight: 600;">
+          <span>🔒</span><span>This file is blocked by the storage account's security setting (PDF &amp; ZIP delivery).</span>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.45;">
+          One-time fix for the whole app: open
+          <a href="https://console.cloudinary.com/settings/security" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary);">console.cloudinary.com/settings/security</a>
+          → tick <b>"Allow delivery of PDF and ZIP files"</b> → Save. Existing files (this one included) become downloadable right away.
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <a href="${url}" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; color: var(--accent-primary);">Try opening anyway ↗</a>
+          <span style="font-size: 0.7rem; color: var(--text-muted);">(usually answers 401 until the setting is on)</span>
+        </div>
+      </div>
+    `;
+  }
+}
+
 function renderChatMessages() {
   const container = document.getElementById('chat-messages-container');
   if (!container) return;
@@ -1577,10 +1618,10 @@ function renderChatMessages() {
           `;
         } else {
           return `
-            <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <div class="msg-attachment-preview msg-attachment-doc" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
                 <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg></span>
-                <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <a href="${att.url}" data-doc-url="${att.url}" class="msg-doc-link" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   ${escapeHtml(att.originalFilename || 'Document')}
                 </a>
               </div>
@@ -1639,8 +1680,8 @@ function renderChatMessages() {
     `;
   }).join('');
 
-  // Scroll to bottom
   container.scrollTop = container.scrollHeight;
+  enhanceDocumentDelivery(container);
 }
 
 export function stageChatAttachment(file) {
@@ -3062,10 +3103,10 @@ function renderDirectMessages() {
           `;
         } else {
           return `
-            <div class="msg-attachment-preview" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <div class="msg-attachment-preview msg-attachment-doc" style="background: var(--bg-surface-elevated); padding: 8px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
                 <span>${getFileIcon(att.resourceType, att.originalFilename)}</span>
-                <a href="${att.url}" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <a href="${att.url}" data-doc-url="${att.url}" class="msg-doc-link" target="_blank" rel="noopener noreferrer" style="font-weight: 500; font-size: 0.85rem; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   ${escapeHtml(att.originalFilename || 'Document')}
                 </a>
               </div>
@@ -3135,6 +3176,7 @@ function renderDirectMessages() {
 
   container.innerHTML = html;
   container.scrollTop = container.scrollHeight;
+  enhanceDocumentDelivery(container);
 }
 
 function formatDayLabel(date) {
@@ -4237,6 +4279,7 @@ Object.assign(window.HubbleNest, {
   // Push notifications — one-time configuration (survives redeploys)
   savePushConfigFromSettings,
   testPushFromSettings,
+  retryPushActivation,
   initAiSettingsUI,
   saveAiConfigFromSettings,
 
@@ -4307,6 +4350,9 @@ export async function initPushSettingsUI() {
       <div class="push-status-row push-status-info">
         <span class="push-status-dot"></span>
         <span>Reminder: the Firebase Cloud Messaging API must stay <b>enabled</b> for the hubblenest project (Google Cloud Console → APIs &amp; Services). That project setting also persists — it is never affected by re-uploading the app.</span>
+      </div>
+      <div class="push-status-row push-status-info" style="justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;" onclick="window.HubbleNest.retryPushActivation()">Retry activation on this device</button>
       </div>`;
     // Pre-fill the VAPID field when a project key is already stored.
     if (!st.publicKeyIsEmbedded && st.publicKey) {
@@ -4335,6 +4381,13 @@ export async function savePushConfigFromSettings() {
     const pk = document.getElementById('push-private-key-input');
     if (pk) pk.value = '';
     await initPushSettingsUI();
+    // Activate push RIGHT NOW with the fresh configuration — no reload, no
+    // waiting for the next boot. Fails soft (a toast) when the project still
+    // needs its Cloud Messaging API enabled.
+    try {
+      const uid = state.currentUser?.uid;
+      if (uid) await initWebPushNotifications(uid, { silent: false, force: true });
+    } catch (e) { /* surfaced by initWebPushNotifications itself */ }
   } catch (err) {
     console.error('Push config save failed:', err);
     showToast(err?.code === 'permission-denied'
@@ -4343,6 +4396,25 @@ export async function savePushConfigFromSettings() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save push configuration'; }
   }
+}
+
+/**
+ * Re-run the push activation flow on demand (Settings → "Retry activation").
+ * Deliberately passes force:true — a earlier project-side 401 pauses only the
+ * AUTOMATIC background attempts, never an explicit user action.
+ */
+export async function retryPushActivation() {
+  const uid = state.currentUser?.uid;
+  if (!uid) { showToast('Sign in first.', 'info'); return false; }
+  showToast('Retrying push activation…', 'info', 2500);
+  const ok = await initWebPushNotifications(uid, { silent: false, force: true });
+  if (ok) {
+    showToast('Push notifications are active on this device now.', 'success', 5000);
+    initPushSettingsUI();
+  } else {
+    initPushSettingsUI();
+  }
+  return ok;
 }
 
 /** Send a real test push to THIS device through the configured FCM path. */

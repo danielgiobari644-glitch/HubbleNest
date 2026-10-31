@@ -213,15 +213,17 @@ export async function loginWithEmail(email, password) {
 
 /**
  * Sign In with Google
- * 
- * Tries the popup flow first. On hosts that send restrictive
- * Cross-Origin-Opener-Policy headers (e.g. GitHub Pages), the popup's
- * window reference is severed and Firebase's popup channel breaks
- * ("Cross-Origin-Opener-Policy policy would block the window.closed call"
- * followed by "INTERNAL ASSERTION FAILED: Pending promise was never set").
- * For those cases we transparently fall back to the full-page redirect
- * flow, which is immune to COOP. The redirect return is handled by the
- * onAuthStateChanged listener (profile creation included).
+ *
+ * Uses the full-page REDIRECT flow as the primary path. GitHub Pages (and any
+ * host that cannot tune Cross-Origin-Opener-Policy) severs the popup's window
+ * reference, which used to flood the console with
+ * "popup.ts: Cross-Origin-Opener-Policy policy would block the window.closed
+ * call" ×4 on every sign-in — and on the worst days ended in
+ * "INTERNAL ASSERTION FAILED: Pending promise was never set". The redirect
+ * flow is immune to COOP: the page navigates to Google and back, and the
+ * result is picked up by getRedirectResult below / the onAuthStateChanged
+ * listener in app.js (profile creation included). A popup attempt is kept
+ * ONLY as a fallback for the rare environments where redirects are blocked.
  */
 const REDIRECT_FALLBACK_CODES = new Set([
   'auth/popup-blocked',
@@ -238,42 +240,43 @@ function _isCoopPopupFailure(err) {
 }
 
 export async function loginWithGoogle() {
-  let user = null;
+  // 1) Primary: full-page redirect — no popup, no COOP, works on any host.
   try {
-    const res = await signInWithPopup(auth, googleProvider);
-    user = res.user;
-  } catch (err) {
-    if (err.code === 'auth/unauthorized-domain') {
+    await signInWithRedirect(auth, googleProvider);
+    return null; // page navigates away; the return is handled on arrival
+  } catch (redirectErr) {
+    if (redirectErr?.code === 'auth/unauthorized-domain') {
       showToast('Google sign-in is not set up for this address yet. Please use your email and password to sign in.', 'info', 6000);
       document.getElementById('login-email')?.focus();
       return null;
     }
-    const shouldRedirect = REDIRECT_FALLBACK_CODES.has(err.code) || _isCoopPopupFailure(err);
-    if (shouldRedirect) {
-      // Full-page redirect flow — works everywhere, COOP included.
+
+    // 2) Fallback: the rare environment that refuses redirects (old WebView,
+    //    embedded browser). Try the popup once before giving up.
+    if (REDIRECT_FALLBACK_CODES.has(redirectErr?.code) || _isCoopPopupFailure(redirectErr)) {
       try {
-        await signInWithRedirect(auth, googleProvider);
-        return null; // page navigates away; result handled on return
-      } catch (redirectErr) {
-        console.error('Google Sign-In redirect fallback error:', redirectErr);
+        const res = await signInWithPopup(auth, googleProvider);
+        const user = res.user;
+        const profile = await createOrUpdateUserProfile(user);
+        showToast(`Signed in as ${user.displayName || 'User'}`, 'success');
+        return { user, profile };
+      } catch (popupErr) {
+        if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/user-cancelled') {
+          return null; // user backed out silently
+        }
+        if (popupErr?.code === 'auth/unauthorized-domain') {
+          showToast('Google sign-in is not set up for this address yet. Please use your email and password to sign in.', 'info', 6000);
+          return null;
+        }
+        console.error('Google Sign-In popup fallback error:', popupErr);
         showToast('Unable to sign in with Google right now. Please use your email and password.', 'info');
-        throw redirectErr;
+        throw popupErr;
       }
     }
-    console.error('Google Sign-In error:', err);
-    if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/user-cancelled') {
-      return null; // user backed out silently
-    }
+
+    console.error('Google Sign-In error:', redirectErr);
     showToast('Unable to sign in with Google right now. Please use your email and password.', 'info');
-    throw err;
-  }
-  try {
-    const profile = await createOrUpdateUserProfile(user);
-    showToast(`Signed in as ${user.displayName || 'User'}`, 'success');
-    return { user, profile };
-  } catch (err) {
-    console.error('Google Sign-In profile error:', err);
-    throw err;
+    throw redirectErr;
   }
 }
 
