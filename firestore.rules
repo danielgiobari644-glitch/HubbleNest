@@ -343,10 +343,115 @@ service cloud.firestore {
         fieldStr(request.resource.data, 'authorId') == request.auth.uid;
       allow update: if isAuthenticated() && (
         fieldStr(resource.data, 'authorId') == request.auth.uid ||
-        touchesOnly(['plays', 'likedBy'])
+        touchesOnly(['plays', 'likedBy', 'commentCount', 'ratingSum', 'ratingCount'])
       );
       allow delete: if isAuthenticated() &&
         fieldStr(resource.data, 'authorId') == request.auth.uid;
+    }
+
+    // ======================================================================
+    // Arcade 2.0 — ratings, comments, bookmarks, play sessions, scores
+    //
+    // TRUST MODEL (no Cloud Functions available — this is the strongest
+    // client-only chain we can build, and it is honest about it):
+    //  - Ratings: one doc per (game,user); stars must be an int 1..5 and
+    //    the doc id must match the payload, so a rater can only ever move
+    //    their own rating.
+    //  - Scores: one doc per (game,user), id-anchored. A write must carry
+    //    a sessionId that resolves to a REAL gameSessions doc owned by the
+    //    same uid for the SAME game (two validated get()s), the score must
+    //    be a bounded integer, and updates may never LOWER a score.
+    //  - Sessions: private per user; they anchor score submissions and
+    //    power "Recently Played". A refresh within the resume window reuses
+    //    the same session instead of double-counting a play.
+    //  - Comments: same likedBy pattern as the feed; only likedBy may be
+    //    touched by non-authors.
+    //  - Bookmarks: one doc per (user,game); users only touch their own.
+    // ======================================================================
+
+    match /gameRatings/{ratingId} {
+      allow get, list: if isAuthenticated();
+      allow create, update: if isAuthenticated() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.gameId is string &&
+        request.resource.data.gameId.size() >= 1 && request.resource.data.gameId.size() <= 80 &&
+        request.resource.data.stars is int &&
+        request.resource.data.stars >= 1 && request.resource.data.stars <= 5 &&
+        ratingId == request.resource.data.uid + '_' + request.resource.data.gameId;
+      allow delete: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid;
+    }
+
+    match /gameComments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'authorId') == request.auth.uid &&
+        fieldStr(request.resource.data, 'gameId').size() >= 1 &&
+        fieldStr(request.resource.data, 'gameId').size() <= 80 &&
+        request.resource.data.text is string &&
+        request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 600;
+      // Authors edit/delete their own comments; anyone may toggle ONLY the
+      // like array on someone else's comment.
+      allow update: if isAuthenticated() && (
+        fieldStr(resource.data, 'authorId') == request.auth.uid ||
+        touchesOnly(['likedBy'])
+      );
+      allow delete: if isAuthenticated() &&
+        fieldStr(resource.data, 'authorId') == request.auth.uid;
+    }
+
+    match /gameBookmarks/{bookmarkId} {
+      allow get, list: if isAuthenticated();
+      allow create, update: if isAuthenticated() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.gameId is string &&
+        request.resource.data.gameId.size() >= 1 && request.resource.data.gameId.size() <= 80 &&
+        bookmarkId == request.resource.data.uid + '_' + request.resource.data.gameId;
+      allow delete: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid;
+    }
+
+    match /gameSessions/{sessionId} {
+      // Play sessions are PRIVATE to the player: they anchor score trust.
+      allow get, list: if isAuthenticated() &&
+        (resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'uid') == request.auth.uid &&
+        fieldStr(request.resource.data, 'gameId').size() >= 1 &&
+        fieldStr(request.resource.data, 'gameId').size() <= 80 &&
+        request.resource.data.durationSec is int &&
+        request.resource.data.lastScore is int;
+      allow update: if isAuthenticated() &&
+        fieldStr(resource.data, 'uid') == request.auth.uid &&
+        (request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['endedAt', 'durationSec', 'lastScore', 'resumedAt', 'endReason']));
+      allow delete: if isAuthenticated() &&
+        fieldStr(resource.data, 'uid') == request.auth.uid;
+    }
+
+    match /gameScores/{scoreId} {
+      allow get, list: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.gameId is string &&
+        request.resource.data.gameId.size() >= 1 && request.resource.data.gameId.size() <= 80 &&
+        request.resource.data.score is int &&
+        request.resource.data.score >= 0 && request.resource.data.score <= 10000000 &&
+        request.resource.data.sessionId is string &&
+        request.resource.data.displayName is string &&
+        scoreId == request.resource.data.uid + '_' + request.resource.data.gameId &&
+        exists(/databases/$(database)/documents/gameSessions/$(request.resource.data.sessionId)) &&
+        get(/databases/$(database)/documents/gameSessions/$(request.resource.data.sessionId)).data.uid == request.auth.uid &&
+        get(/databases/$(database)/documents/gameSessions/$(request.resource.data.sessionId)).data.gameId == request.resource.data.gameId;
+      allow update: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.score is int &&
+        request.resource.data.score >= resource.data.score &&
+        request.resource.data.score <= 10000000 &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['score', 'displayName', 'photo', 'sessionId', 'updatedAt']);
+      allow delete: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid;
     }
 
     // ======================================================================

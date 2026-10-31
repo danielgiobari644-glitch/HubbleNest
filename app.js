@@ -197,6 +197,13 @@ import {
   startArcade,
   stopArcade,
   setArcadeFilter,
+  setArcadeSearch,
+  setArcadeCategory,
+  setArcadeSort,
+  getGamesCache,
+  renderArcadeGrid,
+  arcGameCard,
+  restartCurrentGame,
   openGameEditor,
   closeGameEditor,
   setCodePane,
@@ -221,6 +228,13 @@ import {
   handleGameCoverUpload,
   removeGameCover
 } from './games.js';
+
+import {
+  registerArcade,
+  initArcadeShell,
+  stopArcadeExtras,
+  onArcadeGamesUpdated
+} from './arcade.js';
 
 import {
   openDirectShareView,
@@ -2798,6 +2812,10 @@ export function openArcadeView() {
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
 
   startArcade();
+  // Arcade 2.0 shell: rail router, dashboard, hero, chips (data arrives via
+  // the games snapshot → onArcadeGamesUpdated). Signed-out state is handled
+  // inside (honest sign-in prompts, no fake content).
+  initArcadeShell();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -4165,6 +4183,13 @@ Object.assign(window.HubbleNest, {
   // Arcade (user-created HTML/CSS/JS games)
   openArcadeView,
   setArcadeFilter,
+  setArcadeSearch,
+  setArcadeCategory,
+  setArcadeSort,
+  getGamesCache,
+  renderArcadeGrid,
+  arcGameCard,
+  restartCurrentGame,
   openGameEditor,
   closeGameEditor,
   setCodePane,
@@ -4588,6 +4613,11 @@ export async function saveAiConfigFromSettings() {
 // Live references used by the Arcade / Direct Share modules and their
 // inline onclick handlers (identity of window.HubbleNest stays stable).
 window.HubbleNest._state = state;
+
+// Arcade 2.0 experience layer — installs arcGo/openGameDetail/gameplay
+// controls on the global bus. Games.js hooks call these via optional
+// chaining, so ordering is safe.
+registerArcade();
 const playerGameIdRef = { id: null };
 Object.defineProperty(window.HubbleNest, '_playerGameId', {
   get: () => playerGameIdRef.id,

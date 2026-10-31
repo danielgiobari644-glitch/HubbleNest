@@ -33,7 +33,6 @@ import {
   limit,
   onSnapshot,
   serverTimestamp,
-  increment,
   arrayUnion,
   arrayRemove
 } from './firebase.js';
@@ -41,7 +40,6 @@ import {
 import {
   showToast,
   escapeHtml,
-  formatTimeAgo,
   getAvatarUrl
 } from './utils.js';
 
@@ -60,6 +58,9 @@ import { generateGameCode, getAiConfig } from './ai-game-builder.js';
 let gamesUnsubscribe = null;
 let gamesCache = [];
 let arcadeFilter = 'all'; // 'all' | 'mine'
+let arcadeSearchTerm = '';   // topbar search (title / creator / category)
+let arcadeCategory = '';     // '' = all categories
+let arcadeSort = 'newest';   // newest | plays | likes | rating | az
 let editingGameId = null; // null = creating new
 let playerGameId = null;
 let previewTimer = null;
@@ -202,6 +203,8 @@ export function startArcade() {
     // 'mine' filter mode, so games published by other members never appeared
     // until the user left and reopened the Arcade (the "needs a refresh" bug).
     renderArcadeGrid();
+    // Arcade 2.0 experience layer (dashboard sections, detail, play panels).
+    window.HubbleNest?.onArcadeGamesUpdated?.();
     // Keep the open player's like button in sync with live like counts too.
     if (playerGameId) {
       const fresh = gamesCache.find(g => g.id === playerGameId);
@@ -222,10 +225,14 @@ export function startArcade() {
 }
 
 export function stopArcade() {
+  window.HubbleNest?.stopArcadeExtras?.();
   gamesUnsubscribe?.();
   gamesUnsubscribe = null;
   gamesCache = [];
 }
+
+/** Live games snapshot for the Arcade experience layer (arcade.js). */
+export function getGamesCache() { return gamesCache; }
 
 /* ========================================================================
    Browse grid
@@ -238,75 +245,135 @@ export function setArcadeFilter(filter) {
   renderArcadeGrid();
 }
 
+export function setArcadeSearch(term) {
+  arcadeSearchTerm = String(term || '').trim().toLowerCase();
+  if (document.getElementById('arcade-grid')) renderArcadeGrid();
+}
+
+export function setArcadeCategory(cat) {
+  arcadeCategory = String(cat || '').trim();
+  if (document.getElementById('arcade-grid')) renderArcadeGrid();
+}
+
+export function setArcadeSort(sort) {
+  const allowed = ['newest', 'plays', 'likes', 'rating', 'az'];
+  arcadeSort = allowed.includes(sort) ? sort : 'newest';
+  const sel = document.getElementById('arc-sort-select');
+  if (sel && sel.value !== arcadeSort) sel.value = arcadeSort;
+  if (document.getElementById('arcade-grid')) renderArcadeGrid();
+}
+
 function myUid() { return window.HubbleNest?._state?.currentUser?.uid || null; }
+
+/** Sort helper honouring the games-list sort control. */
+function sortGamesList(list) {
+  const t = (g) => (g.updatedAt?.seconds || g.createdAt?.seconds || 0);
+  switch (arcadeSort) {
+    case 'plays': return [...list].sort((a, b) => (b.plays || 0) - (a.plays || 0));
+    case 'likes': return [...list].sort((a, b) => (b.likedBy?.length || 0) - (a.likedBy?.length || 0));
+    case 'rating': return [...list].sort((a, b) => {
+      const ra = (a.ratingCount || 0) > 0 ? a.ratingSum / a.ratingCount : -1;
+      const rb = (b.ratingCount || 0) > 0 ? b.ratingSum / b.ratingCount : -1;
+      return rb - ra;
+    });
+    case 'az': return [...list].sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+    default: return [...list].sort((a, b) => t(b) - t(a));
+  }
+}
+
+/**
+ * ONE card template shared by the games list AND every dashboard section
+ * (arcade.js renders its sections through window.HubbleNest.arcGameCard).
+ * Cards open the game DETAIL page; the Play button launches the real game.
+ */
+export function arcGameCard(g) {
+  const uid = myUid();
+  const liked = Array.isArray(g.likedBy) && uid && g.likedBy.includes(uid);
+  const likes = Array.isArray(g.likedBy) ? g.likedBy.length : (g.likeCount || 0);
+  const mine = g.authorId === uid;
+  const sid = escapeHtml(g.id);
+  const ratingCount = Number(g.ratingCount) || 0;
+  const ratingAvg = ratingCount > 0 ? (Number(g.ratingSum) || 0) / ratingCount : 0;
+  const plays = Number(g.plays) || 0;
+  // Cover image when the author set one; gradient initials tile otherwise.
+  const initials = String(g.title || 'Game').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'GN';
+  const hue = Array.from(String(g.id || g.title || '')).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+  const thumbInner = g.coverImage
+    ? `<img src="${escapeHtml(g.coverImage)}" class="game-card-cover-img" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()"/>`
+    : `<span class="game-thumb-initials">${escapeHtml(initials)}</span>`;
+  return `
+    <article class="game-card arc-card" data-game-card="${sid}" onclick="window.HubbleNest.openGameDetail('${sid}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter')window.HubbleNest.openGameDetail('${sid}')">
+      <div class="game-card-thumb ${g.coverImage ? 'game-card-thumb-photo' : ''}" ${g.coverImage ? '' : `style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));"`}>
+        ${thumbInner}
+        ${g.category ? `<span class="arc-card-cat">${escapeHtml(g.category)}</span>` : ''}
+        ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
+        <span class="arc-card-play-overlay">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> Play
+        </span>
+      </div>
+      <div class="game-card-body">
+        <h3 class="game-card-title">${escapeHtml(g.title || 'Untitled game')}</h3>
+        <p class="game-card-desc">${escapeHtml((g.description || '').slice(0, 110) || 'No description')}${(g.description || '').length > 110 ? '…' : ''}</p>
+        <div class="game-card-meta">
+          ${ratingCount > 0 ? `<span class="arc-card-rating" title="${ratingAvg.toFixed(1)} from ${ratingCount} rating${ratingCount === 1 ? '' : 's'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24" stroke="none"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> ${ratingAvg.toFixed(1)}</span>` : ''}
+          <span class="game-plays" title="${plays} plays"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> ${plays >= 1000 ? `${(plays / 1000).toFixed(1).replace(/\.0$/, '')}K` : plays}</span>
+          <span class="arc-card-likes" title="${likes} likes"><svg width="12" height="12" viewBox="0 0 24 24" fill="${liked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg> ${likes || ''}</span>
+        </div>
+      </div>
+      <footer class="game-card-actions" onclick="event.stopPropagation()">
+        <span class="game-card-author"><img src="${getAvatarUrl(g.authorPhoto, g.authorName)}" alt="" loading="lazy" /> ${escapeHtml(g.authorName || 'Member')}</span>
+        ${mine ? `<span class="arc-card-owner">
+                    <button type="button" class="btn-ghost" style="color:var(--text-secondary);font-size:.75rem;" onclick="window.HubbleNest.openGameEditor('${sid}')">Edit</button>
+                    <button type="button" class="btn-ghost" style="color:var(--status-danger);font-size:.75rem;" onclick="window.HubbleNest.gameDelete('${sid}')">Delete</button>
+                  </span>`
+               : `<button type="button" class="arc-card-play-btn" onclick="window.HubbleNest.openGamePlayer('${sid}')">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> Play
+                  </button>`}
+      </footer>
+    </article>`;
+}
 
 export function renderArcadeGrid() {
   const grid = els().grid;
   if (!grid) return;
   const uid = myUid();
 
-  const list = gamesCache
-    .filter(g => arcadeFilter !== 'mine' || g.authorId === uid)
-    .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+  const term = arcadeSearchTerm;
+  const matches = (g) => {
+    if (arcadeFilter === 'mine' && g.authorId !== uid) return false;
+    if (arcadeCategory && g.category !== arcadeCategory) return false;
+    if (term) {
+      const hay = `${g.title || ''} ${g.description || ''} ${g.authorName || ''} ${g.category || ''}`.toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
+    return true;
+  };
+
+  const list = sortGamesList(gamesCache.filter(matches));
 
   const countEl = document.getElementById('arcade-count');
   if (countEl) {
-    countEl.textContent = list.length === 1 ? '1 game' : `${list.length} games`;
+    const bits = [list.length === 1 ? '1 game' : `${list.length} games`];
+    if (arcadeCategory) bits.push(`in ${arcadeCategory}`);
+    if (term) bits.push(`matching "${arcadeSearchTerm}"`);
+    countEl.textContent = bits.join(' ');
   }
 
   if (list.length === 0) {
+    const filtered = arcadeFilter === 'mine' || arcadeCategory || term;
     grid.innerHTML = `
       <div class="feed-empty">
         <div class="feed-empty-glyph">
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
         </div>
-        <h3 class="feed-empty-title">${arcadeFilter === 'mine' ? 'You haven\'t published a game yet' : 'The Arcade is empty — be the first'}</h3>
-        <p class="feed-empty-desc">Write a game with HTML, CSS and JavaScript in the built-in editor. It takes about two minutes with the starter template, and anyone on HubbleNest can play it instantly.</p>
+        <h3 class="feed-empty-title">${filtered ? 'No games match' : (arcadeFilter === 'mine' ? 'You haven\'t published a game yet' : 'The Arcade is empty — be the first')}</h3>
+        <p class="feed-empty-desc">${filtered ? 'Try a different search or category — or create the game you were looking for.' : 'Write a game with HTML, CSS and JavaScript in the built-in editor. It takes about two minutes with the starter template, and anyone on HubbleNest can play it instantly.'}</p>
         <button type="button" class="btn btn-primary" onclick="window.HubbleNest.openGameEditor(null)">Create your first game</button>
       </div>`;
     return;
   }
 
-  grid.innerHTML = list.map(g => {
-    const liked = Array.isArray(g.likedBy) && uid && g.likedBy.includes(uid);
-    const likes = Array.isArray(g.likedBy) ? g.likedBy.length : (g.likeCount || 0);
-    const mine = g.authorId === uid;
-    const sid = escapeHtml(g.id);
-    // Cover image when the author set one; gradient initials tile otherwise.
-    const initials = String(g.title || 'Game').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'GN';
-    const hue = Array.from(String(g.id || g.title || '')).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
-    const thumbInner = g.coverImage
-      ? `<img src="${escapeHtml(g.coverImage)}" class="game-card-cover-img" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()"/>`
-      : `<span class="game-thumb-initials">${escapeHtml(initials)}</span>`;
-    return `
-      <article class="game-card" onclick="window.HubbleNest.openGamePlayer('${sid}')">
-        <div class="game-card-thumb ${g.coverImage ? 'game-card-thumb-photo' : ''}" ${g.coverImage ? '' : `style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));"`}>
-          ${thumbInner}
-          ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
-          <span class="game-thumb-play">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>
-          </span>
-        </div>
-        <div class="game-card-body">
-          <h3 class="game-card-title">${escapeHtml(g.title || 'Untitled game')}</h3>
-          <p class="game-card-desc">${escapeHtml((g.description || '').slice(0, 110) || 'No description')}${(g.description || '').length > 110 ? '…' : ''}</p>
-          <div class="game-card-meta">
-            <span class="game-card-author"><img src="${getAvatarUrl(g.authorPhoto, g.authorName)}" alt="" loading="lazy" /> ${escapeHtml(g.authorName || 'Member')}</span>
-            <span>${formatTimeAgo(g.updatedAt || g.createdAt)}</span>
-          </div>
-        </div>
-        <footer class="game-card-actions" onclick="event.stopPropagation()">
-          <button type="button" class="feed-action ${liked ? 'feed-action-liked' : ''}" onclick="window.HubbleNest.gameToggleLike('${sid}')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="${liked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
-            <span>${likes || 'Like'}</span>
-          </button>
-          <span class="game-plays">${g.plays || 0} plays</span>
-          ${mine ? `<button type="button" class="btn-ghost" style="color:var(--text-secondary);font-size:.75rem;" onclick="window.HubbleNest.openGameEditor('${sid}')">Edit</button>
-                    <button type="button" class="btn-ghost" style="color:var(--status-danger);font-size:.75rem;" onclick="window.HubbleNest.gameDelete('${sid}')">Delete</button>`
-                 : `<span class="game-play-cta">▶ Play</span>`}
-        </footer>
-      </article>`;
-  }).join('');
+  grid.innerHTML = list.map(arcGameCard).join('');
 }
 
 /* ========================================================================
@@ -319,8 +386,10 @@ export function openGameEditor(gameId) {
 
   player && (player.style.display = 'none');
   browse.style.display = 'none';
+  document.getElementById('arcade-detail') && (document.getElementById('arcade-detail').style.display = 'none');
   editor.style.display = 'block';
   editingGameId = gameId;
+  window.HubbleNest?.onArcadeEditorOpen?.();
 
   const game = gameId ? gamesCache.find(g => g.id === gameId) : null;
 
@@ -339,6 +408,8 @@ export function openGameEditor(gameId) {
     if (htmlTa) htmlTa.value = game.html || '';
     if (cssTa) cssTa.value = game.css || '';
     if (jsTa) jsTa.value = game.js || '';
+    const catSel = document.getElementById('game-category-select');
+    if (catSel) catSel.value = game.category || '';
     const pubInput = document.getElementById('game-public-input');
     if (pubInput) pubInput.checked = game.isPublic === true;
     editorFiles = (game.files && typeof game.files === 'object') ? { ...game.files } : {};
@@ -358,6 +429,8 @@ export function openGameEditor(gameId) {
       if (htmlTa) htmlTa.value = draft.html ?? STARTER_HTML;
       if (cssTa) cssTa.value = draft.css ?? STARTER_CSS;
       if (jsTa) jsTa.value = draft.js ?? STARTER_JS;
+      const catSel = document.getElementById('game-category-select');
+      if (catSel) catSel.value = draft.category || '';
       editorFiles = (draft.files && typeof draft.files === 'object') ? { ...draft.files } : {};
       editorEntry = draft.entryPath || currentEntryCandidate();
       editorCoverUrl = draft.coverImage || null;
@@ -370,6 +443,8 @@ export function openGameEditor(gameId) {
       if (htmlTa) htmlTa.value = STARTER_HTML;
       if (cssTa) cssTa.value = STARTER_CSS;
       if (jsTa) jsTa.value = STARTER_JS;
+      const catSel = document.getElementById('game-category-select');
+      if (catSel) catSel.value = '';
       editorCoverUrl = null;
     }
     renderGameCoverPreview();
@@ -388,6 +463,7 @@ export function closeGameEditor() {
   if (browse) browse.style.display = 'block';
   editingGameId = null;
   editorCoverBusy = false;
+  window.HubbleNest?.onArcadeEditorClose?.();
 }
 
 /* ------------------------------------------------------------------
@@ -487,6 +563,7 @@ function saveEditorDraft() {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       title: document.getElementById('game-title-input')?.value || '',
       description: document.getElementById('game-desc-input')?.value || '',
+      category: document.getElementById('game-category-select')?.value || '',
       html: document.getElementById('game-code-html')?.value || '',
       css: document.getElementById('game-code-css')?.value || '',
       js: document.getElementById('game-code-js')?.value || '',
@@ -831,6 +908,7 @@ export async function saveCurrentGame() {
   const payload = {
     title: title.slice(0, 80),
     description: description.slice(0, 300),
+    category: (document.getElementById('game-category-select')?.value || '').slice(0, 40),
     isPublic: !!document.getElementById('game-public-input')?.checked,
     html, css, js,
     files: hasFiles ? editorFiles : null,
@@ -864,7 +942,12 @@ export async function saveCurrentGame() {
     showToast(existing ? 'Game updated ✓' : 'Published to the Arcade ✓', 'success');
     if (statusEl) { statusEl.textContent = ''; }
     closeGameEditor();
-    setTimeout(() => openGamePlayer(gameId), 350);
+    // Land on the game's detail page (falls back to the player if the
+    // Arcade experience layer is unavailable).
+    setTimeout(() => {
+      if (window.HubbleNest?.openGameDetail) window.HubbleNest.openGameDetail(gameId);
+      else openGamePlayer(gameId);
+    }, 350);
   } catch (err) {
     console.error('Game save failed:', err);
     if (statusEl) { statusEl.textContent = ''; }
@@ -884,6 +967,11 @@ export async function gameDelete(gameId) {
   try {
     await deleteDoc(doc(db, 'games', gameId));
     showToast('Game deleted.', 'info');
+    // If its detail page is open, return to the games list (nothing to show).
+    if (window.HubbleNest?._state?.currentView === 'arcade' &&
+        document.getElementById('arcade-detail')?.style.display === 'block') {
+      window.HubbleNest?.arcGo?.('games');
+    }
   } catch (err) {
     console.error('Game delete failed:', err);
     showToast('Could not delete the game.', 'error');
@@ -901,6 +989,7 @@ export function openGamePlayer(gameId) {
   const { browse, editor, player } = els();
   editor && (editor.style.display = 'none');
   browse && (browse.style.display = 'none');
+  document.getElementById('arcade-detail') && (document.getElementById('arcade-detail').style.display = 'none');
   if (!player) return;
   player.style.display = 'block';
 
@@ -916,10 +1005,12 @@ export function openGamePlayer(gameId) {
   const metaEl = document.getElementById('player-meta');
   const frame = document.getElementById('player-frame');
   const likeBtn = document.getElementById('player-like-btn');
+  const descEl = document.getElementById('arc-play-desc');
 
   if (titleEl) titleEl.textContent = game.title || 'Untitled game';
+  if (descEl) descEl.textContent = game.description || '';
   if (metaEl) {
-    metaEl.innerHTML = `by <b>${escapeHtml(game.authorName || 'Member')}</b> · ${game.plays || 0} plays · ${formatTimeAgo(game.updatedAt || game.createdAt)}`;
+    metaEl.innerHTML = `by <b>${escapeHtml(game.authorName || 'Member')}</b> · ${game.plays || 0} plays`;
   }
   if (frame) {
     frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-modals');
@@ -941,12 +1032,27 @@ export function openGamePlayer(gameId) {
     metaEl.innerHTML += ` · <span class="player-files-chip">${game.fileCount} project file${game.fileCount === 1 ? '' : 's'}</span> ${langs}`;
   }
 
-  // Real play counter — one bump per open.
-  updateDoc(doc(db, 'games', gameId), { plays: increment(1) }).catch((err) => {
-    console.warn('Play count not recorded:', err?.code || err);
-  });
+  // Arcade 2.0 gameplay shell: HUD/toolbar/info/progress/leaderboard/comments
+  // panels + the play session (which owns the play counter — one bump per
+  // FRESH session, refreshes within the resume window do not inflate it).
+  window.HubbleNest?.onGameplayOpen?.(game);
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/** Restart the RUNNING game in place — no new session, no play bump. */
+export function restartCurrentGame() {
+  const game = playerGameId ? gamesCache.find(g => g.id === playerGameId) : null;
+  if (!game) return;
+  const frame = document.getElementById('player-frame');
+  if (game.entryPath && game.files) {
+    frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
+  } else if (game.files && !game.entryPath) {
+    return; // source-only project — nothing to restart
+  } else {
+    frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+  }
+  window.HubbleNest?.onGameplayRestarted?.();
 }
 
 function renderPlayerLike(game) {
@@ -993,9 +1099,14 @@ function renderSourceProjectPanel(game) {
 
 export function closeGamePlayer() {
   const { browse, player } = els();
+  // End the play session and tear down gameplay panels FIRST (score submits
+  // happen inside this hook — the frame is still alive here).
+  window.HubbleNest?.onGameplayClose?.();
   if (player) { player.style.display = 'none'; const f = document.getElementById('player-frame'); if (f) f.removeAttribute('srcdoc'); }
-  if (browse) browse.style.display = 'block';
   playerGameId = null;
+  // After playing, Exit lands on the game's detail page when available.
+  if (window.HubbleNest?.afterPlayerClose?.() === 'handled') return;
+  if (browse) browse.style.display = 'block';
 }
 
 /** Fullscreen the game frame — a real fullscreen session on the wrapper. */

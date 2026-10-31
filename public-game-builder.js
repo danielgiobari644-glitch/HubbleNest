@@ -74,10 +74,106 @@ export function normalizeGamePath(p) {
 export function buildSrcDoc(html, css, js) {
   // Neutralise script-closing sequences so member code can't break the wrapper.
   const safe = (s) => String(s || '').replace(/<\/script/gi, '<\\/script');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  return `<!DOCTYPE html><html><head>${arcadeBridgeTag()}<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${safe(css)}</style></head><body>${safe(html)}
 <script>${safe(js)}<\/script></body></html>`;
+}
+
+/* ========================================================================
+   Arcade sandbox bridge — injected into EVERY game document (previews,
+   the player and public pages) before any member code runs.
+
+   What it gives games and the Arcade shell:
+   - window.HN.postScore(n) / HN.gameOver(n) / HN.hud({...}) / HN.setControls
+     — opt-in score/HUD/touch-control APIs reported to the parent via
+     postMessage. Games that never call them simply show no HUD (no fake UI).
+   - REAL pause/resume for rAF- and timer-driven games: while paused the
+     bridge queues animation frames and freezes timeout callbacks.
+   - REAL media mute: pauses/mutes audio+video elements and suspends
+     AudioContext instances (including ones created later).
+   - On-screen control buttons dispatch real KeyboardEvents into the game.
+
+   The bridge grants NO privileges: no network, no storage, no parent access
+   beyond postMessage. The parent validates every message's source frame.
+   ======================================================================== */
+
+const BRIDGE_BODY = `(function(){
+'use strict';
+var PAUSED=false, MUTED=false;
+var rafQueue=[], timerQueue=[];
+var _raf=window.requestAnimationFrame?window.requestAnimationFrame.bind(window):null;
+var _setTimeout=window.setTimeout.bind(window);
+var _setInterval=window.setInterval.bind(window);
+var audioCtxs=[];
+function post(msg){try{parent.postMessage(msg,'*');}catch(e){}}
+if(_raf){window.requestAnimationFrame=function(cb){
+  if(PAUSED){rafQueue.push(cb);return 0;}
+  return _raf(function(ts){if(PAUSED){rafQueue.push(cb);return;}cb(ts);});};}
+window.setTimeout=function(fn,d){var a=Array.prototype.slice.call(arguments,2);
+  return _setTimeout(function(){if(PAUSED){timerQueue.push({fn:fn,a:a});return;}fn.apply(null,a);},d);};
+window.setInterval=function(fn,d){var a=Array.prototype.slice.call(arguments,2);
+  return _setInterval(function(){if(PAUSED){return;}fn.apply(null,a);},d);};
+function doPause(){PAUSED=true;}
+function doResume(){PAUSED=false;
+  var q=rafQueue.slice();rafQueue.length=0;
+  for(var i=0;i<q.length;i++){(function(cb){_raf(function(ts){if(PAUSED){rafQueue.push(cb);return;}cb(ts);});})(q[i]);}
+  var tq=timerQueue.slice();timerQueue.length=0;
+  for(var j=0;j<tq.length;j++){(function(it){_setTimeout(function(){if(PAUSED){timerQueue.push(it);return;}it.fn.apply(null,it.a);},0);})(tq[j]);}}
+function mediaAll(){try{return document.querySelectorAll('audio,video');}catch(e){return [];}}
+function doMute(){MUTED=true;
+  mediaAll().forEach(function(el){try{el._hnM=el.muted;el.muted=true;el.pause();}catch(e){}});
+  audioCtxs.forEach(function(c){try{c.suspend();}catch(e){}});}
+function doUnmute(){MUTED=false;
+  mediaAll().forEach(function(el){try{el.muted=el._hnM||false;}catch(e){}});
+  audioCtxs.forEach(function(c){try{c.resume();}catch(e){}});}
+function key(k,down){var ev;try{ev=new KeyboardEvent(down?'keydown':'keyup',{key:k,code:k==='Space'?'Space':k,keyCode:k==='Space'?32:k.indexOf('Arrow')===0?{ArrowLeft:37,ArrowRight:39,ArrowUp:38,ArrowDown:40}[k]:0,which:0,bubbles:true,cancelable:true});}catch(e){return;}
+  try{(document.activeElement||document.body).dispatchEvent(ev);window.dispatchEvent(ev);}catch(e){}}
+window.addEventListener('message',function(e){
+  var d=e.data||{};
+  if(d.type==='hn-ctl'){
+    if(d.cmd==='pause')doPause();
+    if(d.cmd==='resume')doResume();
+    if(d.cmd==='mute')doMute();
+    if(d.cmd==='unmute')doUnmute();
+    post({type:'hn-ack',cmd:d.cmd||''});
+  }else if(d.type==='hn-key'){key(String(d.key||''),!!d.down);}
+});
+try{window.addEventListener('error',function(e){post({type:'hn-err',message:String((e&&e.message)||'error').slice(0,220)});});}catch(e){}
+try{
+  var AC=window.AudioContext||window.webkitAudioContext;
+  if(AC){function WrappedAC(){var c=new AC();audioCtxs.push(c);if(MUTED){try{c.suspend();}catch(e){}}return c;}
+    WrappedAC.prototype=AC.prototype;try{Object.defineProperty(WrappedAC,'name',{value:AC.name});}catch(e){}
+    if(window.AudioContext===AC)window.AudioContext=WrappedAC;
+    if(window.webkitAudioContext===AC)window.webkitAudioContext=WrappedAC;}
+}catch(e){}
+try{new MutationObserver(function(){
+  if(!MUTED)return;
+  mediaAll().forEach(function(el){try{if(!el.paused){el.pause();el.muted=true;}}catch(e){}});
+}).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
+window.HN={
+  postScore:function(n){post({type:'hn-score',score:Number(n)||0});},
+  hud:function(o){if(o&&typeof o==='object')post({type:'hn-hud',hud:o});},
+  gameOver:function(n){post({type:'hn-over',score:Number(n)||0});},
+  setControls:function(c){var k={};if(c&&c.left)k.left=1;if(c&&c.right)k.right=1;if(c&&c.up)k.up=1;if(c&&c.down)k.down=1;if(c&&c.jump)k.jump=1;if(c&&c.action)k.action=1;post({type:'hn-controls',controls:k});},
+  progress:function(p){post({type:'hn-progress',pct:Number(p)||0});}
+};
+})();`;
+
+/** The bridge as a <script> tag for direct template injection. */
+function arcadeBridgeTag() {
+  return `<script>${BRIDGE_BODY}<\/script>`;
+}
+
+/** Inject the bridge into a full HTML document (multi-file projects). */
+function injectBridge(html) {
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, (m, attrs) => `<head${attrs}>${arcadeBridgeTag()}`);
+  }
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(/<html([^>]*)>/i, (m, attrs) => `<html${attrs}><head>${arcadeBridgeTag()}</head>`);
+  }
+  return `${arcadeBridgeTag()}${html}`;
 }
 
 /** Resolve a relative reference against the entry file's directory. */
@@ -150,6 +246,8 @@ export function buildSrcDocFromFiles(files, entry) {
   if (!/<html[\s>]/i.test(html)) {
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${html}</body></html>`;
   }
-  return neutralizeInlineScripts(html);
+  // Bridge goes in AFTER member code was neutralised so our own script
+  // stays intact — it must run before any game code (it wraps rAF/timers).
+  return injectBridge(neutralizeInlineScripts(html));
 }
 

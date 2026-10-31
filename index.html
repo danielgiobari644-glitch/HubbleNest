@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=18) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=19) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=18" />
+  <link rel="modulepreload" href="./app.js?v=19" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=18" />
+  <link rel="stylesheet" href="./style.css?v=19" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -1684,30 +1684,114 @@
           </div>
         </div>
 
-        <!-- VIEW: ARCADE (user-created HTML/CSS/JS games) -->
+        <!-- VIEW: ARCADE — immersive gaming experience (dashboard / detail / play / create) -->
         <div class="view-section" id="view-arcade">
-          <div class="dash-header">
-            <div class="dash-section-titles">
-              <h1 class="dash-title">Arcade</h1>
-              <p class="dash-subtitle">Games made by the community with HTML, CSS &amp; JavaScript — play instantly, or write your own.</p>
-            </div>
-            <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.openGameEditor(null)">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px;"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              Create a game
-            </button>
-          </div>
+          <div class="arc-shell">
 
-          <!-- Browse -->
-          <div id="arcade-browse">
-            <div class="arcade-toolbar">
-              <div class="feed-tabs" role="tablist" aria-label="Game filters">
-                <button type="button" class="feed-tab feed-tab-active" id="arcade-tab-all" onclick="window.HubbleNest.setArcadeFilter('all')">All games</button>
-                <button type="button" class="feed-tab" id="arcade-tab-mine" onclick="window.HubbleNest.setArcadeFilter('mine')">My games</button>
+            <!-- Arcade rail (sidebar) -->
+            <aside class="arc-rail" id="arc-rail" aria-label="Arcade navigation">
+              <div class="arc-rail-brand" role="button" tabindex="0" onclick="window.HubbleNest.arcGo('home')" onkeydown="if(event.key==='Enter')window.HubbleNest.arcGo('home')" title="Arcade home">
+                <span class="arc-rail-logo" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
+                </span>
+                <span class="arc-rail-brand-text"><b>HubbleNest</b><i>Arcade</i></span>
               </div>
-              <span class="arcade-count" id="arcade-count"></span>
-            </div>
-            <div class="arcade-grid" id="arcade-grid"></div>
-          </div>
+              <nav class="arc-rail-nav" aria-label="Arcade sections">
+                <button type="button" class="arc-rail-item arc-active" id="arc-nav-home" onclick="window.HubbleNest.arcGo('home')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                  <span>Home</span>
+                </button>
+                <button type="button" class="arc-rail-item" id="arc-nav-games" onclick="window.HubbleNest.arcGo('games')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
+                  <span>Games</span>
+                </button>
+                <button type="button" class="arc-rail-item" id="arc-nav-leaderboard" onclick="window.HubbleNest.arcGo('leaderboard')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                  <span>Leaderboard</span>
+                </button>
+                <button type="button" class="arc-rail-item" id="arc-nav-activity" onclick="window.HubbleNest.arcGo('activity')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  <span>My Activity</span>
+                </button>
+                <div class="arc-rail-sep" role="separator"></div>
+                <button type="button" class="arc-rail-item" onclick="window.HubbleNest.openSpacesSection()">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  <span>Spaces</span>
+                </button>
+                <button type="button" class="arc-rail-item" onclick="window.HubbleNest.openDirectShareView()">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                  <span>Share</span>
+                </button>
+              </nav>
+              <div class="arc-promo">
+                <span class="arc-promo-crown" aria-hidden="true">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.5 7.5 6 11l6-7 6 7 3.5-3.5V17a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2V7.5Z"/></svg>
+                </span>
+                <b class="arc-promo-line">Play. Compete.<br/>Win!</b>
+                <button type="button" class="btn btn-primary btn-sm arc-promo-btn" onclick="window.HubbleNest.arcGo('games')">Join the Fun</button>
+              </div>
+            </aside>
+
+            <!-- Arcade main column -->
+            <div class="arc-main">
+              <div class="arc-topbar">
+                <div class="arc-search" role="search">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input type="search" id="arc-search-input" placeholder="Search games, creators or categories…" autocomplete="off"
+                         oninput="window.HubbleNest.arcSearch(this.value)" />
+                  <button type="button" class="arc-search-clear" id="arc-search-clear" onclick="window.HubbleNest.arcClearSearch()" aria-label="Clear search" style="display:none;">✕</button>
+                </div>
+                <div class="arc-topbar-actions">
+                  <button type="button" class="btn btn-primary btn-sm arc-create-btn" onclick="window.HubbleNest.openGameEditor(null)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px;"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                    Create Game
+                  </button>
+                  <button type="button" class="icon-btn arc-bell-btn" onclick="window.HubbleNest.toggleNotificationsMenu()" aria-label="Notifications">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                    <span class="badge-count" id="arc-notif-badge" style="display: none;">0</span>
+                  </button>
+                  <button type="button" class="avatar-btn" onclick="window.HubbleNest.openProfilePage()" aria-label="Account">
+                    <img id="arc-user-avatar" src="" class="avatar-img" alt="Profile" />
+                  </button>
+                </div>
+              </div>
+
+              <!-- Browse (home / games / leaderboard / activity) -->
+              <div id="arcade-browse">
+                <div id="arc-home">
+                  <div class="arc-hero" id="arc-hero" aria-roledescription="carousel"></div>
+                  <div class="arc-chips" id="arc-chips" role="tablist" aria-label="Game categories"></div>
+                  <div id="arc-sections"></div>
+                  <div id="arc-home-empty"></div>
+                </div>
+
+                <div id="arc-games-view" style="display: none;">
+                  <div class="arcade-toolbar">
+                    <div class="feed-tabs" role="tablist" aria-label="Game filters">
+                      <button type="button" class="feed-tab feed-tab-active" id="arcade-tab-all" onclick="window.HubbleNest.setArcadeFilter('all')">All games</button>
+                      <button type="button" class="feed-tab" id="arcade-tab-mine" onclick="window.HubbleNest.setArcadeFilter('mine')">My games</button>
+                    </div>
+                    <div class="arc-toolbar-right">
+                      <label class="arc-sort-label" for="arc-sort-select">Sort</label>
+                      <select id="arc-sort-select" class="arc-select" onchange="window.HubbleNest.arcSetSort(this.value)" aria-label="Sort games">
+                        <option value="newest">Newest</option>
+                        <option value="plays">Most played</option>
+                        <option value="likes">Most liked</option>
+                        <option value="rating">Top rated</option>
+                        <option value="az">A – Z</option>
+                      </select>
+                      <span class="arcade-count" id="arcade-count"></span>
+                    </div>
+                  </div>
+                  <div class="arcade-grid" id="arcade-grid"></div>
+                </div>
+
+                <div id="arc-leaderboard-view" style="display: none;"></div>
+                <div id="arc-activity-view" style="display: none;"></div>
+              </div>
+
+              <!-- Game detail page -->
+              <div id="arcade-detail" style="display: none;"></div>
 
           <!-- Editor -->
           <div id="arcade-editor" style="display: none;">
@@ -1734,6 +1818,18 @@
               <div class="game-editor-field">
                 <label for="game-desc-input">Short description</label>
                 <input type="text" id="game-desc-input" maxlength="300" placeholder="Catch falling stars, dodge the bombs, beat your best score." />
+              </div>
+              <div class="game-editor-field">
+                <label for="game-category-select">Category</label>
+                <select id="game-category-select" class="arc-select">
+                  <option value="">Uncategorised</option>
+                  <option value="Action">Action</option>
+                  <option value="Puzzle">Puzzle</option>
+                  <option value="Racing">Racing</option>
+                  <option value="Adventure">Adventure</option>
+                  <option value="Arcade">Arcade</option>
+                  <option value="Strategy">Strategy</option>
+                </select>
               </div>
               <div class="game-editor-field game-editor-cover-field">
                 <label>Game cover image</label>
@@ -1806,30 +1902,77 @@
             </div>
           </div>
 
-          <!-- Player -->
+          <!-- Gameplay — the real game runs in the sandboxed frame below -->
           <div id="arcade-player" style="display: none;">
-            <div class="page-header-bar">
-              <div class="page-title-group">
-                <button type="button" class="back-link-btn" onclick="window.HubbleNest.closeGamePlayer()">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                  <span>Back to Arcade</span>
-                </button>
-                <h2 id="player-title">Game</h2>
+            <div class="arc-play-header">
+              <button type="button" class="back-link-btn" onclick="window.HubbleNest.exitGameplay()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                <span>Back to Games</span>
+              </button>
+              <div class="arc-play-identity">
+                <div class="arc-play-thumb" id="arc-play-thumb"></div>
+                <div class="arc-play-id-text">
+                  <h2 id="player-title">Game</h2>
+                  <p class="arc-play-desc" id="arc-play-desc"></p>
+                  <div class="arc-play-meta-row">
+                    <span id="player-meta" class="player-meta"></span>
+                    <button type="button" class="feed-action" id="player-like-btn" onclick="window.HubbleNest.gameToggleLike(window.HubbleNest._playerGameId)" aria-label="Like this game"></button>
+                    <button type="button" class="arc-bookmark-btn" id="arc-play-bookmark" onclick="window.HubbleNest.arcToggleBookmarkFromPlay()" aria-label="Add to My Games"></button>
+                  </div>
+                </div>
               </div>
-              <div class="page-header-actions">
-                <span id="player-meta" class="player-meta"></span>
-                <button type="button" class="feed-action" id="player-like-btn" onclick="window.HubbleNest.gameToggleLike(window.HubbleNest._playerGameId)"></button>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.toggleGameFullscreen()" title="Fullscreen">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-                  Fullscreen
-                </button>
-              </div>
+              <button type="button" class="btn btn-danger btn-sm arc-exit-btn" onclick="window.HubbleNest.exitGameplay()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                Exit Game
+              </button>
             </div>
-            <div class="game-player-frame-wrap">
-              <iframe id="player-frame" title="Playable game" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe>
+
+            <div class="arc-play-layout">
+              <div class="arc-play-center">
+                <div class="arc-play-stage" id="arc-play-stage">
+                  <div class="arc-hud" id="arc-hud" hidden aria-live="off"></div>
+                  <div class="game-player-frame-wrap">
+                    <iframe id="player-frame" title="Playable game" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe>
+                  </div>
+                  <div class="arc-pause-overlay" id="arc-pause-overlay" hidden>
+                    <div class="arc-pause-card"><span class="arc-pause-icon" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></span><b>Paused</b><span>The game is frozen — press Resume to keep playing.</span></div>
+                  </div>
+                </div>
+                <div class="arc-touch-controls" id="arc-touch-controls" hidden></div>
+                <div class="arc-play-toolbar" role="toolbar" aria-label="Gameplay controls">
+                  <button type="button" class="arc-tool-btn" id="arc-tool-pause" onclick="window.HubbleNest.arcTogglePause()" title="Pause or resume the game">
+                    <svg class="arc-ic-pause" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                    <svg class="arc-ic-resume" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M8 5v14l11-7z"/></svg>
+                    <span id="arc-tool-pause-label">Pause</span>
+                  </button>
+                  <button type="button" class="arc-tool-btn" onclick="window.HubbleNest.arcRestartGame()" title="Restart from the beginning">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <span>Restart</span>
+                  </button>
+                  <button type="button" class="arc-tool-btn" onclick="window.HubbleNest.toggleGameFullscreen()" title="Fullscreen">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                    <span>Fullscreen</span>
+                  </button>
+                  <button type="button" class="arc-tool-btn" id="arc-tool-sound" onclick="window.HubbleNest.arcToggleSound()" title="Mute or unmute game media">
+                    <svg class="arc-ic-snd-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                    <svg class="arc-ic-snd-off" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></svg>
+                    <span id="arc-tool-sound-label">Sound</span>
+                  </button>
+                  <span class="arc-tool-session" id="arc-tool-session" title="This session"></span>
+                </div>
+                <section class="arc-panel arc-play-comments" id="arc-play-comments" aria-label="Comments"></section>
+              </div>
+
+              <aside class="arc-play-side">
+                <section class="arc-panel" id="arc-game-info" aria-label="Game information"></section>
+                <section class="arc-panel" id="arc-progress" aria-label="Your progress"></section>
+                <section class="arc-panel" id="arc-play-leaderboard" aria-label="Leaderboard"></section>
+              </aside>
             </div>
           </div>
-        </div>
+          </div><!-- /arc-main -->
+        </div><!-- /arc-shell -->
+        </div><!-- /view-arcade -->
 
         <!-- VIEW: DIRECT SHARE (file handoff via code or QR) -->
         <div class="view-section" id="view-direct-share">
@@ -2634,7 +2777,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=18"></script>
+  <script type="module" src="./app.js?v=19"></script>
 
 </body>
 </html>

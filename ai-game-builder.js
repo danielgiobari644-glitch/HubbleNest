@@ -198,8 +198,9 @@ function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
 function lsSet(k,v){try{return localStorage.setItem(k,v)}catch(e){}}
 let running=false,score=0,best=parseInt(lsGet('hn_best')||'0',10)||0;
 bestEl.textContent='Best '+best;
-function setScore(v){score=v;scoreEl.textContent='Score '+score;if(score>best){best=score;bestEl.textContent='Best '+best;lsSet('hn_best',String(best))}}
-function showOver(msg){running=false;overlay.querySelector('h1').textContent='Game over';overlay.querySelector('p').textContent=msg+' Final score: '+score+'.';startBtn.textContent='Play again';overlay.classList.remove('hidden')}
+function hnReport(){if(window.HN){try{HN.hud({score:score});HN.postScore(score)}catch(e){}}}
+function setScore(v){score=v;scoreEl.textContent='Score '+score;if(score>best){best=score;bestEl.textContent='Best '+best;lsSet('hn_best',String(best))}hnReport()}
+function showOver(msg){running=false;if(window.HN){try{HN.gameOver(score)}catch(e){}}overlay.querySelector('h1').textContent='Game over';overlay.querySelector('p').textContent=msg+' Final score: '+score+'.';startBtn.textContent='Play again';overlay.classList.remove('hidden')}
 function begin(){overlay.classList.add('hidden');running=true;reset();last=performance.now();requestAnimationFrame(loop)}
 startBtn.addEventListener('click',begin);
 let last=0;
@@ -217,7 +218,7 @@ function gameSnake(a) {
     js: shellJsBase() + `
 const CELL=${cell},COLS=Math.floor(W/CELL),ROWS=Math.floor(H/CELL);
 const PAL=${JSON.stringify(a.palette)};const STEP_FRAMES=${(8.4 / a.speed).toFixed(1)};
-let snake,dir,nextDir,food,timer=0;
+let snake,dir={x:1,y:0},nextDir=dir,food,timer=0;
 function reset(){snake=[{x:COLS>>1,y:ROWS>>1}];dir={x:1,y:0};nextDir=dir;spawnFood();setScore(0)}
 function spawnFood(){do{food={x:(Math.random()*COLS)|0,y:(Math.random()*ROWS)|0}}while(snake.some(s=>s.x===food.x&&s.y===food.y))}
 function step(){dir=nextDir;const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
@@ -234,7 +235,8 @@ addEventListener('keydown',()=>{if(KEY.ArrowUp&&dir.y===0)nextDir={x:0,y:-1};if(
 function draw(){ctx.fillStyle='${a.palette.bg}';ctx.fillRect(0,0,W,H);
 ctx.fillStyle='${a.palette.danger}';ctx.beginPath();ctx.arc(food.x*CELL+CELL/2,food.y*CELL+CELL/2,CELL*0.38,0,7);ctx.fill();
 snake.forEach((s,i)=>{ctx.fillStyle=i===0?'${a.palette.accent}':'${a.palette.accent2}';ctx.globalAlpha=i===0?1:Math.max(.35,1-i/snake.length);ctx.beginPath();ctx.roundRect(s.x*CELL+1,s.y*CELL+1,CELL-2,CELL-2,5);ctx.fill()});ctx.globalAlpha=1;}
-if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}`,
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}
+if(window.HN){try{HN.setControls({left:1,right:1,up:1,down:1})}catch(e){}}`,
     title: a.title, description: 'Classic snake with a ' + a.theme + ' glow — eat orbs, grow, survive.'
   };
 }
@@ -262,7 +264,8 @@ function draw(){ctx.fillStyle='${a.palette.bg}';ctx.fillRect(0,0,W,H);
 ctx.strokeStyle='rgba(255,255,255,.15)';ctx.setLineDash([8,10]);ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
 ctx.fillStyle='${a.palette.accent}';ctx.fillRect(14,py,PW,PH);
 ctx.fillStyle='${a.palette.danger}';ctx.fillRect(W-14-PW,ay,PW,PH);
-ctx.fillStyle='${a.palette.accent2}';ctx.beginPath();ctx.arc(bx,by,7,0,7);ctx.fill()}`,
+ctx.fillStyle='${a.palette.accent2}';ctx.beginPath();ctx.arc(bx,by,7,0,7);ctx.fill()}
+if(window.HN){try{HN.setControls({up:1,down:1})}catch(e){}}`,
     title: a.title, description: 'Paddle duel against a reactive AI — first to 7.'
   };
 }
@@ -293,7 +296,8 @@ for(const b of bricks){if(!b.alive)continue;ctx.fillStyle='hsl('+b.hue+' 80% 62%
 ctx.fillStyle='${a.palette.accent}';ctx.beginPath();ctx.roundRect(px,H-40,PW,PH,7);ctx.fill();
 ctx.fillStyle='${a.palette.fg}';ctx.beginPath();ctx.arc(bx,by,7,0,7);ctx.fill();
 ctx.font='700 14px system-ui';ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillText('❤'.repeat(Math.max(0,lives)),10,22);}
-if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}`,
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}
+if(window.HN){try{HN.setControls({left:1,right:1})}catch(e){}}`,
     title: a.title, description: 'Break every brick, three lives, rising levels.'
   };
 }
@@ -321,7 +325,8 @@ ctx.fillStyle='${a.palette.accent2}';
 for(const p of pipes){ctx.beginPath();ctx.roundRect(p.x,0,PWID,p.gy,8);ctx.fill();ctx.beginPath();ctx.roundRect(p.x,p.gy+GAP,PWID,H-p.gy-GAP,8);ctx.fill()}
 ctx.fillStyle='${a.palette.accent}';ctx.beginPath();ctx.arc(W/2-30,by,13,0,7);ctx.fill();
 ctx.fillStyle='#0b1020';ctx.beginPath();ctx.arc(W/2-25,by-4,3,0,7);ctx.fill();}
-if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}`,
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}
+if(window.HN){try{HN.setControls({action:1})}catch(e){}}`,
     title: a.title, description: 'One-button flying — time the gaps, chase the best score.'
   };
 }
@@ -357,7 +362,8 @@ ctx.beginPath();ctx.moveTo(px,H-56);ctx.lineTo(px-16,H-24);ctx.lineTo(px+16,H-24
 ctx.fillStyle='${a.palette.accent2}';bullets.forEach(b=>ctx.fillRect(b.x-2,b.y-8,4,10));
 ctx.fillStyle='${a.palette.danger}';enemies.forEach(e=>{ctx.beginPath();ctx.arc(e.x,e.y,13,0,7);ctx.fill()});
 ctx.fillStyle='#fca5a5';ebullets.forEach(b=>ctx.fillRect(b.x-2,b.y,4,8));
-ctx.font='700 14px system-ui';ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillText('❤'.repeat(Math.max(0,lives)),10,22);}`,
+ctx.font='700 14px system-ui';ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillText('❤'.repeat(Math.max(0,lives)),10,22);}
+if(window.HN){try{HN.setControls({left:1,right:1,action:1})}catch(e){}}`,
     title: a.title, description: 'Blast the incoming swarm, dodge their fire, three lives.'
   };
 }
@@ -386,7 +392,8 @@ for(const it of items){ctx.fillStyle=it.bad?'${a.palette.danger}':'${a.palette.a
 ctx.fillStyle='rgba(255,255,255,.35)';ctx.beginPath();ctx.arc(it.x-3,it.y-3,4,0,7);ctx.fill()}
 ctx.fillStyle='${a.palette.accent2}';ctx.beginPath();ctx.roundRect(px-TW/2,H-52,TW,14,7);ctx.fill();
 ctx.font='700 14px system-ui';ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillText('❤'.repeat(Math.max(0,lives)),10,22);}
-if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}`,
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}
+if(window.HN){try{HN.setControls({left:1,right:1})}catch(e){}}`,
     title: a.title, description: 'Catch the good ' + noun + ', dodge the red ones.'
   };
 }
@@ -413,7 +420,8 @@ ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=2;ctx.beginPath();
 for(let x=ground1;x<W;x+=48){ctx.moveTo(x,H-46);ctx.lineTo(x+26,H-46)}ctx.stroke();
 ctx.fillStyle='${a.palette.danger}';obs.forEach(o=>{ctx.beginPath();ctx.roundRect(o.x,gy-o.h,o.w,o.h,5);ctx.fill()});
 ctx.fillStyle='${a.palette.accent}';const sq=y>=gy-1?0:2;ctx.beginPath();ctx.roundRect(58,y-26+sq,30,26-sq,7);ctx.fill();}
-if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}`,
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};}
+if(window.HN){try{HN.setControls({action:1})}catch(e){}}`,
     title: a.title, description: 'Endless runner — one button, rising speed, beat your best.'
   };
 }
