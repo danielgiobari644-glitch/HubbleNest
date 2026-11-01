@@ -16,8 +16,8 @@
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
-  <link rel="stylesheet" href="./style.css?v=19" />
-  <link rel="stylesheet" href="./public.css?v=19" />
+  <link rel="stylesheet" href="./style.css?v=20" />
+  <link rel="stylesheet" href="./public.css?v=20" />
 </head>
 <body class="public-body">
   <header class="pub-header">
@@ -64,6 +64,11 @@
       }
       if (file === 'join' && seg.length) {
         location.replace('./index.html?join=' + encodeURIComponent(seg[seg.length - 1].toUpperCase())); return;
+      }
+      // "/join" alone or a bare 6-char code sitting under a join folder
+      if (file === 'join' && !seg.length) { location.replace('./index.html'); return; }
+      if (seg.length && seg[seg.length - 1] === 'join' && /^[A-Z0-9]{6}$/i.test(file)) {
+        location.replace('./index.html?join=' + encodeURIComponent(file.toUpperCase())); return;
       }
       if (file === 'post') { location.replace('./post.html' + (seg.length ? '?id=' + encodeURIComponent(seg[seg.length - 1]) : '')); return; }
       if (file === 'games' || file === 'game') { location.replace('./game.html' + (seg.length ? '?id=' + encodeURIComponent(seg[seg.length - 1]) : '')); return; }

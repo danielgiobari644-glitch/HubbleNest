@@ -23,12 +23,12 @@
 .pub-nav a:hover { color: var(--text-primary); background: rgba(129, 140, 248, 0.12); }
 .pub-cta {
   color: #fff; text-decoration: none; font-weight: 700; font-size: 0.86rem;
-  background: linear-gradient(135deg, #5a5df0, #8b5cf6);
+  background: linear-gradient(135deg, #155EFF, #7028FF);
   padding: 9px 18px; border-radius: 999px;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 6px 20px rgba(46, 107, 255, 0.35);
   transition: transform .15s ease, box-shadow .15s ease;
 }
-.pub-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(99, 102, 241, 0.45); }
+.pub-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(46, 107, 255, 0.45); }
 @media (max-width: 860px) { .pub-nav { display: none; } }
 
 /* Hero */
@@ -37,9 +37,9 @@
 .pub-kicker {
   display: inline-block;
   font-size: 0.76rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-  color: #a5b4fc;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #9DB8FF;
+  background: rgba(46, 107, 255, 0.12);
+  border: 1px solid rgba(46, 107, 255, 0.3);
   border-radius: 999px; padding: 5px 14px; margin-bottom: 18px;
 }
 .pub-h1 {
@@ -47,10 +47,10 @@
   font-size: clamp(1.9rem, 4.4vw, 3rem);
   font-weight: 800; letter-spacing: -0.03em; line-height: 1.12;
   margin: 0 0 16px;
-  background: linear-gradient(120deg, #e0e7ff 30%, #a5b4fc 70%, #c4b5fd);
+  background: linear-gradient(120deg, #E4EDFF 30%, #9DB8FF 70%, #C4A6FF);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
-.light-mode .pub-h1 { background: linear-gradient(120deg, #1e293b 30%, #4f46e5 75%); -webkit-background-clip: text; background-clip: text; }
+.light-mode .pub-h1 { background: linear-gradient(120deg, #1e293b 30%, #0F4FE0 75%); -webkit-background-clip: text; background-clip: text; }
 .pub-lede { font-size: 1.08rem; line-height: 1.65; color: var(--text-secondary); margin: 0 0 26px; max-width: 640px; }
 .pub-hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .pub-btn-lg { padding: 12px 26px; font-size: 0.95rem; }
@@ -88,8 +88,8 @@
 .pub-att-grid img { width: 100%; border-radius: var(--radius-md, 14px); display: block; }
 .pub-chip {
   display: inline-block; font-size: 0.72rem; font-weight: 700;
-  color: #c7d2fe; background: rgba(99, 102, 241, 0.14);
-  border: 1px solid rgba(99, 102, 241, 0.32);
+  color: #C9D9FF; background: rgba(46, 107, 255, 0.14);
+  border: 1px solid rgba(46, 107, 255, 0.32);
   border-radius: 999px; padding: 3px 11px; margin: 0 6px 6px 0;
 }
 .pub-frame-wrap { margin-top: 18px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md, 14px); overflow: hidden; background: #0b1020; }

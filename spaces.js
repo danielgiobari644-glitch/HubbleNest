@@ -123,18 +123,30 @@ export async function fetchUserSpaces(userId) {
 }
 
 /**
- * Find Space by Code (e.g., HN-7K4P92)
+ * Find Space by Code (e.g., HN-7K4P92).
+ * Tolerant of every invite format and of legacy data: tries the code exactly
+ * as given, then with the HN- prefix added, then without it — so "7K4P92",
+ * "hn-7k4p92" and "HN-7K4P92" all resolve to the same Space.
  */
 export async function findSpaceByCode(code) {
   const cleanCode = String(code || '').trim().toUpperCase();
   if (!cleanCode) return null;
 
-  const q = query(collection(db, 'spaces'), where('codeUpper', '==', cleanCode));
-  const snap = await getDocs(q);
-  if (snap.empty) {
-    return null;
+  const candidates = [cleanCode];
+  if (cleanCode.startsWith('HN-')) {
+    candidates.push(cleanCode.slice(3));          // legacy docs stored without prefix
+  } else {
+    candidates.push(`HN-${cleanCode}`);           // current docs store the prefix
   }
-  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+
+  for (const candidate of candidates) {
+    const q = query(collection(db, 'spaces'), where('codeUpper', '==', candidate));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    }
+  }
+  return null;
 }
 
 /**

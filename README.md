@@ -38,6 +38,20 @@ Then open **http://localhost:3000**
    add `your-username.github.io` (required for Google sign-in).
 3. Done — invite links are shared as `https://your-username.github.io/repo/#join=CODE`.
 
+**Invite & QR formats the app accepts** (all resolve to the same Space, case-insensitive):
+
+| Format | Example | Where it comes from |
+| --- | --- | --- |
+| Hash link | `…/HubbleNest/#join=HN-7K4P92` | In-app "Copy join link" + every QR code |
+| Query link | `…/HubbleNest/?join=HN-7K4P92` | `space.html` share buttons, 404 bridge |
+| Path link | `…/HubbleNest/join/HN-7K4P92` | `404.html` clean-URL bridge |
+| Bare code | `#join=7K4P92` or `?join=7K4P92` | Older links / typed codes |
+
+The code is captured into `sessionStorage` the moment the page boots, so no
+sign-in flow (popup, redirect, or refresh) can lose it; after signing in the
+Space preview opens automatically. Direct Share QR deep links use the same
+mechanism with `?share=CODE` / `#share=CODE`.
+
 **Public website & SEO:** this package ships a complete public site alongside
 the app: `features.html`, `spaces.html`, `feed.html`, `games.html`,
 `use-cases.html`, `for-schools.html`, `for-churches.html`, `for-teams.html`,

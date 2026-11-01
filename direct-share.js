@@ -70,8 +70,16 @@ export function generateShareCode() {
 }
 
 function shareUrlFor(code) {
-  const base = window.location.origin + window.location.pathname;
-  return `${base}?share=${code}`;
+  // Point at the app entry page relative to the current one — works on any
+  // static host (root domain, GitHub Pages project subpaths) and from any page.
+  const { origin, pathname } = window.location;
+  let p = pathname;
+  if (/\/[^/]*\.html?$/i.test(p)) {
+    p = p.replace(/[^/]*$/, 'index.html');
+  } else if (!p.endsWith('/')) {
+    p = `${p}/`;
+  }
+  return `${origin}${p}?share=${String(code || '').trim().toUpperCase()}`;
 }
 
 function stopShareListener() {

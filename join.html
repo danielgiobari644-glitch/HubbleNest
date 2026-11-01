@@ -16,8 +16,8 @@
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" />
-  <link rel="stylesheet" href="./style.css?v=19" />
-  <link rel="stylesheet" href="./public.css?v=19" />
+  <link rel="stylesheet" href="./style.css?v=20" />
+  <link rel="stylesheet" href="./public.css?v=20" />
 </head>
 <body class="public-body">
   <header class="pub-header">
@@ -40,11 +40,29 @@
   <script>document.getElementById('pub-year').textContent = new Date().getFullYear();</script>
   <script>
     (function () {
-      const p = new URLSearchParams(location.search);
-      const c = (p.get('c') || p.get('code') || p.get('join') || '').trim().toUpperCase();
+      var p = new URLSearchParams(location.search);
+      var c = (p.get('c') || p.get('code') || p.get('join') || '').trim().toUpperCase();
+      // Also accept hash invites: #join=CODE or #join=HN-CODE
+      if (!c) {
+        try {
+          var m = decodeURIComponent(location.hash || '').match(/^#join=([A-Za-z0-9][A-Za-z0-9-]{0,24})/i);
+          if (m) c = m[1].toUpperCase();
+        } catch (e) { /* malformed escape */ }
+      }
+      // Direct Share QR deep links pass straight through to the app.
+      var s = (p.get('share') || '').trim().toUpperCase();
+      if (!s) {
+        try {
+          var sm = decodeURIComponent(location.hash || '').match(/^#share=([A-Za-z0-9]{6})/i);
+          if (sm) s = sm[1].toUpperCase();
+        } catch (e) { /* malformed escape */ }
+      }
       const go = document.getElementById('join-go');
-      go.setAttribute('href', './index.html' + (c ? '?join=' + encodeURIComponent(c) : ''));
-      if (c) location.replace('./index.html?join=' + encodeURIComponent(c));
+      var target = './index.html';
+      if (s) target = './index.html?share=' + encodeURIComponent(s);
+      else if (c) target = './index.html?join=' + encodeURIComponent(c);
+      go.setAttribute('href', target);
+      if (c || s) location.replace(target);
     })();
   </script>
 </body>

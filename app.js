@@ -10,6 +10,42 @@
 // the <head> shim covers failures inside those imports too.
 window.HubbleNest = window.HubbleNest || {};
 
+/* --------------------------------------------------------------------------
+   INVITE DEEP-LINK CAPTURE (runs the moment the module graph evaluates)
+   hash "#join=CODE" / "?join=CODE" / "#share=CODE" / "?share=CODE" are saved
+   to sessionStorage IMMEDIATELY so no auth flow (popup, redirect, refresh)
+   can ever lose an invitation before the member is signed in.
+   -------------------------------------------------------------------------- */
+(function captureInviteDeepLinks() {
+  try {
+    const rawHash = decodeURIComponent(window.location.hash || '');
+    const joinHash = rawHash.match(/^#join=([A-Za-z0-9][A-Za-z0-9-]{0,24})/i);
+    const joinQuery = new URLSearchParams(window.location.search).get('join');
+    const joinCode = (joinHash && joinHash[1]) || (joinQuery && joinQuery.trim());
+    if (joinCode) {
+      sessionStorage.setItem('pendingJoinCode', joinCode.toUpperCase());
+      return;
+    }
+    const shareHash = rawHash.match(/^#share=([A-Za-z0-9]{6})/i);
+    const shareQuery = new URLSearchParams(window.location.search).get('share');
+    const shareCode = (shareHash && shareHash[1]) || (shareQuery && shareQuery.trim());
+    if (shareCode) {
+      sessionStorage.setItem('pendingShareCode', shareCode.toUpperCase());
+    }
+  } catch (e) { /* malformed URL — the auth-time parser still handles it */ }
+})();
+
+// Same-document hash navigation (user edits the URL, clicks an invite link
+// from inside the app): process the invite without a full reload.
+window.addEventListener('hashchange', () => {
+  try {
+    const h = decodeURIComponent(window.location.hash || '');
+    if (/^#join=/i.test(h) || /^#share=/i.test(h)) {
+      checkUrlJoinParam();
+    }
+  } catch (e) { /* non-fatal */ }
+});
+
 import { 
   auth, 
   db,
@@ -742,17 +778,20 @@ export function handleLandingCodeJoin() {
 }
 
 function processLandingCode(rawCode) {
-  if (!rawCode) {
+  if (!rawCode || !String(rawCode).trim()) {
     showToast('Please enter a 6-character space code.', 'warning');
     return;
   }
-  const cleanCode = rawCode.startsWith('HN-') ? rawCode : `HN-${rawCode}`;
+  // Accept "HN-7K4P92", "7K4P92" and "hn-7k4p92" alike — codes are uppercase
+  // everywhere and the HN- prefix is added only when it is missing.
+  const clean = String(rawCode).trim().toUpperCase();
+  const target = clean.startsWith('HN-') ? clean : `HN-${clean}`;
 
   if (state.currentUser) {
-    handleCodeSearch(cleanCode);
+    handleCodeSearch(target);
   } else {
-    sessionStorage.setItem('pendingJoinCode', cleanCode);
-    showToast(`Code ${cleanCode} saved! Sign in or create an account to enter this Space.`, 'info', 5000);
+    sessionStorage.setItem('pendingJoinCode', target);
+    showToast(`Code ${target} saved! Sign in or create an account to enter this Space.`, 'info', 5000);
     showAuthView('entry');
   }
 }
@@ -761,31 +800,58 @@ async function checkUrlJoinParam() {
   const pendingCode = sessionStorage.getItem('pendingJoinCode');
   if (pendingCode) {
     sessionStorage.removeItem('pendingJoinCode');
+    // Also strip the invite hash/query so a refresh doesn't re-trigger it.
+    try {
+      const cleanedHash = window.location.hash.replace(/^#join=[^&]*/i, '');
+      const cleanedSearch = window.location.search.replace(/[?&]join=[^&]+/, '').replace(/^\?(?=$)/, '');
+      history.replaceState(null, '', window.location.pathname + cleanedSearch + cleanedHash);
+    } catch (e) { /* non-fatal */ }
     handleCodeSearch(pendingCode);
     return;
   }
 
   // Universal invite formats that work on ANY static host (including
-  // GitHub Pages project subpaths): #join=CODE or ?join=CODE
-  const hashMatch = window.location.hash.match(/^#join=([A-Za-z0-9]+)/);
-  const queryMatch = new URLSearchParams(window.location.search).get('join');
-  const deepLinkCode = (hashMatch && hashMatch[1]) || (queryMatch && queryMatch.trim());
+  // GitHub Pages project subpaths): #join=CODE or ?join=CODE.
+  // The regex MUST accept the hyphen in "HN-7K4P92" — the old [A-Za-z0-9]+
+  // class stopped at the "-", captured just "HN" and turned every deep link
+  // into a lookup for the nonexistent Space "HN-HN".
+  let deepLinkCode = null;
+  try {
+    const rawHash = decodeURIComponent(window.location.hash || '');
+    const hashMatch = rawHash.match(/^#join=([A-Za-z0-9][A-Za-z0-9-]{0,24})/i);
+    if (hashMatch) deepLinkCode = hashMatch[1];
+  } catch (e) { /* malformed escape — fall through to the query param */ }
+  if (!deepLinkCode) {
+    const queryJoin = new URLSearchParams(window.location.search).get('join');
+    if (queryJoin && queryJoin.trim()) deepLinkCode = queryJoin.trim();
+  }
   if (deepLinkCode) {
+    deepLinkCode = deepLinkCode.toUpperCase();
     // Clean the URL so refreshing doesn't re-trigger the join flow
     try {
-      history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]join=[^&]+/, '') );
+      const cleanedSearch = window.location.search.replace(/[?&]join=[^&]+/, '').replace(/^\?(?=$)/, '');
+      history.replaceState(null, '', window.location.pathname + cleanedSearch);
     } catch (e) { /* non-fatal */ }
     processLandingCode(deepLinkCode);
     return;
   }
 
   // Direct Share deep links: ?share=CODE or #share=CODE (encoded in the QR)
-  const shareHash = window.location.hash.match(/^#share=([A-Za-z0-9]{6})/);
-  const shareQuery = new URLSearchParams(window.location.search).get('share');
-  const shareCode = ((shareHash && shareHash[1]) || (shareQuery && shareQuery.trim()) || '').toUpperCase();
+  let shareCode = null;
+  try {
+    const rawHash = decodeURIComponent(window.location.hash || '');
+    const shareHash = rawHash.match(/^#share=([A-Za-z0-9]{6})/i);
+    if (shareHash) shareCode = shareHash[1];
+  } catch (e) { /* malformed escape — fall through to the query param */ }
+  if (!shareCode) {
+    const shareQuery = new URLSearchParams(window.location.search).get('share');
+    if (shareQuery && shareQuery.trim()) shareCode = shareQuery.trim();
+  }
+  shareCode = (shareCode || '').toUpperCase();
   if (/^[A-Z0-9]{6}$/.test(shareCode)) {
     try {
-      history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]share=[^&]+/, ''));
+      const cleanedSearch = window.location.search.replace(/[?&]share=[^&]+/, '').replace(/^\?(?=$)/, '');
+      history.replaceState(null, '', window.location.pathname + cleanedSearch);
     } catch (e) { /* non-fatal */ }
     if (state.currentUser) {
       openDirectShareViewWrapper(shareCode);
@@ -795,12 +861,11 @@ async function checkUrlJoinParam() {
     return;
   }
 
-  const path = window.location.pathname;
-  if (path.startsWith('/join/')) {
-    const code = path.replace('/join/', '').trim().toUpperCase();
-    if (code) {
-      handleCodeSearch(code);
-    }
+  // Path-style invites (/join/CODE) — tolerant of GitHub Pages project
+  // subpaths ("/HubbleNest/join/HN-7K4P92") and trailing slashes.
+  const joinMatch = window.location.pathname.match(/\/join\/([A-Za-z0-9][A-Za-z0-9-]{0,24})\/?$/i);
+  if (joinMatch) {
+    handleCodeSearch(joinMatch[1]);
   }
 }
 
@@ -1484,6 +1549,39 @@ export function composerMenuPickImage() {
 export function composerMenuPickFile() {
   closeComposerMenu();
   document.getElementById('home-doc-input')?.click();
+}
+
+/** Composer quick action: attach a video to the home post (real upload path). */
+export function composerPickVideo() {
+  document.getElementById('home-video-input')?.click();
+}
+
+/**
+ * Composer quick action: append a share link to the post text.
+ * Asks for the URL, validates it, and inserts it at the cursor — the same
+ * text the Post button publishes; nothing simulated.
+ */
+export function composerInsertLink(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  const raw = window.prompt('Paste the link to share (https://…)', 'https://');
+  if (raw === null) return; // cancelled
+  let url = raw.trim();
+  if (!url) { showToast('No link entered.', 'warning'); return; }
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try { new URL(url); } catch (e) {
+    showToast('That does not look like a valid link.', 'warning');
+    return;
+  }
+  const start = typeof el.selectionStart === 'number' ? el.selectionStart : el.value.length;
+  const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.value.length;
+  const before = el.value.slice(0, start);
+  const after = el.value.slice(end);
+  const needsSpaceBefore = before && !/\s$/.test(before) ? ' ' : '';
+  el.value = `${before}${needsSpaceBefore}${url} ${after.replace(/^\s+/, '')}`;
+  el.focus({ preventScroll: true });
+  const caret = (before + needsSpaceBefore + url + ' ').length;
+  try { el.setSelectionRange(caret, caret); } catch (e) { /* textarea in some state */ }
 }
 
 // Click-outside + Escape close the composer dropdown (registered once).
@@ -3580,11 +3678,19 @@ function renderNotificationsPanel() {
 /**
  * Build a shareable invite link that works on ANY static host — root domain,
  * GitHub Pages project subpaths, Firebase Hosting — by using a #join= hash
- * fragment relative to the current page instead of an absolute /join/ path.
+ * fragment relative to the app entry page instead of an absolute /join/ path.
+ * The code is uppercased so the link and the QR always carry "HN-7K4P92".
  */
 function buildJoinLink(code) {
   const { origin, pathname } = window.location;
-  return `${origin}${pathname}#join=${code}`;
+  const clean = String(code || '').trim().toUpperCase();
+  let p = pathname;
+  if (/\/[^/]*\.html?$/i.test(p)) {
+    p = p.replace(/[^/]*$/, 'index.html');   // invite created on a subpage → point at the app entry
+  } else if (!p.endsWith('/')) {
+    p = `${p}/`;                             // bare directory path ("…/HubbleNest")
+  }
+  return `${origin}${p}#join=${clean}`;
 }
 
 export function openQrModal() {
@@ -3620,15 +3726,18 @@ export function copySpaceJoinLink() {
    ========================================================================== */
 
 export async function handleCodeSearch(code) {
-  if (!code || !code.trim()) {
+  if (!code || !String(code).trim()) {
     showToast('Please enter a Space code.', 'warning');
     return;
   }
 
-  const cleanCode = code.trim().toUpperCase();
+  // Normalize: uppercase, HN- prefix added when missing — so bare codes from
+  // any invite format ("7K4P92") resolve to the same Space as "HN-7K4P92".
+  const cleanCode = String(code).trim().toUpperCase();
+  const canonical = cleanCode.startsWith('HN-') ? cleanCode : `HN-${cleanCode}`;
 
   showToast('Locating Space...', 'info', 1500);
-  const foundSpace = await findSpaceByCode(code);
+  const foundSpace = await findSpaceByCode(canonical);
 
   if (!foundSpace) {
     showToast('No Space found matching this code.', 'error');
@@ -4312,6 +4421,8 @@ Object.assign(window.HubbleNest, {
   composerMenuApply,
   composerMenuPickImage,
   composerMenuPickFile,
+  composerPickVideo,
+  composerInsertLink,
   stageHomeAttachment: (file) => stageHomeFile(file, 100),
   removeHomeAttachment,
   clearAllHomeAttachments,
