@@ -3147,7 +3147,7 @@ export function retryActiveDirectChat() {
 
 /**
  * Home feed composer: Enter posts, Shift+Enter inserts a newline, and the
- * textarea auto-grows while the member types (up to 280px, then scrolls).
+ * textarea auto-grows while the member types (up to 520px, then scrolls).
  */
 export function handleHomeComposerKey(event) {
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -3160,7 +3160,7 @@ export function handleHomeComposerKey(event) {
   const el = event.target;
   if (el && el.tagName === 'TEXTAREA') {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 280) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 520) + 'px';
   }
 }
 

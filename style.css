@@ -2348,6 +2348,7 @@ h1, h2, h3, h4 {
 /* Composer */
 .composer-card {
   display: flex;
+  flex-wrap: wrap; /* lets the quick-actions row wrap to its own full-width line */
   align-items: flex-end;
   gap: 13px;
   background: var(--bg-glass);
@@ -2397,9 +2398,9 @@ h1, h2, h3, h4 {
    The avatar + action buttons anchor to its bottom edge (align-items flex-end
    above) like mainstream social composers. */
 .composer-card .composer-textarea {
-  min-height: 42px;
-  padding-top: 10px;
-  padding-bottom: 10px;
+  min-height: 190px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 .composer-card .composer-textarea:focus {
@@ -6285,10 +6286,14 @@ h1, h2, h3, h4 {
 
 .composer-menu-toggle input { accent-color: var(--accent-primary); margin: 0; }
 
-/* Taller post textarea — the whole point of the dropdown rework */
-.composer-textarea-tall {
-  min-height: 116px;
-  max-height: 280px;
+/* Taller post textarea — the whole point of the dropdown rework.
+   Selector is intentionally high-specificity (.composer-card ancestor) so the
+   generous min/max height always wins over the compact .composer-textarea and
+   .composer-card .composer-textarea base rules above. */
+.composer-card .composer-textarea.composer-textarea-tall {
+  min-height: 190px;
+  max-height: 520px;
+  font-size: 1rem;
   border-radius: 18px !important;
   line-height: 1.55;
 }
@@ -7873,10 +7878,11 @@ h1, h2, h3, h4 {
 
 /* --- Feed composer quick actions ------------------------------------------ */
 .composer-actions {
+  flex: 1 1 100%; /* own row under the textarea — never steals width from it */
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 0; /* the card's 13px row gap already separates the lines */
   padding-top: 12px;
   border-top: 1px solid var(--border-subtle);
 }
