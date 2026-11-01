@@ -137,6 +137,24 @@ export function rankPosts(posts, opts = {}) {
     return [...posts].sort((a, b) => postTimestamp(b) - postTimestamp(a));
   }
 
+  // Following: only posts by people this member is actually connected with
+  // (accepted chats, pending requests, existing conversations) plus their own.
+  if (mode === 'following') {
+    return posts
+      .filter(p => p.authorId && (p.authorId === viewerId || connections.has(p.authorId)))
+      .sort((a, b) => postTimestamp(b) - postTimestamp(a));
+  }
+
+  // Trending: pure engagement signal — no recency bias, no personalization.
+  const engagementOf = (p) => {
+    const likes = Array.isArray(p.likedBy) ? p.likedBy.length : (p.likeCount || 0);
+    return likes * 2 + (p.commentCount || 0) * 3;
+  };
+  if (mode === 'trending') {
+    return [...posts].sort((a, b) =>
+      engagementOf(b) - engagementOf(a) || postTimestamp(b) - postTimestamp(a));
+  }
+
   const seen = new Set(seenIds);
   const engaged = new Set(engagedAuthors);
 
@@ -253,6 +271,8 @@ export function renderFeed() {
   // Tab active state
   document.getElementById('feed-tab-foryou')?.classList.toggle('feed-tab-active', feedMode === 'foryou');
   document.getElementById('feed-tab-latest')?.classList.toggle('feed-tab-active', feedMode === 'latest');
+  document.getElementById('feed-tab-following')?.classList.toggle('feed-tab-active', feedMode === 'following');
+  document.getElementById('feed-tab-trending')?.classList.toggle('feed-tab-active', feedMode === 'trending');
 
   if (postsCache.length === 0) {
     container.innerHTML = `
@@ -273,6 +293,18 @@ export function renderFeed() {
     engagedAuthors: readJsonList(ENGAGED_KEY, 100),
     seenIds: readJsonList(SEEN_KEY, 400)
   }).slice(0, MAX_RENDER);
+
+  if (feedMode === 'following' && ranked.length === 0) {
+    container.innerHTML = `
+      <div class="feed-empty">
+        <div class="feed-empty-glyph">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <h3 class="feed-empty-title">Posts from your connections land here</h3>
+        <p class="feed-empty-desc">Add contacts by their exact username from the People page, or start a chat — once you're connected, their posts show up in this tab.</p>
+      </div>`;
+    return;
+  }
 
   markPostsSeen(ranked.slice(0, 12).map(p => p.id));
 
@@ -319,8 +351,17 @@ function renderPostCard(p, idx) {
   const isOwn = p.authorId === context.currentUserId;
   const liked = Array.isArray(p.likedBy) && context.currentUserId && p.likedBy.includes(context.currentUserId);
   const likeCount = Array.isArray(p.likedBy) ? p.likedBy.length : (p.likeCount || 0);
+  const commentCount = p.commentCount || 0;
+  const shareCount = p.shareCount || 0;
   const commentsOpen = commentsUnsubscribes.has(p.id);
   const safeId = escapeHtml(p.id);
+
+  const stats = [];
+  if (likeCount > 0) {
+    stats.push(`<span class="feed-stat"><span class="feed-reaction-bubble" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M7.5 22V10.2L13.1 2c1 .1 1.8 1 1.8 2.1L14.2 9h5.2c1.4 0 2.5 1.3 2.2 2.7l-1.4 7.1c-.2 1.2-1.3 2.2-2.5 2.2ZM2 22V10h3.5v12Z"/></svg></span><b>${likeCount}</b></span>`);
+  }
+  if (commentCount > 0) stats.push(`<span class="feed-stat"><b>${commentCount}</b> Comments</span>`);
+  if (shareCount > 0) stats.push(`<span class="feed-stat"><b>${shareCount}</b> Shares</span>`);
 
   return `
     <article class="feed-post ${idx === 0 ? 'feed-post-first' : ''}" id="feed-post-${safeId}">
@@ -342,15 +383,21 @@ function renderPostCard(p, idx) {
       ${renderAttachments(p)}
 
       <footer class="feed-post-actions">
-        <button type="button" class="feed-action ${liked ? 'feed-action-liked' : ''}" onclick="window.HubbleNest.feedToggleLike('${safeId}')" aria-pressed="${liked}">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="${liked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
-          <span>${likeCount > 0 ? likeCount : 'Like'}</span>
-        </button>
-        <button type="button" class="feed-action ${commentsOpen ? 'feed-action-active' : ''}" onclick="window.HubbleNest.feedToggleComments('${safeId}')">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span>${(p.commentCount || 0) > 0 ? p.commentCount : 'Comment'}</span>
-        </button>
-        ${feedMode === 'foryou' ? `<span class="feed-rank-chip" title="This post scored well for you just now">Ranked for you</span>` : ''}
+        <div class="feed-post-stats">${stats.join('')}</div>
+        <div class="feed-post-buttons">
+          <button type="button" class="feed-action ${liked ? 'feed-action-liked' : ''}" onclick="window.HubbleNest.feedToggleLike('${safeId}')" aria-pressed="${liked}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="${liked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+            <span>Like</span>
+          </button>
+          <button type="button" class="feed-action ${commentsOpen ? 'feed-action-active' : ''}" onclick="window.HubbleNest.feedToggleComments('${safeId}')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Comment</span>
+          </button>
+          <button type="button" class="feed-action" onclick="window.HubbleNest.feedSharePost('${safeId}')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-9.5 18-2.6-7.9L1 10.5Z"/><path d="M21 3 8.9 13.1"/></svg>
+            <span>Share</span>
+          </button>
+        </div>
       </footer>
 
       <div class="feed-comments" id="feed-comments-${safeId}" style="display: ${commentsOpen ? 'block' : 'none'};"></div>
@@ -660,9 +707,51 @@ export async function feedDeletePost(postId) {
 }
 
 export function feedSetMode(mode) {
-  if (mode !== 'foryou' && mode !== 'latest') return;
+  if (mode !== 'foryou' && mode !== 'latest' && mode !== 'following' && mode !== 'trending') return;
   feedMode = mode;
   renderFeed();
+}
+
+/**
+ * Share a post: hands the post's permalink to the native share sheet when one
+ * exists, otherwise copies the link to the clipboard, then increments the
+ * post's real shareCount. The permalink resolves through post.html — it shows
+ * the public web page for posts published to the web, and a friendly notice
+ * for private ones.
+ */
+export async function feedSharePost(postId) {
+  const post = postsCache.find(p => p.id === postId);
+  if (!post) return;
+  const url = new URL(`post.html?id=${encodeURIComponent(postId)}`, location.href).href;
+  const shareData = {
+    title: `${post.authorName || 'A member'} on HubbleNest`,
+    text: (post.text || '').slice(0, 120) || 'See this post on HubbleNest',
+    url
+  };
+  let shared = false;
+  try {
+    if (navigator.share) {
+      await navigator.share(shareData);
+      shared = true;
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') return; // user closed the share sheet
+  }
+  if (!shared) {
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Post link copied to your clipboard ✓', 'success');
+    } catch {
+      showToast(url, 'info', 6000); // clipboard blocked — show the link itself
+    }
+  }
+  try {
+    await updateDoc(doc(db, 'feedPosts', postId), { shareCount: increment(1) });
+  } catch (err) {
+    // Non-fatal: the link is already shared. If rules are not refreshed yet
+    // the counter stays put until firestore.rules is republished.
+    console.warn('shareCount update skipped:', err?.code || err);
+  }
 }
 
 export function toggleRankingInfo() {

@@ -2004,16 +2004,30 @@ h1, h2, h3, h4 {
   position: relative;
 }
 
+/* Avatar + chevron account trigger in the topbar */
 .avatar-btn {
-  width: 40px;
+  width: auto;
   height: 40px;
-  border-radius: 50%;
-  overflow: hidden;
+  border-radius: var(--radius-full);
+  overflow: visible;
   border: 2px solid transparent;
-  padding: 0;
+  padding: 0 4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   transition: border-color var(--transition-fast), transform var(--transition-fast);
   flex-shrink: 0;
 }
+
+.avatar-btn .avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.avatar-btn .avatar-chevron { color: var(--text-muted); transition: color var(--transition-fast); }
+.avatar-btn:hover .avatar-chevron { color: var(--text-primary); }
 
 .avatar-btn:hover { border-color: rgba(21, 94, 255, 0.55); transform: scale(1.04); }
 
@@ -2055,7 +2069,7 @@ h1, h2, h3, h4 {
   align-items: center;
   gap: 12px;
   padding: 11px 14px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-size: 0.92rem;
   font-weight: 600;
   font-family: var(--font-display);
@@ -2073,10 +2087,11 @@ h1, h2, h3, h4 {
   background: var(--bg-hover);
 }
 
+/* Active nav pill — reference: vivid blue-violet → purple, fully rounded */
 .nav-link.active {
-  background: var(--accent-gradient);
+  background: linear-gradient(90deg, #5335FC 0%, #9130FD 100%);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(46, 107, 255, 0.38);
+  box-shadow: 0 8px 22px rgba(101, 48, 251, 0.42);
 }
 
 .nav-link.active svg { opacity: 1; }
@@ -2186,65 +2201,70 @@ h1, h2, h3, h4 {
   white-space: nowrap;
 }
 
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 8px 4px;
-  border-top: 1px solid var(--border-subtle);
-  margin-top: 12px;
-}
-
-.sidebar-user-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-width: 0;
-  padding: 6px;
-  margin: -6px;
-  border-radius: 12px;
-  text-align: left;
-  transition: background var(--transition-fast);
-}
-
-.sidebar-user-main:hover { background: var(--bg-hover); }
-
-.sidebar-user-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+/* "Create Your Own Space" promo card — pinned to the bottom of the sidebar
+   (reference: rocket artwork, gradient indigo→purple card, white CTA pill). */
+.sidebar-promo {
+  position: relative;
+  margin-top: auto;
+  border-radius: 20px;
+  padding: 18px 16px 16px;
   overflow: hidden;
-  flex-shrink: 0;
-  border: 2px solid rgba(21, 94, 255, 0.4);
-  box-shadow: 0 2px 8px rgba(2, 6, 16, 0.4);
+  background:
+    radial-gradient(120% 90% at 85% 110%, rgba(134, 40, 252, 0.75) 0%, rgba(134, 40, 252, 0) 60%),
+    linear-gradient(172deg, #071041 0%, #1B0B8E 55%, #3B13C9 100%);
+  border: 1px solid rgba(122, 76, 255, 0.4);
+  box-shadow: 0 14px 34px rgba(10, 6, 60, 0.5);
 }
 
-.sidebar-user-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+.sidebar-promo-art {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  width: 64px;
+  height: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
+  /* melt the crop's rectangle into the card gradient */
+  -webkit-mask-image: radial-gradient(ellipse 62% 62% at 50% 48%, #000 52%, transparent 76%);
+  mask-image: radial-gradient(ellipse 62% 62% at 50% 48%, #000 52%, transparent 76%);
 }
 
-.sidebar-user-name {
-  font-size: 0.88rem;
-  font-weight: 700;
+.sidebar-promo-title {
+  font-size: 1.06rem;
+  font-weight: 800;
   font-family: var(--font-display);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #fff;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  margin-bottom: 7px;
 }
 
-.sidebar-user-handle {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sidebar-promo-sub {
+  font-size: 0.79rem;
+  color: rgba(224, 226, 255, 0.82);
+  line-height: 1.45;
+  margin-bottom: 14px;
+  max-width: 150px;
 }
 
-.sidebar-settings-btn { width: 36px; height: 36px; }
+.sidebar-promo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 20px;
+  border-radius: var(--radius-full);
+  border: 0;
+  background: linear-gradient(90deg, #5C29FC 0%, #8A2CFD 100%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(70, 30, 220, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.sidebar-promo-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
 
 /* --- Content area --- */
 .content-area {
@@ -2281,82 +2301,128 @@ h1, h2, h3, h4 {
   min-width: 0;
 }
 
-/* Welcome hero card */
+/* Welcome hero card — deep-blue gradient with the 3D community illustration
+   on the right (reference: HubbleNest Neon Community Dashboard). */
 .welcome-card {
   position: relative;
   border-radius: 20px;
   overflow: hidden;
-  min-height: 264px;
+  min-height: 214px;
   display: flex;
   align-items: center;
-  border: 1px solid rgba(21, 94, 255, 0.22);
+  background:
+    radial-gradient(90% 160% at 96% 88%, rgba(95, 126, 254, 0.5) 0%, rgba(95, 126, 254, 0) 55%),
+    radial-gradient(70% 150% at 74% 30%, rgba(37, 62, 214, 0.55) 0%, rgba(37, 62, 214, 0) 60%),
+    linear-gradient(97deg, #050D3C 0%, #071455 42%, #0A1D74 74%, #1029A8 100%);
+  border: 1px solid rgba(62, 96, 250, 0.32);
   box-shadow: var(--shadow-md);
 }
 
-.welcome-card-bg {
+/* The 3D people + floating icons artwork, right-anchored, left edge melted
+   into the gradient with a mask so there is no visible seam. */
+.welcome-card-art {
   position: absolute;
-  inset: 0;
-  width: 100%;
+  top: 0;
+  right: 0;
   height: 100%;
+  width: 56%;
   object-fit: cover;
-}
-
-.welcome-card-scrim {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, rgba(6, 10, 20, 0.93) 22%, rgba(6, 10, 20, 0.72) 52%, rgba(6, 10, 20, 0.2) 100%);
+  object-position: right center;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 26%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 26%);
 }
 
 .welcome-card-content {
   position: relative;
-  padding: 40px 44px;
-  max-width: 660px;
+  padding: 34px 40px;
+  max-width: 620px;
 }
 
 .welcome-badge {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 14px;
+  gap: 8px;
+  padding: 5px 14px 5px 6px;
   border-radius: var(--radius-full);
-  background: rgba(21, 94, 255, 0.2);
+  background: rgba(8, 15, 48, 0.55);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(165, 176, 252, 0.3);
-  color: #C9D9FF;
-  font-size: 0.78rem;
+  border: 1px solid rgba(120, 140, 255, 0.35);
+  color: #DCE6FF;
+  font-size: 0.8rem;
   font-weight: 700;
   font-family: var(--font-display);
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+}
+
+.welcome-badge-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3E8BFF, #155EFF);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .welcome-title {
-  font-size: clamp(1.55rem, 3vw, 2.15rem);
+  font-size: clamp(1.65rem, 3vw, 2.3rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   color: #fff;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   line-height: 1.15;
 }
 
+/* The member's first name glows bright blue inside the greeting */
+.welcome-name { color: #3D7DFF; }
+
 .welcome-subtitle {
-  font-size: 0.94rem;
-  color: rgba(214, 222, 236, 0.88);
+  font-size: 0.93rem;
+  color: rgba(206, 216, 240, 0.88);
   line-height: 1.6;
+  max-width: 560px;
 }
 
-/* Composer */
+/* Explore Spaces — the banner's gradient call-to-action */
+.welcome-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 11px 22px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, #823BFC 0%, #2853FC 100%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 26px rgba(90, 60, 252, 0.4);
+  cursor: pointer;
+  transition: transform var(--transition-fast), filter var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.welcome-cta:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 14px 32px rgba(90, 60, 252, 0.5); }
+.welcome-cta:active { transform: translateY(0); }
+
+/* Composer — reference layout: avatar + slim pill input on row one, the
+   Photo / Video / Create Game / Share Link chips and the gradient Post button
+   on row two, both rows inside one card. */
 .composer-card {
   display: flex;
-  flex-wrap: wrap; /* lets the quick-actions row wrap to its own full-width line */
-  align-items: flex-end;
-  gap: 13px;
+  flex-wrap: wrap; /* lets the toolbar wrap to its own full-width line */
+  align-items: flex-start;
+  gap: 12px;
   background: var(--bg-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: 13px 15px;
+  padding: 14px 16px;
   box-shadow: var(--shadow-sm);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -2395,12 +2461,15 @@ h1, h2, h3, h4 {
 
 /* Home feed composer is a textarea: Enter posts, Shift+Enter newline, and it
    auto-grows while typing (height managed by handleHomeComposerKey in app.js).
-   The avatar + action buttons anchor to its bottom edge (align-items flex-end
-   above) like mainstream social composers. */
+   At rest it is the slim 48px pill from the reference (24px radius on a 48px
+   box = a perfect pill); it keeps growing up to 520px for long posts. */
 .composer-card .composer-textarea {
-  min-height: 190px;
-  padding-top: 14px;
-  padding-bottom: 14px;
+  min-height: 48px;
+  max-height: 520px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  line-height: 1.5;
+  border-radius: 24px;
 }
 
 .composer-card .composer-textarea:focus {
@@ -2408,16 +2477,48 @@ h1, h2, h3, h4 {
   border-color: var(--border-focus);
 }
 
-.composer-tools {
+/* Row two: attachment chips + options + Post button, aligned under the input */
+.composer-toolbar {
+  flex: 1 1 100%;
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-left: 54px; /* lines the chips up with the input's left edge */
 }
 
+.composer-toolbar-spacer { flex: 1; }
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 15px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.composer-chip:hover {
+  color: var(--text-primary);
+  border-color: rgba(21, 94, 255, 0.45);
+  background: var(--accent-subtle);
+}
+
+.composer-chip .chip-ic { flex-shrink: 0; }
+.composer-chip .chip-photo { color: #6E9BFF; }
+.composer-chip .chip-game { color: #A78BFA; }
+.composer-chip .chip-link { color: #5EEAD4; }
+
 .composer-icon-btn {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -2429,6 +2530,37 @@ h1, h2, h3, h4 {
 .composer-icon-btn:hover {
   color: var(--accent-primary);
   background: var(--accent-subtle);
+}
+
+/* The gradient Post pill */
+.composer-post-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, #823BFC 0%, #2853FC 100%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 22px rgba(90, 60, 252, 0.38);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
+}
+
+.composer-post-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.composer-post-btn:active { transform: translateY(0); }
+.composer-post-btn:disabled { opacity: 0.55; cursor: wait; transform: none; }
+
+/* Legacy composer tool row (kept for any other screens that still use it) */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .composer-send-btn {
@@ -2715,6 +2847,47 @@ h1, h2, h3, h4 {
 
 .rail-muted { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
 
+/* "See all →" links in rail card headers */
+.rail-seeall {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: #7E8CC4;
+  font-family: var(--font-display);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 2px 0 2px 8px;
+  transition: color var(--transition-fast);
+}
+
+.rail-seeall:hover { color: var(--accent-primary); }
+
+/* Red unread badge on the Messages quick-action tile */
+.rail-quick-btn { position: relative; }
+
+.rail-quick-badge {
+  position: absolute;
+  top: 7px;
+  right: 9px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: #FF3B5C;
+  color: #fff;
+  font-size: 0.64rem;
+  font-weight: 800;
+  font-family: var(--font-display);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 8px rgba(255, 59, 92, 0.45);
+}
+
 .rail-quick-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2796,31 +2969,63 @@ h1, h2, h3, h4 {
 
 .light-theme .stack-more { border-color: #fff; }
 
-.rail-featured { display: flex; flex-direction: column; }
+/* Featured Space card — crowd photo on top melting into the card, purple
+   gradient icon tile, name + tagline + full-width View Space button. */
+.rail-card-featured { padding-bottom: 14px; }
+
+.rail-featured {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #17123E 0%, #0C0F2E 60%, #0B102E 100%);
+  border: 1px solid var(--border-subtle);
+  padding: 14px;
+}
+
+.rail-featured-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+}
+
+.rail-featured > * { position: relative; }
 
 .rail-featured-icon {
-  width: 46px;
-  height: 46px;
-  border-radius: 13px;
-  background: var(--accent-gradient);
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%);
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 5px 16px rgba(46, 107, 255, 0.4);
-  margin-bottom: 12px;
+  box-shadow: 0 5px 16px rgba(109, 40, 217, 0.5);
+  margin-bottom: 44px;
 }
 
-.rail-featured-name { font-size: 1.02rem; font-weight: 700; margin-bottom: 5px; }
+.rail-featured-name { font-size: 1.04rem; font-weight: 800; margin-bottom: 5px; color: #fff; }
 
 .rail-featured-desc {
-  font-size: 0.84rem;
-  color: var(--text-secondary);
-  line-height: 1.55;
+  font-size: 0.85rem;
+  color: #B9C2E4;
+  line-height: 1.5;
   margin-bottom: 14px;
 }
 
-.rail-featured-btn { margin-top: auto; }
+.rail-featured-btn {
+  margin-top: auto;
+  background: linear-gradient(90deg, #7C3AED 0%, #4F46E5 55%, #2853FC 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 22px rgba(96, 62, 252, 0.4);
+}
 
 .rail-activity {
   display: flex;
@@ -2849,28 +3054,40 @@ h1, h2, h3, h4 {
 
 .rail-activity-item:hover { background: var(--bg-hover); }
 
-.rail-activity-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  overflow: hidden;
-  flex-shrink: 0;
-  border: 1.5px solid var(--border-subtle);
-}
-
-.rail-activity-avatar img { width: 100%; height: 100%; object-fit: cover; }
-
+/* Colored type tiles: purple = games, green = chats/members, blue = feed */
 .rail-activity-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent-subtle);
-  color: var(--accent-primary);
 }
+
+.rail-activity-icon.act-purple { background: rgba(139, 92, 246, 0.16); color: #A78BFA; }
+.rail-activity-icon.act-green { background: rgba(52, 211, 153, 0.14); color: #34D399; }
+.rail-activity-icon.act-blue { background: rgba(59, 130, 246, 0.16); color: #60A5FA; }
+
+/* Right thumbnail: the sender's real avatar, or a matching gradient tile */
+.rail-activity-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+}
+
+.rail-activity-thumb-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rail-activity-thumb-tile.act-purple { background: linear-gradient(135deg, #7C3AED, #4C1D95); color: #fff; border: 0; }
+.rail-activity-thumb-tile.act-green { background: linear-gradient(135deg, #10B981, #065F46); color: #fff; border: 0; }
+.rail-activity-thumb-tile.act-blue { background: linear-gradient(135deg, #3B82F6, #1E3A8A); color: #fff; border: 0; }
 
 .rail-activity-text {
   flex: 1;
@@ -4230,9 +4447,6 @@ h1, h2, h3, h4 {
    ========================================================================== */
 .light-theme .welcome-card { border-color: rgba(90, 93, 240, 0.25); }
 .light-theme .welcome-title { color: #fff; }
-.light-theme .welcome-card-scrim {
-  background: linear-gradient(100deg, rgba(15, 23, 42, 0.88) 22%, rgba(15, 23, 42, 0.62) 52%, rgba(15, 23, 42, 0.18) 100%);
-}
 .light-theme .space-detail-title { color: #fff; text-shadow: 0 2px 12px rgba(2, 6, 16, 0.7); }
 .light-theme .space-header { background: var(--bg-surface); }
 .light-theme .google-btn { border-color: var(--border-subtle); box-shadow: var(--shadow-sm); }
@@ -4363,6 +4577,11 @@ h1, h2, h3, h4 {
 
   .welcome-card { min-height: 220px; }
   .welcome-card-content { padding: 26px 22px; }
+  .welcome-card-art { width: 72%; opacity: 0.85; }
+
+  /* Composer chips drop the input indentation and wrap on small screens */
+  .composer-toolbar { padding-left: 0; }
+  .composer-post-btn { flex: 1 1 auto; justify-content: center; }
 
   .auth-card { padding: 30px 22px; }
 
@@ -4807,40 +5026,42 @@ h1, h2, h3, h4 {
 .feed-tabs {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  padding: 4px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .feed-tab {
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.8rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 9px 18px;
   border-radius: var(--radius-full);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   transition: all var(--transition-fast);
   white-space: nowrap;
 }
 
+.feed-tab svg { flex-shrink: 0; opacity: 0.85; }
+
 .feed-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
 
 .feed-tab-active {
-  background: var(--accent-gradient);
-  color: var(--text-on-accent);
-  box-shadow: 0 2px 10px var(--accent-glow);
+  background: linear-gradient(90deg, #5B32FC 0%, #2D54FC 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 8px 22px rgba(77, 58, 252, 0.38);
 }
 
-.feed-tab-active:hover { color: var(--text-on-accent); background: var(--accent-gradient); }
+.feed-tab-active svg { opacity: 1; }
 
-.feed-tab-info { font-size: 0.72rem; }
+.feed-tab-active:hover { color: #fff; background: linear-gradient(90deg, #5B32FC 0%, #2D54FC 100%); }
+
+.feed-tab-info { margin-left: auto; padding: 9px 12px; font-size: 0.72rem; color: var(--text-muted); }
 .feed-tab-info svg { opacity: 0.7; }
 
 .feed-ranking-popover {
@@ -5011,7 +5232,44 @@ h1, h2, h3, h4 {
 .feed-att-file-name { flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed-att-file-size { font-size: 0.72rem; color: var(--text-muted); flex-shrink: 0; }
 
-.feed-post-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.feed-post-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+/* Left cluster: reaction bubble + counts (rendered only from real data) */
+.feed-post-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.feed-post-stats b { color: var(--text-primary); font-weight: 700; }
+
+.feed-post-stats:empty { display: none; }
+
+.feed-reaction-bubble {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3E8BFF, #155EFF);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 8px rgba(21, 94, 255, 0.45);
+  flex-shrink: 0;
+}
+
+.feed-stat { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+.feed-post-buttons { display: inline-flex; align-items: center; gap: 4px; }
 
 .feed-action {
   border: 0;
@@ -6286,17 +6544,9 @@ h1, h2, h3, h4 {
 
 .composer-menu-toggle input { accent-color: var(--accent-primary); margin: 0; }
 
-/* Taller post textarea — the whole point of the dropdown rework.
-   Selector is intentionally high-specificity (.composer-card ancestor) so the
-   generous min/max height always wins over the compact .composer-textarea and
-   .composer-card .composer-textarea base rules above. */
-.composer-card .composer-textarea.composer-textarea-tall {
-  min-height: 190px;
-  max-height: 520px;
-  font-size: 1rem;
-  border-radius: 18px !important;
-  line-height: 1.55;
-}
+/* (The old composer-textarea-tall sizing was replaced by the reference
+   composer: slim pill at rest, auto-grow while typing — see .composer-card
+   .composer-textarea above.) */
 
 /* ==========================================================================
    CHAT SEND / RECEIVE ENTRY ANIMATIONS (task 19)

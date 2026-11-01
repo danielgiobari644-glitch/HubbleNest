@@ -298,7 +298,7 @@ service cloud.firestore {
         fieldStr(request.resource.data, 'authorId') == request.auth.uid;
       allow update: if isAuthenticated() && (
         fieldStr(resource.data, 'authorId') == request.auth.uid ||
-        touchesOnly(['likeCount', 'commentCount', 'likedBy'])
+        touchesOnly(['likeCount', 'commentCount', 'likedBy', 'shareCount'])
       );
       allow delete: if isAuthenticated() &&
         fieldStr(resource.data, 'authorId') == request.auth.uid;

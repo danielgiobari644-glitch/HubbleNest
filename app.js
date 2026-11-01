@@ -226,6 +226,7 @@ import {
   feedSubmitComment,
   feedDeleteComment,
   feedDeletePost,
+  feedSharePost,
   toggleRankingInfo
 } from './community.js';
 
@@ -681,6 +682,13 @@ function setupAuthenticatedUI() {
       }
     }
 
+    // The Messages tile in the dashboard Quick Actions rail mirrors the badge
+    const railBadge = document.getElementById('rail-messages-badge');
+    if (railBadge) {
+      railBadge.textContent = requests.length;
+      railBadge.style.display = requests.length > 0 ? 'inline-block' : 'none';
+    }
+
     if (countEl) countEl.textContent = requests.length;
     if (container) {
       container.style.display = requests.length > 0 ? 'block' : 'none';
@@ -998,8 +1006,8 @@ async function loadDashboard() {
 
   const greetingEl = document.getElementById('dash-greeting');
   if (greetingEl && state.userProfile) {
-    const firstName = (state.userProfile.displayName || 'Member').split(' ')[0];
-    greetingEl.textContent = `Welcome back, ${firstName} 👋`;
+    const firstName = escapeHtml((state.userProfile.displayName || 'Member').split(' ')[0]);
+    greetingEl.innerHTML = `Welcome back, <span class="welcome-name">${firstName}</span> 👋`;
   }
 
   const avatarEl = document.getElementById('dash-hero-avatar');
@@ -1136,8 +1144,8 @@ function renderDashRail() {
   const featDesc = document.getElementById('rail-featured-desc');
   const featBtn = document.getElementById('rail-featured-btn');
   if (featured) {
-    if (featName) featName.textContent = featured.name || 'HubbleNest Community';
-    if (featDesc) featDesc.textContent = featured.description || 'Have a question about HubbleNest? This is the place to ask.';
+    if (featName) featName.textContent = featured.name || 'HubbleSpace Community';
+    if (featDesc) featDesc.textContent = featured.description || 'For Everyone Who Needs Help Around The App';
     if (featBtn) featBtn.onclick = () => openSpace(featured.id);
   }
 
@@ -1185,7 +1193,9 @@ function startHomeCommunityFeed() {
 }
 
 /**
- * Render Recent Activity rail from REAL notifications
+ * Render Recent Activity rail from REAL notifications.
+ * Each row: colored type tile · text + time · thumbnail (the sender's real
+ * avatar when one exists, otherwise a gradient tile with the type glyph).
  */
 function renderRailActivity() {
   const list = document.getElementById('rail-activity-list');
@@ -1196,19 +1206,44 @@ function renderRailActivity() {
     return;
   }
 
+  const toneByType = (type) => {
+    if (type === 'game_score' || type === 'game_challenge' || (type || '').startsWith('game')) return 'act-purple';
+    if (type === 'chat_request' || type === 'private_message' || type === 'space_join') return 'act-green';
+    if (type === 'feed_comment' || type === 'feed_like' || type === 'share') return 'act-blue';
+    return 'act-purple';
+  };
+
+  const glyphByType = (type) => {
+    if ((type || '').startsWith('game')) {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="4.5"/><path d="M6.5 12h4"/><path d="M8.5 10v4"/><circle cx="15.6" cy="13.4" r=".6"/><circle cx="17.9" cy="10.9" r=".6"/></svg>`;
+    }
+    if (type === 'chat_request' || type === 'private_message' || type === 'space_join') {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+    }
+    if (type === 'feed_like') {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>`;
+    }
+    if (type === 'feed_comment') {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+    }
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-9.5 18-2.6-7.9L1 10.5Z"/><path d="M21 3 8.9 13.1"/></svg>`;
+  };
+
   list.innerHTML = state.notifications.slice(0, 6).map(n => {
-    const icon = n.type === 'chat_request'
-      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
-      : n.type === 'private_message'
-        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
-        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
+    const tone = toneByType(n.type);
+    const glyph = glyphByType(n.type);
+    const senderAvatar = n.senderPhoto || n.photoURL || '';
+    const thumb = senderAvatar
+      ? `<img class="rail-activity-thumb" src="${escapeHtml(senderAvatar)}" alt="" loading="lazy" decoding="async" />`
+      : `<span class="rail-activity-thumb rail-activity-thumb-tile ${tone}" aria-hidden="true">${glyph}</span>`;
     return `
       <div class="rail-activity-item" onclick="window.HubbleNest.handleNotificationClick('${n.id}', '${n.spaceId || ''}')">
-        <span class="rail-activity-icon">${icon}</span>
+        <span class="rail-activity-icon ${tone}">${glyph}</span>
         <span class="rail-activity-text">
           <b>${escapeHtml(n.title || 'Notification')}</b> ${escapeHtml(n.body || '')}
           <span class="rail-activity-time">${formatTimeAgo(n.createdAt)}</span>
         </span>
+        ${thumb}
       </div>
     `;
   }).join('');
@@ -4432,16 +4467,15 @@ Object.assign(window.HubbleNest, {
   feedSubmitComment,
   feedDeleteComment,
   feedDeletePost,
+  feedSharePost,
   toggleRankingInfo,
 
   // Sidebar "Spaces" shortcut: open the dedicated Your Spaces page
   openSpacesSection: () => openMySpacesPage(),
 
   // Rail quick actions — REAL targets only (no simulated official space):
-  // "Get Help" runs the live Connection Doctor; "View Members" opens contacts.
-  openCommunitySpace: async () => {
-    runFirestoreDoctor();
-  },
+  // with no featured Space yet, "View Space" opens the Spaces section.
+  openCommunitySpace: () => openSpacesSection(),
   openCommunityMembers: async () => {
     await openPeopleView();
   },

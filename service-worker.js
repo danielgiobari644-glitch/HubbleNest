@@ -34,8 +34,8 @@
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
  */
 
-const CACHE_NAME = 'hubblenest-v20';
-const IMAGE_CACHE = 'hubblenest-images-v20';
+const CACHE_NAME = 'hubblenest-v22';
+const IMAGE_CACHE = 'hubblenest-images-v21';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
   './',
@@ -79,6 +79,9 @@ const PRECACHE_ASSETS = [
   './apple-touch-icon.png',
   './manifest.webmanifest',
   './hero-cosmic.png',
+  './welcome-banner-illu.png',
+  './featured-space-bg.png',
+  './rocket-promo.png',
   './usecase-school.png',
   './usecase-team.png',
   './usecase-faith.png',
