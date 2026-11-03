@@ -79,7 +79,15 @@
         if (og) og.setAttribute('content', coverUrl);
       }
 
-      if (g.entryPath && g.files) {
+      if (g.kind === 'link' && g.linkUrl) {
+        // LINK GAME: runs live from its own website, framed here. Same
+        // trust model as the in-app player — cross-origin isolation does
+        // the protecting; the sandbox tunes what the game may do.
+        stage.innerHTML = `
+          <div class="pub-frame-wrap"><iframe id="pub-game-frame" title="${escapeHtml(g.title || 'Game')}" sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox" allowfullscreen="true" allow="autoplay; fullscreen; gamepad *" src="${escapeHtml(g.linkUrl)}"></iframe></div>
+          <div class="pub-note">This game runs live from <b>${escapeHtml(g.linkHost || 'its own site')}</b> inside a protected frame. If it stays blank, the site refuses embedding — <a class="pub-link" href="${escapeHtml(g.linkUrl)}" target="_blank" rel="noopener noreferrer">open it in a new tab</a>.</div>`;
+        document.getElementById('game-chips').innerHTML += `<span class="pub-chip">Live from ${escapeHtml(g.linkHost || 'the web')}</span>`;
+      } else if (g.entryPath && g.files) {
         stage.innerHTML = `<div class="pub-frame-wrap"><iframe id="pub-game-frame" title="${escapeHtml(g.title || 'Game')}" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe></div>`;
         const frame = document.getElementById('pub-game-frame');
         // Reuse the app's exact sandboxed builder (relative refs → data: URLs).

@@ -203,6 +203,24 @@ export async function removeSpaceMember(spaceId, memberUserId) {
 }
 
 /**
+ * LEAVE a Space (self action — every member can always leave).
+ * Deletes the caller's own membership document (the rules allow
+ * isUser(memberId)) and corrects the member counter. Returns true when the
+ * membership existed and was removed.
+ */
+export async function leaveSpace(spaceId, userId) {
+  if (!spaceId || !userId) throw new Error('Missing Space or member.');
+  const memberRef = doc(db, 'spaces', spaceId, 'members', userId);
+  const snap = await getDoc(memberRef);
+  if (!snap.exists()) return false;
+  await deleteDoc(memberRef);
+  try {
+    await updateDoc(doc(db, 'spaces', spaceId), { memberCount: increment(-1) });
+  } catch (e) { /* counter drift is non-fatal */ }
+  return true;
+}
+
+/**
  * INSTANT join with a Space code — no request, no approval.
  * The code IS the invitation: whoever holds it and signs in becomes a
  * member the moment they press Join.

@@ -14,6 +14,46 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // The HubbleNest creator/admin — full platform moderation powers.
+    // Matches on the AUTH EMAIL (never client-writable), so no other member
+    // can ever acquire these rights by editing their own profile document.
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.email == 'danielgiobari644@gmail.com';
+    }
+
+    // Is this account currently banned or inside a suspension window?
+    // Suspensions use suspendedUntilMs (epoch millis int) so the comparison
+    // never depends on Timestamp coercion; missing fields fail OPEN (null-safe).
+    function banActive(userData) {
+      return userData.get('banned', false) == true ||
+        (userData.get('suspendedUntilMs', 0) is int &&
+         userData.get('suspendedUntilMs', 0) > request.time.toMillis());
+    }
+
+    function isBannedNow() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        banActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data);
+    }
+
+    // FRIEND REQUEST GATE: a private conversation may only be CREATED when an
+    // accepted chat/friend request exists between the two members (in either
+    // direction). Existing conversations are unaffected — the gate applies to
+    // creation only, so legacy friend pairs keep working.
+    function pairRequestAccepted(senderUid, receiverUid) {
+      return exists(/databases/$(database)/documents/chatRequests/$(senderUid + '_' + receiverUid)) &&
+        get(/databases/$(database)/documents/chatRequests/$(senderUid + '_' + receiverUid)).data.get('status', '') == 'accepted';
+    }
+
+    function hasAcceptedChatRequestWith(otherUid) {
+      return pairRequestAccepted(request.auth.uid, otherUid) ||
+        pairRequestAccepted(otherUid, request.auth.uid);
+    }
+
+    function otherParticipantOf(participants) {
+      return participants[0] == request.auth.uid ? participants[1] : participants[0];
+    }
+
     // Null-safe string field read.
     //
     // Legacy documents created by earlier app versions may be missing fields
@@ -73,7 +113,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true;
       allow create: if isUser(userId);
-      allow update: if isUser(userId);
+      // The platform admin may write moderation flags (banned / suspendedUntilMs /
+      // reasons) on any profile; regular members may update their own profile but
+      // can NEVER touch the moderation fields (no self-unban), even by accident.
+      allow update: if isAdmin() || (isUser(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['banned', 'suspendedUntilMs', 'banReason', 'suspensionReason']));
       allow delete: if false;
     }
 
@@ -103,10 +148,10 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() &&
         docId in ['push', 'ai'] &&
-        fieldStr(request.resource.data, 'ownerUid') == request.auth.uid;
+        (fieldStr(request.resource.data, 'ownerUid') == request.auth.uid || isAdmin());
       allow update: if isAuthenticated() &&
         docId in ['push', 'ai'] &&
-        fieldStr(resource.data, 'ownerUid') == request.auth.uid;
+        (fieldStr(resource.data, 'ownerUid') == request.auth.uid || isAdmin());
       allow delete: if false;
     }
 
@@ -144,9 +189,11 @@ service cloud.firestore {
       // description, code for the join button, member count) is exposed.
       allow get: if isAuthenticated() || resource.data.get('isPublic', false) == true;
       allow list: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isSpaceAdmin(spaceId) || (isSupportSpace(spaceId) && isAuthenticated());
-      allow delete: if isSpaceAdmin(spaceId);
+      allow create: if isAuthenticated() && !isBannedNow();
+      // The platform admin can update any Space (feature it, ban/suspend it)
+      // and delete any Space outright.
+      allow update: if isSpaceAdmin(spaceId) || isAdmin() || (isSupportSpace(spaceId) && isAuthenticated());
+      allow delete: if isSpaceAdmin(spaceId) || isAdmin();
 
       // Members subcollection
       match /members/{memberId} {
@@ -154,9 +201,11 @@ service cloud.firestore {
         // INSTANT JOIN: a member with a valid code adds THEMSELVES
         // (isUser(memberId) — the code is validated in the app before the
         // write is attempted); space admins add members from their contacts.
-        allow create: if isSpaceAdmin(spaceId) || isUser(memberId);
-        allow update: if isSpaceAdmin(spaceId);
-        allow delete: if isSpaceAdmin(spaceId) || isUser(memberId);
+        allow create: if !isBannedNow() && (isSpaceAdmin(spaceId) || isUser(memberId));
+        allow update: if isSpaceAdmin(spaceId) || isAdmin();
+        // Space admins (and the platform admin) remove members; members can
+        // always LEAVE a Space themselves.
+        allow delete: if isSpaceAdmin(spaceId) || isUser(memberId) || isAdmin();
       }
 
       // Legacy join-approval queue: kept ONLY so old data can still be read
@@ -170,16 +219,16 @@ service cloud.firestore {
       // Public messages within a space
       match /messages/{messageId} {
         allow read: if isSpaceMember(spaceId);
-        allow create: if isSpaceMember(spaceId);
+        allow create: if isSpaceMember(spaceId) && !isBannedNow();
         allow update: if isSpaceMember(spaceId);
-        allow delete: if isSpaceAdmin(spaceId) || (isAuthenticated() && fieldStr(resource.data, 'senderId') == request.auth.uid);
+        allow delete: if isSpaceAdmin(spaceId) || isAdmin() || (isAuthenticated() && fieldStr(resource.data, 'senderId') == request.auth.uid);
       }
 
       // Files within a space
       match /files/{fileId} {
         allow read: if isSpaceMember(spaceId);
-        allow create: if isSpaceMember(spaceId);
-        allow delete: if isSpaceAdmin(spaceId) || (isAuthenticated() && fieldStr(resource.data, 'uploadedBy') == request.auth.uid);
+        allow create: if isSpaceMember(spaceId) && !isBannedNow();
+        allow delete: if isSpaceAdmin(spaceId) || isAdmin() || (isAuthenticated() && fieldStr(resource.data, 'uploadedBy') == request.auth.uid);
       }
 
       // Announcements within a space
@@ -230,7 +279,8 @@ service cloud.firestore {
         fieldStr(resource.data, 'receiverId') == request.auth.uid
       );
       allow create: if isAuthenticated() &&
-        fieldStr(request.resource.data, 'senderId') == request.auth.uid;
+        fieldStr(request.resource.data, 'senderId') == request.auth.uid &&
+        !isBannedNow();
       allow update: if isAuthenticated() &&
         exists(/databases/$(database)/documents/chatRequests/$(requestId)) && (
           fieldStr(resource.data, 'receiverId') == request.auth.uid ||
@@ -259,7 +309,14 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.get('participants', [])
       );
       allow list: if isAuthenticated() && request.auth.uid in resource.data.get('participants', []);
-      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.get('participants', []);
+      // CREATION GATE: a NEW conversation requires an ACCEPTED friend/chat
+      // request between the two participants (either direction). Knowing a
+      // username — even an exact one — is never enough to open a chat.
+      allow create: if isAuthenticated() &&
+        !isBannedNow() &&
+        request.resource.data.get('participants', []).size() == 2 &&
+        request.auth.uid in request.resource.data.get('participants', []) &&
+        hasAcceptedChatRequestWith(otherParticipantOf(request.resource.data.get('participants', [])));
       allow update: if isAuthenticated() && request.auth.uid in resource.data.get('participants', []);
       allow delete: if false;
 
@@ -295,13 +352,15 @@ service cloud.firestore {
     match /feedPosts/{postId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() &&
-        fieldStr(request.resource.data, 'authorId') == request.auth.uid;
+        fieldStr(request.resource.data, 'authorId') == request.auth.uid &&
+        !isBannedNow();
       allow update: if isAuthenticated() && (
         fieldStr(resource.data, 'authorId') == request.auth.uid ||
         touchesOnly(['likeCount', 'commentCount', 'likedBy', 'shareCount'])
       );
-      allow delete: if isAuthenticated() &&
-        fieldStr(resource.data, 'authorId') == request.auth.uid;
+      // Authors delete their own posts; the platform admin can delete ANY post.
+      allow delete: if isAdmin() || (isAuthenticated() &&
+        fieldStr(resource.data, 'authorId') == request.auth.uid);
 
       match /comments/{commentId} {
         allow read: if isAuthenticated();
@@ -340,13 +399,14 @@ service cloud.firestore {
       allow get: if isAuthenticated() || resource.data.get('isPublic', false) == true;
       allow list: if isAuthenticated();
       allow create: if isAuthenticated() &&
-        fieldStr(request.resource.data, 'authorId') == request.auth.uid;
+        fieldStr(request.resource.data, 'authorId') == request.auth.uid &&
+        !isBannedNow();
       allow update: if isAuthenticated() && (
         fieldStr(resource.data, 'authorId') == request.auth.uid ||
         touchesOnly(['plays', 'likedBy', 'commentCount', 'ratingSum', 'ratingCount'])
       );
-      allow delete: if isAuthenticated() &&
-        fieldStr(resource.data, 'authorId') == request.auth.uid;
+      allow delete: if isAdmin() || (isAuthenticated() &&
+        fieldStr(resource.data, 'authorId') == request.auth.uid);
     }
 
     // ======================================================================

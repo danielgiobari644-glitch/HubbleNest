@@ -183,6 +183,25 @@ Fix (2 minutes, owner only):
 3. Click **Publish**. The request → accept → private-chat flow works
    immediately, no reload needed.
 
+**v24 rules upgrade — publish the updated `firestore.rules` (required once):**
+the current rules file adds the platform-admin powers and the friend-request
+gate. Until you publish them, the app still works (the old rules remain in
+effect server-side), but the following stay client-side only:
+
+- **Admin powers** — `isAdmin()` matches the auth email
+  `danielgiobari644@gmail.com` (never client-writable). It lets that account
+  update any user (ban / suspension flags), update or delete any Space
+  (feature / ban / suspend / delete), remove any member from any Space, and
+  delete any feed post or game. Members can never edit their own moderation
+  flags (the rule blocks `banned` / `suspendedUntilMs` self-writes).
+- **Friend-request gate** — creating a NEW `conversations` document now
+  requires an `accepted` chat/friend request between the two participants
+  (either direction). Knowing an exact username is not enough; legacy pairs
+  with existing conversations are unaffected.
+- **Ban enforcement** — banned / currently-suspended accounts are refused on
+  content writes (posts, messages, requests, games, joins), not just in the
+  UI.
+
 **After deploying a new build, an old service worker keeps serving stale
 files (or the app renders a MIX of old and new code):**
 the shipped worker (v12) makes deploys converge by themselves:
@@ -341,6 +360,13 @@ portfolio again (they can still reach it anytime via the account menu →
   locked sandbox; source-only projects (Python, Java, C, C++, C#, PHP, Ruby,
   Go, Rust, Lua…) are stored with a browsable file tree and an honest
   "cannot execute in a browser" note. Games can be published to a public page.
+  **Games can also be created through links**: paste an https:// URL to any
+  hosted HTML5 web game in the editor's Game-link tab and it plays LIVE
+  inside the app's player — plays, likes, ratings, comments, sessions and
+  personal-best tracking all work; the frame is cross-origin sandboxed, an
+  "Open in new tab" escape hatch appears for sites that refuse embedding,
+  and external pages can never inject fake scores (the bridge only trusts
+  HubbleNest's own sandboxed code games).
   **Every game gets an editable cover image** — upload/replace/remove it in
   the editor; the Arcade grid and the public game page show it (it also
   becomes the page's `og:image`)

@@ -6209,6 +6209,104 @@ h1, h2, h3, h4 {
 }
 
 /* ==========================================================================
+   GAMES FROM LINKS — create via URL, play live inside the app
+   ========================================================================== */
+
+/* Editor: the Link tab pane */
+.game-link-pane { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.game-link-label { font-size: 0.74rem; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.02em; }
+.game-link-row { display: flex; align-items: center; gap: 8px; }
+.game-link-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+.game-link-input::placeholder { color: var(--text-muted); opacity: 0.75; }
+.game-link-input:focus { outline: none; border-color: var(--border-focus); }
+.game-link-status { font-size: 0.8rem; line-height: 1.5; min-height: 1.25em; color: var(--text-muted); }
+.game-link-status.ok { color: var(--status-success); }
+.game-link-status.bad { color: #fbbf24; }
+.game-link-status b { color: inherit; }
+.game-link-hint { font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
+
+/* Card thumb chip: which host a link game plays from */
+.game-thumb-host {
+  position: absolute;
+  left: 9px;
+  bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 72%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 0.64rem var(--font-body);
+  letter-spacing: 0.04em;
+  color: #DFFBEF;
+  background: rgba(4, 22, 16, 0.66);
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  padding: 4px 9px;
+  border-radius: 99px;
+  backdrop-filter: blur(6px);
+}
+.game-thumb-host svg { flex-shrink: 0; }
+
+/* Player meta: LIVE chip for external games */
+.player-live-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #9CF2D3;
+  background: rgba(52, 211, 153, 0.14);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* Detail page: "Plays live from …" source line */
+.arc-live-src { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.86rem; }
+.arc-live-src svg { color: var(--status-success); flex-shrink: 0; }
+.arc-live-src a { color: var(--text-primary); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.arc-live-src a:hover { color: var(--status-success); }
+
+/* Live-play note bar under the running external game */
+.player-link-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  background: rgba(52, 211, 153, 0.07);
+  border-top: 1px solid rgba(52, 211, 153, 0.28);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.player-link-note[hidden] { display: none; }
+.player-link-note .pln-text { flex: 1; min-width: 200px; }
+.player-link-note b { color: var(--text-primary); }
+.pln-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 9px rgba(52, 211, 153, 0.9);
+  animation: plnLivePulse 1.6s ease infinite;
+  flex-shrink: 0;
+}
+@keyframes plnLivePulse { 50% { opacity: 0.35; } }
+
+/* Toolbar buttons respect the hidden attribute (pause/sound while a link game runs) */
+.arc-tool-btn[hidden] { display: none; }
+
+/* ==========================================================================
    DIRECT SHARE — "HubbleNest Energy Transfer"
    Real states only: progress comes from the actual upload callback and the
    success/delivered animations fire only after the Firestore write lands.
@@ -8168,3 +8266,326 @@ h1, h2, h3, h4 {
   border-color: rgba(15, 23, 42, 0.1);
 }
 .light-theme .ds-mode-art-glow { opacity: 0.22; }
+
+/* ==========================================================================
+   v24 — LEAVE SPACE · FRIEND REQUESTS · ADMIN CONSOLE · GAMES SHORTCUTS
+   ========================================================================== */
+
+/* --- Welcome card: Play / Create games buttons (always visible, esp. mobile) */
+.welcome-games-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.welcome-game-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+  min-height: 44px;
+}
+
+.welcome-game-btn:active { transform: scale(0.97); }
+
+.welcome-game-play {
+  background: linear-gradient(135deg, #1565ff, #3730a3);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(21, 101, 255, 0.35);
+}
+
+.welcome-game-create {
+  background: linear-gradient(135deg, #0ea5e9, #6d28d9);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(14, 165, 233, 0.3);
+}
+
+.welcome-game-btn:hover { filter: brightness(1.12); }
+
+@media (max-width: 640px) {
+  .welcome-games-row { width: 100%; }
+  .welcome-game-btn { flex: 1 1 calc(50% - 10px); font-size: 0.85rem; padding: 12px 10px; }
+}
+
+/* --- Space header: Leave button + moderation banner */
+.space-leave-btn { color: var(--status-danger); }
+.space-leave-btn:hover { color: var(--status-danger); filter: brightness(1.2); }
+
+.space-moderation-banner {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--status-danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.moderation-pill {
+  color: var(--status-danger);
+  font-weight: 700;
+}
+
+/* --- Featured pill (space cards + admin console) */
+.featured-pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4);
+}
+
+/* The admin console reuses .featured-pill inline (position: static there) */
+.admin-card .featured-pill,
+.add-contact-name .featured-pill {
+  position: static;
+  box-shadow: none;
+}
+
+/* --- Friend request form (People page) — matches the reference design */
+.friend-request-message-wrap {
+  position: relative;
+  margin-top: 10px;
+}
+
+.friend-request-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 12px 56px 26px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.friend-request-textarea:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.65);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.fr-char-count {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.add-contact-sent-check {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--status-success);
+  margin-left: 6px;
+}
+
+.add-contact-connected { border-color: rgba(52, 211, 153, 0.4); }
+.add-contact-sent { border-color: rgba(99, 102, 241, 0.45); }
+
+/* Pending chip on People cards */
+.pending-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(245, 158, 11, 0.14);
+  color: #f59e0b;
+  font-size: 0.66rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* Personalized note shown with an incoming request */
+.direct-request-msg {
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.user-card-request-msg {
+  width: 100%;
+  padding: 10px 14px;
+  margin-bottom: 4px;
+  border-radius: 12px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-style: italic;
+  text-align: center;
+}
+
+/* --- Admin console */
+.admin-nav-link { color: #f59e0b; }
+.admin-nav-link:hover { color: #fbbf24; }
+
+.admin-shield-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  font-size: 0.8rem;
+  font-weight: 800;
+  align-self: flex-start;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin-top: 8px;
+}
+
+.admin-card { align-self: start; }
+
+.admin-mode-row {
+  display: flex;
+  gap: 14px;
+  margin: 10px 0 14px;
+  flex-wrap: wrap;
+}
+
+.admin-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.admin-mode-option input { accent-color: var(--accent-primary); }
+
+.admin-op-status {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--status-success);
+  min-height: 1em;
+}
+
+.admin-result-box { margin-top: 14px; }
+
+.admin-action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-danger-btn { color: var(--status-danger); }
+.admin-danger-btn:hover { color: var(--status-danger); filter: brightness(1.25); }
+
+.admin-status-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.admin-status-ok {
+  background: rgba(52, 211, 153, 0.13);
+  color: var(--status-success);
+}
+
+.admin-status-banned {
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--status-danger);
+}
+
+.admin-status-suspended {
+  background: rgba(245, 158, 11, 0.14);
+  color: #f59e0b;
+}
+
+/* --- Banned / suspended gate overlay */
+#banned-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 7, 14, 0.94);
+  backdrop-filter: blur(10px);
+  padding: 24px;
+}
+
+.banned-gate-card {
+  max-width: 430px;
+  width: 100%;
+  padding: 34px 30px;
+  border-radius: 20px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: linear-gradient(170deg, #101726, #0a0e18);
+  text-align: center;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+
+.banned-gate-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--status-danger);
+  margin-bottom: 16px;
+}
+
+.banned-gate-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+
+.banned-gate-body {
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 22px;
+}

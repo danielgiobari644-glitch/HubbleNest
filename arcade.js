@@ -429,7 +429,8 @@ function renderGameDetail(gameId, opts = {}) {
     ? `<img src="${escapeHtml(g.coverImage)}" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()" />`
     : `<span class="arc-cover-initials" style="background:linear-gradient(135deg,hsl(${hue} 62% 26%),hsl(${(hue + 46) % 360} 70% 16%));">${escapeHtml(initials)}</span>`;
 
-  const runnable = g.runnable !== false && (g.entryPath || g.html?.trim?.() || g.js?.trim?.());
+  const isLink = g.kind === 'link' && !!g.linkUrl;
+  const runnable = isLink || (g.runnable !== false && (g.entryPath || g.html?.trim?.() || g.js?.trim?.()));
 
   box.innerHTML = `
     <div class="arc-detail-back">
@@ -473,7 +474,7 @@ function renderGameDetail(gameId, opts = {}) {
 
     <div class="arc-detail-preview ${g.coverImage ? 'arc-has-photo' : ''}" id="arc-detail-preview" role="button" tabindex="0" aria-label="Play ${escapeHtml(g.title || 'this game')}">
       ${cover}
-      <span class="arc-preview-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> ${runnable ? 'Instant play — runs sandboxed' : 'Source project'}</span>
+      <span class="arc-preview-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> ${runnable ? (isLink ? `Instant play — live from ${escapeHtml(g.linkHost || 'its site')}` : 'Instant play — runs sandboxed') : 'Source project'}</span>
       ${runnable ? `<span class="arc-preview-play" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg></span>` : ''}
     </div>
 
@@ -483,6 +484,7 @@ function renderGameDetail(gameId, opts = {}) {
         <p class="arc-about-text">${escapeHtml(g.description || 'The creator has not written a description yet.')}</p>
         <dl class="arc-meta-list">
           ${g.category ? `<div><dt>Category</dt><dd><span class="arc-cat-chip">${escapeHtml(g.category)}</span></dd></div>` : ''}
+          ${isLink ? `<div><dt>Source</dt><dd><span class="arc-live-src"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> Plays live from <a href="${escapeHtml(g.linkUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(g.linkHost || 'external site')}</a></span></dd></div>` : ''}
           ${(g.languages || []).length ? `<div><dt>Languages</dt><dd>${(g.languages || []).map(l => `<span class="arc-lang-chip">${escapeHtml(l)}</span>`).join(' ')}</dd></div>` : ''}
           ${g.fileCount > 0 ? `<div><dt>Project files</dt><dd>${g.fileCount}</dd></div>` : ''}
           <div><dt>Creator</dt><dd><span class="arc-creator" data-arc-creator="${escapeHtml(g.authorId || '')}" role="button" tabindex="0"><img src="${getAvatarUrl(g.authorPhoto, g.authorName)}" alt="" loading="lazy" /> ${escapeHtml(g.authorName || 'Member')}</span></dd></div>
@@ -951,6 +953,7 @@ function renderPlayPanels() {
       <p class="arc-info-desc">${escapeHtml(game.description || 'No description.')}</p>
       <div class="arc-info-rows">
         <div><dt>Category</dt><dd>${game.category ? `<span class="arc-cat-chip">${escapeHtml(game.category)}</span>` : '<span class="arc-muted">—</span>'}</dd></div>
+        ${game.kind === 'link' && game.linkUrl ? `<div><dt>Source</dt><dd>Live from <b>${escapeHtml(game.linkHost || 'its own site')}</b></dd></div>` : ''}
         <div><dt>Difficulty</dt><dd class="arc-muted">Not declared by this game</dd></div>
         ${(game.languages || []).length ? `<div><dt>Languages</dt><dd>${(game.languages || []).map(l => `<span class="arc-lang-chip">${escapeHtml(l)}</span>`).join(' ')}</dd></div>` : ''}
         <div><dt>Rating</dt><dd>${r.count > 0 ? `★ ${r.avg.toFixed(1)} (${fmtCount(r.count)})` : '<span class="arc-muted">No ratings yet</span>'}</dd></div>
@@ -1175,6 +1178,12 @@ function postToFrame(msg) {
 function handleGameMessage(ev) {
   const frame = document.getElementById('player-frame');
   if (!frame || ev.source !== frame.contentWindow) return; // only OUR game frame
+  // External LINK games are untrusted senders: they never speak the bridge,
+  // and accepting messages from them would let a random web page inject
+  // fake scores into the leaderboard. Only sandboxed code games (opaque
+  // srcdoc origin) built by HubbleNest's own player may talk to us.
+  const playing = (window.HubbleNest?.getGamesCache?.() || []).find(x => x.id === playGameId);
+  if (playing && playing.kind === 'link' && playing.linkUrl) return;
   const data = ev.data;
   if (!data || typeof data.type !== 'string' || !data.type.startsWith('hn-')) return;
 

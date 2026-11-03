@@ -57,6 +57,10 @@ import {
   collection,
   deleteDoc,
   addDoc,
+  updateDoc,
+  query,
+  where,
+  limit,
   serverTimestamp 
 } from './firebase.js';
 
@@ -79,6 +83,7 @@ import {
   joinSpaceByCode,
   addMemberToSpace,
   removeSpaceMember,
+  leaveSpace,
   extendSpaceExpiration,
   updateSpaceSettings,
   updateSpaceCover,
@@ -108,6 +113,7 @@ import {
   declineChatRequest,
   cancelChatRequest,
   subscribeToIncomingRequests,
+  subscribeToUserChatRequests,
   getChatRelationship
 } from './chat-requests.js';
 
@@ -216,6 +222,7 @@ import {
   startCommunityFeed,
   stopCommunityFeed,
   setFeedConnections,
+  setFeedAdmin,
   handleHomePost,
   stageHomeAttachment as stageHomeFile,
   removeHomeAttachment,
@@ -263,7 +270,10 @@ import {
   generateGameFromPrompt,
   scaffoldProjectWithAi,
   handleGameCoverUpload,
-  removeGameCover
+  removeGameCover,
+  onGameLinkInput,
+  clearGameLink,
+  openLinkGameExternally
 } from './games.js';
 
 import {
@@ -298,6 +308,7 @@ const state = {
   currentUser: null,
   userProfile: null,
   currentView: 'dashboard', // 'auth' | 'dashboard' | 'space' | 'direct'
+  isAdmin: false,
   userSpaces: [],
   activeCategory: 'All',
   activeSpace: null,
@@ -316,6 +327,11 @@ const state = {
   contactsUnsub: null,
   people: [],
   incomingChatRequests: [],
+  pendingFriendUids: new Set(),
+  friendReqUnsub: null,
+  adminTargetUser: null,
+  adminTargetSpace: null,
+  adminSpaceMembers: [],
   selectedUserCard: null,
   notifications: [],
   unreadNotifications: 0,
@@ -330,6 +346,64 @@ const state = {
   incomingReqUnsub: null,
   directChatRetried: false
 };
+
+/* ==========================================================================
+   PLATFORM ADMIN — the HubbleNest creator (danielgiobari644@gmail.com / @gee)
+   Matched on the AUTH email (never client-writable) with the username as a
+   display fallback. Every moderation surface in the UI keys off this flag,
+   and the Firestore rules enforce the same check server-side.
+   ========================================================================== */
+
+const ADMIN_EMAIL = 'danielgiobari644@gmail.com';
+const ADMIN_USERNAME = 'gee';
+
+function isPlatformAdmin() {
+  const p = state.userProfile || {};
+  const email = String(p.email || state.currentUser?.email || '').trim().toLowerCase();
+  const username = String(p.username || '').trim().toLowerCase();
+  return email === ADMIN_EMAIL || username === ADMIN_USERNAME;
+}
+
+function profileBanState(profile) {
+  if (!profile) return { active: false };
+  if (profile.banned === true) {
+    return { active: true, mode: 'banned', reason: profile.banReason || '' };
+  }
+  const until = Number(profile.suspendedUntilMs || 0);
+  if (until > Date.now()) {
+    return { active: true, mode: 'suspended', until, reason: profile.suspensionReason || '' };
+  }
+  return { active: false };
+}
+
+function showBannedGate(info) {
+  const gate = document.getElementById('banned-gate');
+  if (!gate) return;
+  const title = document.getElementById('banned-gate-title');
+  const body = document.getElementById('banned-gate-body');
+  if (title) {
+    title.textContent = info.mode === 'banned'
+      ? 'Account banned'
+      : 'Account suspended';
+  }
+  if (body) {
+    const untilText = info.mode === 'suspended' && info.until
+      ? ` The suspension lifts on ${new Date(info.until).toLocaleString()}.`
+      : '';
+    const reasonText = info.reason ? ` Reason: ${info.reason}` : '';
+    body.textContent =
+      `Your HubbleNest account was ${info.mode} by the platform admin.` +
+      reasonText + untilText +
+      ' If you believe this is a mistake, contact the HubbleNest creator.';
+  }
+  gate.style.display = 'flex';
+}
+
+export function dismissBannedGate() {
+  const gate = document.getElementById('banned-gate');
+  if (gate) gate.style.display = 'none';
+  logoutUser();
+}
 
 /* ==========================================================================
    PWA INSTALL (hero "Download App" button) & EARLY SERVICE WORKER
@@ -597,6 +671,20 @@ onAuthStateChanged(auth, async (user) => {
       };
     }
 
+    state.isAdmin = isPlatformAdmin();
+
+    // BAN / SUSPENSION GATE — a moderated account never reaches the app.
+    const ban = profileBanState(state.userProfile);
+    if (ban.active && !state.isAdmin) {
+      stopCommunityFeed();
+      stopArcade();
+      stopDirectShare();
+      showBannedGate(ban);
+      return;
+    }
+    const gateEl = document.getElementById('banned-gate');
+    if (gateEl) gateEl.style.display = 'none';
+
     setupAuthenticatedUI();
     loadDashboard();
     subscribeNotifications();
@@ -636,6 +724,24 @@ function setupAuthenticatedUI() {
   // Mobile bottom nav (Home/People/Direct/Join/Profile) belongs to the APP only —
   // never render it on the landing or auth pages.
   document.body.classList.add('hn-app-active');
+
+  // Admin-only surfaces: sidebar Admin console, Connection Doctor quick
+  // action, and the push / AI configuration sections. Everyone else —
+  // including signed-out visitors — never sees them.
+  syncAdminOnlyUI();
+
+  // Pending-friend map (sent & received requests) drives the "Pending"
+  // chips on the People page and keeps the friend-request gate honest.
+  if (state.friendReqUnsub) { state.friendReqUnsub(); state.friendReqUnsub = null; }
+  state.friendReqUnsub = subscribeToUserChatRequests(state.currentUser.uid, (reqs) => {
+    const pend = new Set();
+    (reqs || []).forEach(r => {
+      if (r.status !== 'pending') return;
+      pend.add(r.direction === 'sent' ? r.receiverId : r.senderId);
+    });
+    state.pendingFriendUids = pend;
+    if (state.currentView === 'people') renderPeopleGrid(applyPeopleFilter());
+  });
 
   // Update topbar avatar
   const avatarImg = document.getElementById('user-avatar-topbar');
@@ -709,6 +815,31 @@ function setupAuthenticatedUI() {
     sessionStorage.removeItem('pendingShareCode');
     openDirectShareViewWrapper(pendingShare);
   }
+}
+
+/**
+ * Show or hide every admin-only surface based on the signed-in account.
+ * - Sidebar "Admin" console entry
+ * - Dashboard "Get Help" (Connection Doctor) quick action
+ * - Profile page push + AI configuration sections
+ */
+function syncAdminOnlyUI() {
+  const admin = isPlatformAdmin();
+  state.isAdmin = admin;
+
+  const adminNav = document.getElementById('nav-admin');
+  if (adminNav) adminNav.style.display = admin ? 'flex' : 'none';
+
+  const railHelp = document.getElementById('rail-get-help-quick');
+  if (railHelp) railHelp.style.display = admin ? 'inline-flex' : 'none';
+
+  const pushCfg = document.getElementById('admin-push-config');
+  if (pushCfg) pushCfg.style.display = admin ? 'block' : 'none';
+  const aiCfg = document.getElementById('admin-ai-config');
+  if (aiCfg) aiCfg.style.display = admin ? 'block' : 'none';
+
+  // The feed delete-any-post capability follows the same flag.
+  setFeedAdmin(admin);
 }
 
 export function showLandingPage() {
@@ -1138,16 +1269,29 @@ function renderSidebarSpaces() {
  * Fill the dashboard right rail with REAL data (members, featured space, activity)
  */
 function renderDashRail() {
-  // Featured space = your most recent Space (real data only)
-  const featured = state.userSpaces[0];
-  const featName = document.getElementById('rail-featured-name');
-  const featDesc = document.getElementById('rail-featured-desc');
-  const featBtn = document.getElementById('rail-featured-btn');
-  if (featured) {
-    if (featName) featName.textContent = featured.name || 'HubbleSpace Community';
-    if (featDesc) featDesc.textContent = featured.description || 'For Everyone Who Needs Help Around The App';
-    if (featBtn) featBtn.onclick = () => openSpace(featured.id);
-  }
+  // Featured space = the Space the platform admin featured (spaces.featured).
+  // Falls back to the member's most recent Space when nothing is featured.
+  (async () => {
+    let featured = null;
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'spaces'),
+        where('featured', '==', true),
+        limit(1)
+      ));
+      if (!snap.empty) featured = { id: snap.docs[0].id, ...snap.docs[0].data() };
+    } catch (e) { /* fallback below */ }
+    if (!featured) featured = state.userSpaces[0] || null;
+
+    const featName = document.getElementById('rail-featured-name');
+    const featDesc = document.getElementById('rail-featured-desc');
+    const featBtn = document.getElementById('rail-featured-btn');
+    if (featured) {
+      if (featName) featName.textContent = featured.name || 'HubbleSpace Community';
+      if (featDesc) featDesc.textContent = featured.description || 'For Everyone Who Needs Help Around The App';
+      if (featBtn) featBtn.onclick = () => openSpace(featured.id);
+    }
+  })();
 
   // Members card: show YOUR contacts (real data, live count)
   if (state.currentUser) {
@@ -1189,6 +1333,7 @@ function computeConnectionSet() {
 }
 
 function startHomeCommunityFeed() {
+  setFeedAdmin(isPlatformAdmin());
   startCommunityFeed(state.userProfile, state.currentUser?.uid, computeConnectionSet());
 }
 
@@ -1299,6 +1444,7 @@ function renderSpacesGrid() {
     const expInfo = sp.type === 'temporary' ? formatExpiration(sp.expiresAt) : null;
     const coverUrl = sp.imageURL || '';
     const isAdmin = sp.userRole === 'admin';
+    const spaceStatus = spaceModerationState(sp);
 
     return `<div class="space-card" data-space-id="${sp.id}" onclick="window.HubbleNest.openSpace('${sp.id}')">
         <div class="space-card-cover">
@@ -1307,6 +1453,7 @@ function renderSpacesGrid() {
               ${escapeHtml(sp.name.slice(0, 2).toUpperCase())}
             </div>
           `}
+          ${sp.featured ? `<span class="featured-pill">★ Featured</span>` : ''}
         </div>
         <div class="space-card-body">
           <div class="space-card-meta">
@@ -1314,6 +1461,7 @@ function renderSpacesGrid() {
             <span>·</span>
             <span>${sp.memberCount || 1} members</span>
             ${isAdmin ? `<span>·</span><span class="admin-pill">Admin</span>` : ''}
+            ${spaceStatus ? `<span>·</span><span class="moderation-pill">${escapeHtml(spaceStatus)}</span>` : ''}
           </div>
           <h4 class="space-card-title">${escapeHtml(sp.name)}</h4>
           <p class="space-card-desc">${escapeHtml(sp.description || 'Private collaborative workspace.')}</p>
@@ -1334,6 +1482,17 @@ function renderSpacesGrid() {
    4. SPACE DETAIL & CHAT INTERFACE
    ========================================================================== */
 
+/**
+ * Human label for a Space's moderation state ('' when clean).
+ */
+function spaceModerationState(sp) {
+  if (!sp) return '';
+  if (sp.status === 'banned') return 'Banned';
+  const until = Number(sp.suspendedUntilMs || 0);
+  if (until > Date.now()) return 'Suspended';
+  return '';
+}
+
 export async function openSpace(spaceId) {
   state.currentView = 'space';
   document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
@@ -1348,6 +1507,16 @@ export async function openSpace(spaceId) {
   }
 
   state.activeSpace = { id: spaceSnap.id, ...spaceSnap.data() };
+
+  // Space-level moderation: banned / suspended Spaces are closed to members
+  // (the platform admin can still enter them to manage content).
+  const modState = spaceModerationState(state.activeSpace);
+  if (modState && !state.isAdmin) {
+    showToast(`This Space is currently ${modState.toLowerCase()} by the HubbleNest admin.`, 'warning', 6000);
+    loadDashboard();
+    return;
+  }
+
   spaceAnimatedIds = null; // new Space → chat history loads silently
   state.activeSpaceRole = await getMembershipState(spaceId, state.currentUser.uid);
 
@@ -1384,7 +1553,7 @@ function renderSpaceHeader() {
   }
 
   if (coverEl) {
-    const isAdmin = state.activeSpaceRole === 'admin';
+    const isAdmin = state.activeSpaceRole === 'admin' || state.isAdmin;
     const coverHtml = sp.imageURL 
       ? `<img src="${sp.imageURL}" class="space-hero-cover-img" alt="${escapeHtml(sp.name)}" decoding="async"/>` 
       : `<div style="width: 100%; height: 100%; background: linear-gradient(135deg, #1e293b, #0f172a); display: flex; align-items: center; justify-content: center;"><span style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500;">HubbleNest Sanctuary</span></div>`;
@@ -1404,12 +1573,30 @@ function renderSpaceHeader() {
   }
 
   if (adminBtn) {
-    adminBtn.style.display = state.activeSpaceRole === 'admin' ? 'inline-flex' : 'none';
+    adminBtn.style.display = (state.activeSpaceRole === 'admin' || state.isAdmin) ? 'inline-flex' : 'none';
+  }
+
+  // Leave button — every member can leave; hidden for non-members.
+  const leaveBtn = document.getElementById('space-leave-btn');
+  if (leaveBtn) {
+    leaveBtn.style.display = state.activeSpaceRole === 'none' ? 'none' : 'inline-flex';
+  }
+
+  // Moderation banner when the admin banned / suspended this Space.
+  const modBanner = document.getElementById('space-moderation-banner');
+  if (modBanner) {
+    const modState = spaceModerationState(sp);
+    if (modState) {
+      modBanner.textContent = `⚠ This Space is ${modState.toLowerCase()} by the HubbleNest admin — members cannot interact with it until it is restored.`;
+      modBanner.style.display = 'block';
+    } else {
+      modBanner.style.display = 'none';
+    }
   }
 
   const settingsTabNav = document.getElementById('space-tab-nav-settings');
   if (settingsTabNav) {
-    settingsTabNav.style.display = state.activeSpaceRole === 'admin' ? 'inline-block' : 'none';
+    settingsTabNav.style.display = (state.activeSpaceRole === 'admin' || state.isAdmin) ? 'inline-block' : 'none';
   }
 }
 
@@ -2258,7 +2445,9 @@ function renderMembersList() {
   const container = document.getElementById('members-list-grid');
   if (!container) return;
 
-  const adminPanel = state.activeSpaceRole === 'admin' ? `
+  // Space admins AND the platform admin manage members here.
+  const canManageHere = state.activeSpaceRole === 'admin' || state.isAdmin;
+  const adminPanel = canManageHere ? `
     <div class="space-contacts-admin">
       <div class="space-contacts-admin-head">
         <div>
@@ -2273,7 +2462,7 @@ function renderMembersList() {
   container.innerHTML = adminPanel + state.spaceMembers.map(m => {
     const isMe = m.userId === state.currentUser.uid;
     const isAdmin = m.role === 'admin';
-    const canManage = state.activeSpaceRole === 'admin' && !isMe;
+    const canManage = canManageHere && !isMe;
 
     return `
       <div class="member-card" style="cursor: pointer;" onclick="window.HubbleNest.openUserCardModal('${m.userId}')">
@@ -2347,7 +2536,7 @@ function renderSpaceContactsPicker() {
 }
 
 export async function addSpaceMemberFromContacts(memberUid) {
-  if (state.activeSpaceRole !== 'admin') return;
+  if (state.activeSpaceRole !== 'admin' && !state.isAdmin) return;
   const contact = (state.contacts || []).find(c => c.uid === memberUid);
   if (!contact) return;
   try {
@@ -2370,10 +2559,10 @@ export async function addSpaceMemberFromContacts(memberUid) {
 }
 
 export async function removeSpaceMemberByUid(memberUid) {
-  if (state.activeSpaceRole !== 'admin') return;
+  if (state.activeSpaceRole !== 'admin' && !state.isAdmin) return;
   const m = (state.spaceMembers || []).find(x => x.userId === memberUid);
   if (!m) return;
-  if (m.userId === state.activeSpace?.createdBy) {
+  if (m.userId === state.activeSpace?.createdBy && !state.isAdmin) {
     showToast('The Space creator cannot be removed.', 'warning');
     return;
   }
@@ -2386,6 +2575,38 @@ export async function removeSpaceMemberByUid(memberUid) {
     showToast(err?.code === 'permission-denied'
       ? 'Your Firestore rules block removing members — run Connection Doctor.'
       : 'Could not remove this member.', 'error');
+  }
+}
+
+/**
+ * LEAVE the currently open Space — real self-removal, available to every
+ * member (the Space creator gets an extra warning because leaving surrenders
+ * their admin powers over it).
+ */
+export async function leaveActiveSpace() {
+  const sp = state.activeSpace;
+  if (!sp || !state.currentUser) return;
+  const isCreator = sp.createdBy === state.currentUser.uid;
+  const warn = isCreator
+    ? `You created "${sp.name || 'this Space'}". Leaving means giving up admin control of it. Leave anyway?`
+    : `Leave "${sp.name || 'this Space'}"? You will need a new invite or Space code to rejoin.`;
+  if (!window.confirm(warn)) return;
+  try {
+    const removed = await leaveSpace(sp.id, state.currentUser.uid);
+    if (removed) {
+      showToast(`You left ${sp.name || 'the Space'}.`, 'info');
+      state.activeSpace = null;
+      state.activeSpaceRole = 'none';
+      await loadDashboard();
+    } else {
+      showToast('You are not a member of this Space.', 'info');
+      loadDashboard();
+    }
+  } catch (err) {
+    console.error('Leave space failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'Your Firestore rules block leaving — run Connection Doctor.'
+      : 'Could not leave this Space. Please try again.', 'error');
   }
 }
 
@@ -2496,20 +2717,24 @@ function applyPeopleFilter() {
 }
 
 /**
- * Search a member by their EXACT username and show a verification card.
- * Only safe public profile fields are shown — no emails, no private data.
+ * FRIEND REQUEST FORM (People page bar — username box + personalized note).
+ * Looks the member up by their EXACT username and sends a real friend
+ * request. Chat stays locked until the recipient accepts — even when the
+ * username is known exactly.
  */
-export async function addContactByUsername() {
+export async function sendFriendRequestByUsername() {
   const input = document.getElementById('add-contact-username');
+  const msgInput = document.getElementById('friend-request-message');
   const resultBox = document.getElementById('add-contact-result');
   const btn = document.getElementById('add-contact-btn');
   const raw = (input?.value || '').trim();
+  const message = (msgInput?.value || '').trim().slice(0, 120);
   state.foundContactCandidate = null;
 
   if (!raw) { showToast('Enter the username of the member you want to add.', 'info'); return; }
   if (!state.currentUser) { showToast('Sign in first.', 'info'); return; }
 
-  if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   if (resultBox) { resultBox.style.display = 'block'; resultBox.innerHTML = `<div class="add-contact-searching">Looking up @${escapeHtml(raw.replace(/^@/, ''))}…</div>`; }
 
   try {
@@ -2519,55 +2744,84 @@ export async function addContactByUsername() {
       return;
     }
     if (peer.uid === state.currentUser.uid) {
-      if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">That's you. You are already your own contact.</div>`;
+      if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">That's you. You are already your own friend.</div>`;
       return;
     }
-    const already = (state.contacts || []).some(c => c.uid === peer.uid);
-    state.foundContactCandidate = peer;
-    if (resultBox) {
-      resultBox.innerHTML = `
-        <div class="add-contact-card">
+
+    const rel = await getChatRelationship(state.currentUser.uid, peer.uid);
+    const status = rel?.data?.status;
+
+    if (rel && (status === 'accepted' || rel.direction === 'connected')) {
+      if (resultBox) resultBox.innerHTML = `
+        <div class="add-contact-card add-contact-connected">
           <img src="${getAvatarUrl(peer.photoURL, peer.displayName)}" alt="" class="add-contact-avatar" />
           <div class="add-contact-info">
             <div class="add-contact-name">${escapeHtml(peer.displayName)}</div>
             <div class="add-contact-handle">@${escapeHtml(peer.username)}</div>
-            ${peer.bio ? `<div class="add-contact-bio">${escapeHtml(peer.bio)}</div>` : ''}
           </div>
-          ${already
-            ? `<span class="add-contact-already">Already in contacts</span>`
-            : `<button type="button" class="btn btn-primary btn-sm" id="add-contact-confirm-btn" onclick="window.HubbleNest.addFoundContact()">Add to contacts</button>`}
+          <span class="add-contact-already">✓ Already friends — chat is open</span>
         </div>`;
+      return;
+    }
+
+    if (rel && status === 'pending') {
+      if (rel.direction === 'received') {
+        if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">@${escapeHtml(peer.username)} already sent <b>you</b> a friend request — accept it from the Messages page.</div>`;
+      } else {
+        if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">Your friend request to @${escapeHtml(peer.username)} is already pending — chat unlocks once they accept.</div>`;
+      }
+      return;
+    }
+
+    if (rel && status === 'declined') {
+      const updatedSeconds = rel.data.updatedAt?.seconds || 0;
+      if (Math.floor(Date.now() / 1000) - updatedSeconds < 86400) {
+        if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">@${escapeHtml(peer.username)} is not accepting friend requests right now.</div>`;
+        return;
+      }
+    }
+
+    // Keep the sender's People page aware of this pending relationship.
+    await addContact(state.userProfile, peer).catch(() => {});
+
+    const sent = await sendChatRequest(state.userProfile, peer, message);
+    if (sent && resultBox) {
+      resultBox.innerHTML = `
+        <div class="add-contact-card add-contact-sent">
+          <img src="${getAvatarUrl(peer.photoURL, peer.displayName)}" alt="" class="add-contact-avatar" />
+          <div class="add-contact-info">
+            <div class="add-contact-name">${escapeHtml(peer.displayName)} <span class="add-contact-sent-check">✓ request sent</span></div>
+            <div class="add-contact-handle">@${escapeHtml(peer.username)}</div>
+            ${message ? `<div class="add-contact-bio">Your note: “${escapeHtml(message)}”</div>` : ''}
+          </div>
+        </div>`;
+      if (input) input.value = '';
+      if (msgInput) { msgInput.value = ''; handleFriendRequestMessageInput(); }
+      renderPeopleGrid(applyPeopleFilter());
     }
   } catch (err) {
-    console.error('Username lookup failed:', err);
-    if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">Lookup failed (${escapeHtml(err.code || err.message || 'error')}). Try again.</div>`;
+    console.error('Friend request failed:', err);
+    if (resultBox) resultBox.innerHTML = `<div class="add-contact-miss">Could not send the request (${escapeHtml(err?.code || err?.message || 'error')}). Try again.</div>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Add contact'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Friend Request'; }
   }
 }
 
-/** Add the verified username match to your contacts (real Firestore write). */
+/** Live 120-character counter under the "Personalize your request" box. */
+export function handleFriendRequestMessageInput() {
+  const ta = document.getElementById('friend-request-message');
+  const counter = document.getElementById('fr-char-count');
+  if (ta && counter) counter.textContent = String(120 - (ta.value || '').length);
+}
+
+/** Legacy alias — the People bar now sends friend requests. */
+export async function addContactByUsername() {
+  return sendFriendRequestByUsername();
+}
+
+/** Legacy confirm-card entry point — now also routes through the request flow. */
 export async function addFoundContact() {
-  const peer = state.foundContactCandidate;
-  if (!peer) return;
-  try {
-    await addContact(state.userProfile, peer);
-    state.foundContactCandidate = null;
-    showToast(`${peer.displayName} is now in your contacts — you can chat instantly.`, 'success', 4500);
-    const box = document.getElementById('add-contact-result');
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-    const input = document.getElementById('add-contact-username');
-    if (input) input.value = '';
-    // The live listener re-renders the grid; also refresh from cache at once.
-    renderPeopleGrid(applyPeopleFilter());
-  } catch (err) {
-    console.error('Add contact failed:', err);
-    showToast(err?.message === 'You are already your own contact.' ? err.message
-      : (err?.code === 'permission-denied'
-        ? 'Your Firestore rules block contacts — run Connection Doctor.'
-        : 'Could not add this contact. Please try again.'), 'error');
-    if (err?.code === 'permission-denied') handlePermissionError('contacts add');
-  }
+  return sendFriendRequestByUsername();
 }
 
 /** Remove a contact from the People grid. */
@@ -2595,16 +2849,19 @@ function renderPeopleGrid(contactsList) {
     container.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1; padding: 60px 0;">
         <div class="empty-state-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-        <h3 class="empty-state-title">${searching ? 'No contacts match your search' : 'Your contact list is empty'}</h3>
+        <h3 class="empty-state-title">${searching ? 'No contacts match your search' : 'No friends yet'}</h3>
         <p class="empty-state-desc">${searching
           ? 'No contact matches that name or username.'
-          : 'Add people by their exact username in the bar above — then chat with them instantly, no requests needed.'}</p>
+          : 'Send a friend request by exact username in the bar above — chat unlocks once they accept.'}</p>
       </div>
     `;
     return;
   }
 
+  const pendingSet = state.pendingFriendUids instanceof Set ? state.pendingFriendUids : new Set();
+
   container.innerHTML = list.map(p => {
+    const isPending = pendingSet.has(p.uid);
     return `
       <div class="person-card">
         <div class="person-header" onclick="window.HubbleNest.openUserCardModal('${p.uid}')" title="View profile">
@@ -2612,15 +2869,15 @@ function renderPeopleGrid(contactsList) {
             <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
           </div>
           <div style="flex: 1; min-width: 0;">
-            <div class="person-name">${escapeHtml(p.displayName)}</div>
+            <div class="person-name">${escapeHtml(p.displayName)}${isPending ? '<span class="pending-chip">⏳ Pending</span>' : ''}</div>
             <div class="person-handle">@${escapeHtml(p.username || '')}</div>
           </div>
         </div>
         ${p.bio ? `<div class="person-bio">${escapeHtml(p.bio)}</div>` : ''}
         <div class="person-footer">
-          <span style="font-size: 0.8rem; color: var(--text-muted);">Contact</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">${isPending ? 'Waiting for acceptance' : 'Friend'}</span>
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${p.uid}')" title="Open your private chat with ${escapeHtml(p.displayName)}">
+            <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.chatWithPerson('${p.uid}')" title="${isPending ? 'Chat unlocks once your request is accepted' : `Open your private chat with ${escapeHtml(p.displayName)}`}" ${isPending ? 'style="opacity: 0.75;"' : ''}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
             </button>
             <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
@@ -2666,16 +2923,17 @@ export async function openMemberProfilePage(userId) {
   state.selectedUserCard = peerData;
   const isMe = userId === state.currentUser?.uid;
 
-  // Check relationship & existing request status
+  let statusBadgeHtml = '';
+  let actionsHtml = '';
+
+  // Relationship status FIRST — the friend-request gate outranks contacts.
   let rel = null;
   if (!isMe) {
     rel = await getChatRelationship(state.currentUser?.uid, userId);
   }
+  const relConnected = rel && (rel.data?.status === 'accepted' || rel.direction === 'connected');
 
-  let statusBadgeHtml = '';
-  let actionsHtml = '';
-
-  // Contact relationship drives the primary actions (contacts chat instantly).
+  // Contact relationship (legacy pairs may predate the friend-request gate).
   const contactFlag = !isMe ? await isContact(state.currentUser?.uid, userId) : false;
 
   if (isMe) {
@@ -2685,25 +2943,18 @@ export async function openMemberProfilePage(userId) {
         Edit My Profile & Settings
       </button>
     `;
-  } else if (contactFlag) {
-    statusBadgeHtml = `<div class="user-card-status-badge status-badge-connected">✓ In your contacts</div>`;
+  } else if (relConnected) {
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-connected">✓ Connected — chat unlocked</div>`;
     actionsHtml = `
       <button class="btn btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${userId}')">
         Open Private Chat
       </button>
-      <button class="btn btn-secondary" onclick="window.HubbleNest.removeContactFromProfile('${userId}')">
+      ${contactFlag ? `<button class="btn btn-secondary" onclick="window.HubbleNest.removeContactFromProfile('${userId}')">
         Remove from contacts
-      </button>
-    `;
-  } else if (rel && (rel.data?.status === 'accepted' || rel.direction === 'connected')) {
-    statusBadgeHtml = `<div class="user-card-status-badge status-badge-connected">✓ Connected in Private Chat</div>`;
-    actionsHtml = `
-      <button class="btn btn-primary" onclick="window.HubbleNest.openDirectChatWithPeer('${userId}')">
-        Open Private Chat
-      </button>
+      </button>` : ''}
     `;
   } else if (rel && rel.data?.status === 'pending' && rel.direction === 'sent') {
-    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">⏳ Chat Request Pending</div>`;
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">⏳ Friend Request Pending</div>`;
     actionsHtml = `
       <button class="btn btn-secondary" disabled style="opacity: 0.8; cursor: default;">
         Request Pending
@@ -2713,8 +2964,9 @@ export async function openMemberProfilePage(userId) {
       </button>
     `;
   } else if (rel && rel.data?.status === 'pending' && rel.direction === 'received') {
-    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">✉ ${escapeHtml(peerData.displayName)} wants to chat with you</div>`;
+    statusBadgeHtml = `<div class="user-card-status-badge status-badge-pending">✉ ${escapeHtml(peerData.displayName)} wants to be your friend</div>`;
     actionsHtml = `
+      ${rel.data.message ? `<div class="user-card-request-msg">“${escapeHtml(rel.data.message)}”</div>` : ''}
       <button class="btn btn-primary" onclick="window.HubbleNest.handleAcceptRequest('${rel.data.id}')">
         Accept Request
       </button>
@@ -2725,16 +2977,24 @@ export async function openMemberProfilePage(userId) {
   } else if (rel && rel.data?.status === 'declined') {
     statusBadgeHtml = `<div class="user-card-status-badge status-badge-declined">Request Declined</div>`;
     actionsHtml = `
-      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">This member is not accepting chat requests right now.</p>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">This member is not accepting friend requests right now.</p>
     `;
   } else {
+    // No relationship yet — even contacts with an exact username must be
+    // accepted before chat unlocks (the friend-request gate).
+    statusBadgeHtml = contactFlag
+      ? `<div class="user-card-status-badge status-badge-pending">In your contacts — send a friend request to unlock chat</div>`
+      : '';
     actionsHtml = `
       <button class="btn btn-primary" id="btn-request-to-chat" onclick="window.HubbleNest.handleSendChatRequest('${userId}')">
-        ✉ Request to Chat
+        ✉ Send Friend Request
       </button>
+      ${contactFlag ? `<button class="btn btn-secondary" onclick="window.HubbleNest.removeContactFromProfile('${userId}')">
+        Remove from contacts
+      </button>` : `
       <button class="btn btn-secondary" onclick="window.HubbleNest.addContactFromProfile('${userId}')">
         + Add to contacts
-      </button>
+      </button>`}
     `;
   }
 
@@ -2778,13 +3038,14 @@ export async function handleSendChatRequest(targetUserId) {
 
   try {
     const peerData = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
-    await sendChatRequest(state.userProfile, peerData);
+    await addContact(state.userProfile, peerData).catch(() => {});
+    await sendChatRequest(state.userProfile, peerData, '');
     // Refresh the modal view to show pending state
     await openUserCardModal(targetUserId);
   } catch (err) {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '✉ Request to Chat';
+      btn.textContent = '✉ Send Friend Request';
     }
   }
 }
@@ -2792,6 +3053,10 @@ export async function handleSendChatRequest(targetUserId) {
 export async function handleAcceptRequest(requestId) {
   try {
     const res = await acceptChatRequest(requestId, state.userProfile);
+    // The acceptor keeps the sender on their People page too.
+    if (res && res.peer) {
+      await addContact(state.userProfile, res.peer).catch(() => {});
+    }
     closeModal('modal-user-card');
     if (res && res.conversation) {
       openDirectMessagesView();
@@ -2823,20 +3088,8 @@ export async function cancelSentRequest(requestId, targetUserId) {
 }
 
 export async function addContactFromProfile(targetUserId) {
-  try {
-    const peer = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
-    if (!peer) { showToast('Could not load this member.', 'error'); return; }
-    await addContact(state.userProfile, peer);
-    showToast(`${peer.displayName} is now in your contacts.`, 'success');
-    await openUserCardModal(targetUserId);
-  } catch (err) {
-    if (err?.message !== 'You are already your own contact.') {
-      console.error('Add contact failed:', err);
-      showToast(err?.code === 'permission-denied'
-        ? 'Your Firestore rules block contacts — run Connection Doctor.'
-        : 'Could not add this contact.', 'error');
-    }
-  }
+  // Contacts no longer bypass the gate — adding is now a friend request.
+  await handleSendChatRequest(targetUserId);
 }
 
 export async function removeContactFromProfile(targetUserId) {
@@ -2860,14 +3113,15 @@ export async function openDirectChatWithPeer(peerUserId) {
 }
 
 /**
- * One-tap "Chat" from the People directory cards.
+ * One-tap "Chat" from the People cards, search results and profiles.
  *
- * Respects the privacy-first request flow but removes every dead end:
- *  - already connected            → open the chat instantly
- *  - THEY sent you a request      → accept it and open the chat
- *  - YOUR request is pending      → clear explanation, no duplicate send
- *  - they declined within 24 h    → say so, no spam
- *  - no relationship yet          → send the chat request right away
+ * FRIEND-REQUEST GATE — acceptance is required before ANY private chat, even
+ * when the exact username is known or the member is in your contacts:
+ *  - an accepted request / existing conversation → open the chat instantly
+ *  - THEY sent you a request                     → accept it and open the chat
+ *  - YOUR request is pending                     → clear explanation, no duplicates
+ *  - they declined within 24 h                   → say so, no spam
+ *  - no relationship yet                         → send a friend request right away
  */
 export async function chatWithPerson(targetUserId) {
   if (!state.currentUser) { showToast('Sign in first.', 'info'); return; }
@@ -2877,12 +3131,6 @@ export async function chatWithPerson(targetUserId) {
   }
 
   try {
-    // CONTACTS CHAT INSTANTLY — no request, no acceptance, no dead ends.
-    if (await isContact(state.currentUser.uid, targetUserId)) {
-      await openDirectChatWithPeer(targetUserId);
-      return;
-    }
-
     const rel = await getChatRelationship(state.currentUser.uid, targetUserId);
     const status = rel?.data?.status;
 
@@ -2895,11 +3143,12 @@ export async function chatWithPerson(targetUserId) {
       if (rel.direction === 'received') {
         const res = await acceptChatRequest(rel.data.id, state.userProfile);
         if (res && res.conversation) {
+          if (res.peer) await addContact(state.userProfile, res.peer).catch(() => {});
           openDirectMessagesView();
           setTimeout(() => selectConversation(res.conversation.id, res.peer.uid), 250);
         }
       } else {
-        showToast('Your chat request is still pending — you can chat once they accept.', 'info', 4500);
+        showToast('Your friend request is still pending — you can chat once they accept.', 'info', 4500);
       }
       return;
     }
@@ -2907,21 +3156,29 @@ export async function chatWithPerson(targetUserId) {
     if (rel && status === 'declined') {
       const updatedSeconds = rel.data.updatedAt?.seconds || 0;
       if (Math.floor(Date.now() / 1000) - updatedSeconds < 86400) {
-        showToast('This member is not accepting chat requests right now.', 'info');
+        showToast('This member is not accepting friend requests right now.', 'info');
         return;
       }
     }
 
     const peerData = state.selectedUserCard || await fetchPublicUserCard(targetUserId);
     if (!peerData) { showToast('Could not load this member.', 'error'); return; }
-    const sent = await sendChatRequest(state.userProfile, peerData);
+
+    // Keep the sender's People page aware of the pending relationship.
+    await addContact(state.userProfile, peerData).catch(() => {});
+
+    const sent = await sendChatRequest(
+      state.userProfile,
+      peerData,
+      'Hi! I would like to add you as a friend.'
+    );
     if (sent) {
-      showToast(`Chat request sent — you will chat with ${peerData.displayName || 'them'} once they accept.`, 'success', 4500);
+      showToast(`Friend request sent — you can chat with ${peerData.displayName || 'them'} once they accept.`, 'success', 4500);
     }
   } catch (err) {
-    console.error('Chat request from People card failed:', err);
+    console.error('Friend request from People card failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Your Firestore rules block chat requests — run Connection Doctor.'
+      ? 'Your Firestore rules block friend requests — run Connection Doctor.'
       : 'Could not start this chat. Please try again.', 'error');
     if (err?.code === 'permission-denied') handlePermissionError('people chat button');
   }
@@ -3027,9 +3284,10 @@ function renderDirectRequests() {
           </div>
           <div class="direct-request-info">
             <div class="direct-request-name">${escapeHtml(req.senderName)}</div>
-            <div class="direct-request-handle">@${escapeHtml(req.senderUsername)}</div>
+            <div class="direct-request-handle">@${escapeHtml(req.senderUsername || 'member')}</div>
           </div>
         </div>
+        ${req.message ? `<div class="direct-request-msg">“${escapeHtml(req.message)}”</div>` : ''}
         <div class="direct-request-actions">
           <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.handleAcceptRequest('${req.id}')">
             Accept
@@ -4056,10 +4314,11 @@ export function openProfilePage() {
   document.getElementById('nav-profile')?.classList.add('active');
 
   if (!state.userProfile) return;
-  // Push notification one-time setup card (status + saved values)
-  initPushSettingsUI().catch(() => {});
-  // AI Game Builder one-time setup card (Gemini key status)
-  initAiSettingsUI().catch(() => {});
+  // Push + AI config cards are ADMIN-ONLY — non-admins never load them.
+  if (state.isAdmin) {
+    initPushSettingsUI().catch(() => {});
+    initAiSettingsUI().catch(() => {});
+  }
   const nameInput = document.getElementById('page-profile-name');
   const handleInput = document.getElementById('page-profile-handle');
   const bioInput = document.getElementById('page-profile-bio');
@@ -4124,21 +4383,60 @@ export async function handleProfilePhotoUploadPage(file) {
 }
 
 /* ==========================================================================
-   17. GLOBAL SEARCH
+   17. GLOBAL SEARCH — pages, spaces, people
    ========================================================================== */
+
+/**
+ * Every navigable in-app page. The global search bar matches these by name
+ * or keywords and jumps straight there — plus spaces and people below.
+ */
+const APP_PAGES = [
+  { key: 'home',        label: 'Home',                desc: 'Dashboard, welcome card & community feed', keywords: 'home dashboard welcome feed composer post', go: () => loadDashboard() },
+  { key: 'spaces',      label: 'My Spaces',           desc: 'All Spaces you belong to',                 keywords: 'spaces my groups list categories', go: () => openMySpacesPage() },
+  { key: 'people',      label: 'People',              desc: 'Friends & friend requests',                keywords: 'people contacts friends request add username', go: () => openPeopleView() },
+  { key: 'messages',    label: 'Private Messages',    desc: 'Chats & incoming friend requests',         keywords: 'messages chat direct dm inbox requests', go: () => openDirectMessagesView() },
+  { key: 'arcade',      label: 'Arcade — Play Games', desc: 'Play, like and rate community games',      keywords: 'arcade games play fun scores leaderboard gaming', go: () => openArcadeView() },
+  { key: 'create-game', label: 'Create a Game',       desc: 'Arcade game editor (code, AI or link)',    keywords: 'create game editor build new game ai link', go: () => { openArcadeView(); openGameEditor(null); } },
+  { key: 'create-space',label: 'Create a Space',      desc: 'Start your own community',                 keywords: 'create new space group build community', go: () => openCreateSpacePage() },
+  { key: 'join',        label: 'Join a Space',        desc: 'Enter a Space code or scan a QR invite',   keywords: 'join code invite qr enter space', go: () => openJoinSpacePage() },
+  { key: 'direct-share',label: 'Direct Share',        desc: 'Hand off files with a 6-letter code',      keywords: 'direct share files transfer handoff qr code', go: () => openDirectShareViewWrapper() },
+  { key: 'profile',     label: 'Profile & Settings',  desc: 'Your account, photo, bio & security',      keywords: 'profile settings account avatar bio theme', go: () => openProfilePage() }
+];
+
+function findPageByKey(key) {
+  return APP_PAGES.find(p => p.key === key) || null;
+}
 
 export async function handleSearchInput(term) {
   const resultsContainer = document.getElementById('global-search-results');
   if (!resultsContainer) return;
 
   if (!term || term.trim().length < 2) {
-    resultsContainer.innerHTML = `<div style="padding: 16px; color: var(--text-muted); text-align: center;">Type at least 2 characters to search...</div>`;
+    resultsContainer.innerHTML = `<div style="padding: 16px; color: var(--text-muted); text-align: center;">Type at least 2 characters to search pages, spaces and people...</div>`;
     return;
   }
+
+  const clean = term.trim().toLowerCase();
+
+  // 1. PAGES — instant, local, always available.
+  const pageHits = APP_PAGES.filter(p =>
+    p.label.toLowerCase().includes(clean) || p.keywords.includes(clean) || p.desc.toLowerCase().includes(clean)
+  );
 
   const results = await executeGlobalSearch(term, state.currentUser?.uid);
 
   let html = '';
+  if (pageHits.length > 0) {
+    html += `<div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); padding: 8px 12px; font-weight: 600;">Pages</div>`;
+    html += pageHits.map(p => `
+      <div class="menu-item" onclick="window.HubbleNest.handleSelectSearchResult('page', '${p.key}')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+        <span>${escapeHtml(p.label)}</span>
+        <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">${escapeHtml(p.desc)}</span>
+      </div>
+    `).join('');
+  }
+
   if (results.spaces.length > 0) {
     html += `<div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); padding: 8px 12px; font-weight: 600;">Spaces</div>`;
     html += results.spaces.map(s => `
@@ -4158,10 +4456,405 @@ export async function handleSearchInput(term) {
   }
 
   if (!html) {
-    html = `<div style="padding: 16px; color: var(--text-muted); text-align: center;">No matches found.</div>`;
+    html = `<div style="padding: 16px; color: var(--text-muted); text-align: center;">No pages, spaces or people match “${escapeHtml(term.trim())}”.</div>`;
   }
 
   resultsContainer.innerHTML = html;
+}
+
+/* ==========================================================================
+   18. ADMIN CONSOLE — platform creator only (danielgiobari644@gmail.com)
+   Ban / suspend members, ban / suspend / feature Spaces, remove any member
+   from any Space, delete any post (see community.js) and send notifications
+   to one member or to everyone. Every action is a REAL Firestore write that
+   the security rules gate behind the admin's auth email.
+   ========================================================================== */
+
+export function openAdminPage() {
+  if (!state.isAdmin) {
+    showToast('The Admin Console is only available to the HubbleNest creator.', 'warning');
+    return;
+  }
+  state.currentView = 'admin';
+  unsubscribeFromChat();
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-admin')?.classList.add('active-view');
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('nav-admin')?.classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+export function adminToggleNotifMode(mode) {
+  const row = document.getElementById('admin-notif-target-row');
+  if (row) row.style.display = mode === 'one' ? 'block' : 'none';
+}
+
+async function adminNotifyUser(uid, title, body) {
+  await addDoc(collection(db, 'notifications'), {
+    userId: uid,
+    type: 'admin_message',
+    title: title || 'Message from HubbleNest',
+    body: body || '',
+    fromAdmin: true,
+    adminName: state.userProfile?.displayName || 'HubbleNest Admin',
+    isRead: false,
+    createdAt: serverTimestamp()
+  });
+  sendPushToUser(uid, { title: title || 'Message from HubbleNest', body: body || '', tag: 'admin_message' }).catch(() => {});
+}
+
+export async function adminSendNotification() {
+  if (!state.isAdmin) return;
+  const modeEl = document.querySelector('input[name="admin-notif-mode"]:checked');
+  const mode = modeEl?.value || 'one';
+  const titleInput = document.getElementById('admin-notif-title');
+  const bodyInput = document.getElementById('admin-notif-body');
+  const usernameInput = document.getElementById('admin-notif-username');
+  const btn = document.getElementById('admin-notif-send-btn');
+  const statusEl = document.getElementById('admin-notif-status');
+  const title = (titleInput?.value || '').trim();
+  const body = (bodyInput?.value || '').trim();
+
+  if (!title || !body) {
+    showToast('Write both a title and a message first.', 'warning');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  if (statusEl) statusEl.textContent = '';
+
+  try {
+    if (mode === 'one') {
+      const raw = (usernameInput?.value || '').trim();
+      if (!raw) { showToast('Enter the member\'s username.', 'warning'); return; }
+      const peer = await findUserByUsername(raw);
+      if (!peer) { showToast(`No member has the username @${raw.replace(/^@/, '')}.`, 'error'); return; }
+      await adminNotifyUser(peer.uid, title, body);
+      if (statusEl) statusEl.textContent = `✓ Delivered to @${peer.username}.`;
+      showToast(`Notification sent to @${peer.username}.`, 'success');
+    } else {
+      const snap = await getDocs(query(collection(db, 'users'), limit(500)));
+      const targets = [];
+      snap.forEach(d => {
+        const u = d.data();
+        if (u.uid && u.uid !== state.currentUser.uid) targets.push(u.uid);
+      });
+      let sent = 0;
+      for (const uid of targets) {
+        await adminNotifyUser(uid, title, body).catch(() => {});
+        sent++;
+        if (statusEl && sent % 10 === 0) statusEl.textContent = `Delivering… ${sent}/${targets.length}`;
+      }
+      if (statusEl) statusEl.textContent = `✓ Delivered to ${sent} member${sent === 1 ? '' : 's'}.`;
+      showToast(`Notification broadcast to ${sent} member${sent === 1 ? '' : 's'}.`, 'success');
+    }
+    if (titleInput) titleInput.value = '';
+    if (bodyInput) bodyInput.value = '';
+  } catch (err) {
+    console.error('Admin notification failed:', err);
+    if (statusEl) statusEl.textContent = `✕ Failed (${escapeHtml(err?.code || 'error')}).`;
+    showToast('Could not send the notification.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send notification'; }
+  }
+}
+
+function adminUserStatusHtml(u) {
+  if (u.banned === true) return `<span class="admin-status-badge admin-status-banned">Banned${u.banReason ? ` — ${escapeHtml(u.banReason)}` : ''}</span>`;
+  const until = Number(u.suspendedUntilMs || 0);
+  if (until > Date.now()) {
+    return `<span class="admin-status-badge admin-status-suspended">Suspended until ${new Date(until).toLocaleString()}</span>`;
+  }
+  return `<span class="admin-status-badge admin-status-ok">Active</span>`;
+}
+
+export async function adminSearchUser() {
+  if (!state.isAdmin) return;
+  const input = document.getElementById('admin-user-lookup');
+  const box = document.getElementById('admin-user-result');
+  const raw = (input?.value || '').trim();
+  if (!raw) { showToast('Enter a username to moderate.', 'info'); return; }
+  if (box) box.innerHTML = `<div class="add-contact-searching">Looking up @${escapeHtml(raw.replace(/^@/, ''))}…</div>`;
+  try {
+    const peer = await findUserByUsername(raw);
+    if (!peer) {
+      if (box) box.innerHTML = `<div class="add-contact-miss">No member has the username <b>@${escapeHtml(raw.replace(/^@/, ''))}</b>.</div>`;
+      return;
+    }
+    // Full profile for moderation state (public card fields + flags).
+    const snap = await getDoc(doc(db, 'users', peer.uid));
+    const full = snap.exists() ? snap.data() : peer;
+    state.adminTargetUser = { ...peer, ...full, uid: peer.uid };
+    if (box) {
+      box.innerHTML = `
+        <div class="add-contact-card">
+          <img src="${getAvatarUrl(full.photoURL, full.displayName)}" alt="" class="add-contact-avatar" />
+          <div class="add-contact-info">
+            <div class="add-contact-name">${escapeHtml(full.displayName || peer.displayName)}</div>
+            <div class="add-contact-handle">@${escapeHtml(peer.username)}</div>
+            ${adminUserStatusHtml(full)}
+          </div>
+        </div>
+        <div class="admin-action-row">
+          <button type="button" class="btn btn-sm btn-primary" onclick="window.HubbleNest.adminViewMember('${peer.uid}')">View profile</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminUnbanUser()" ${full.banned !== true && Number(full.suspendedUntilMs || 0) <= Date.now() ? 'disabled' : ''}>Lift ban / suspension</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminSuspendUser()">Suspend 7 days</button>
+          <button type="button" class="btn btn-sm btn-ghost admin-danger-btn" onclick="window.HubbleNest.adminBanUser()">Ban permanently</button>
+        </div>`;
+    }
+  } catch (err) {
+    console.error('Admin user lookup failed:', err);
+    if (box) box.innerHTML = `<div class="add-contact-miss">Lookup failed (${escapeHtml(err?.code || 'error')}).</div>`;
+  }
+}
+
+export function adminViewMember(uid) {
+  openMemberProfilePage(uid);
+}
+
+export async function adminBanUser() {
+  if (!state.isAdmin || !state.adminTargetUser) return;
+  const u = state.adminTargetUser;
+  const reason = window.prompt(`Ban @${u.username} permanently? Type the reason shown to them:`, 'Violation of the HubbleNest community guidelines');
+  if (reason === null) return;
+  try {
+    await updateDoc(doc(db, 'users', u.uid), {
+      banned: true,
+      banReason: reason || '',
+      bannedAt: Date.now()
+    });
+    await adminNotifyUser(u.uid, 'Account banned', `Your HubbleNest account was banned by the admin. ${reason || ''}`).catch(() => {});
+    showToast(`@${u.username} is banned.`, 'success');
+    adminSearchUser();
+  } catch (err) {
+    console.error('Ban failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not ban this member.', 'error', 6000);
+  }
+}
+
+export async function adminSuspendUser() {
+  if (!state.isAdmin || !state.adminTargetUser) return;
+  const u = state.adminTargetUser;
+  const days = Number(window.prompt(`Suspend @${u.username} for how many days?`, '7'));
+  if (!days || days <= 0) return;
+  try {
+    await updateDoc(doc(db, 'users', u.uid), {
+      suspendedUntilMs: Date.now() + days * 24 * 60 * 60 * 1000,
+      suspensionReason: ''
+    });
+    await adminNotifyUser(u.uid, 'Account suspended', `Your HubbleNest account was suspended for ${days} day${days === 1 ? '' : 's'}.`).catch(() => {});
+    showToast(`@${u.username} is suspended for ${days} day${days === 1 ? '' : 's'}.`, 'success');
+    adminSearchUser();
+  } catch (err) {
+    console.error('Suspend failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not suspend this member.', 'error', 6000);
+  }
+}
+
+export async function adminUnbanUser() {
+  if (!state.isAdmin || !state.adminTargetUser) return;
+  const u = state.adminTargetUser;
+  try {
+    await updateDoc(doc(db, 'users', u.uid), {
+      banned: false,
+      suspendedUntilMs: 0,
+      banReason: '',
+      suspensionReason: ''
+    });
+    showToast(`@${u.username} can sign in again.`, 'success');
+    adminSearchUser();
+  } catch (err) {
+    console.error('Unban failed:', err);
+    showToast('Could not lift the moderation flags.', 'error');
+  }
+}
+
+export async function adminSearchSpace() {
+  if (!state.isAdmin) return;
+  const input = document.getElementById('admin-space-lookup');
+  const box = document.getElementById('admin-space-result');
+  const raw = (input?.value || '').trim();
+  if (!raw) { showToast('Enter a Space code (e.g. HN-7K4P92).', 'info'); return; }
+  if (box) box.innerHTML = `<div class="add-contact-searching">Looking up ${escapeHtml(raw.toUpperCase())}…</div>`;
+  try {
+    const sp = await findSpaceByCode(raw);
+    if (!sp) {
+      if (box) box.innerHTML = `<div class="add-contact-miss">No Space has the code <b>${escapeHtml(raw.toUpperCase())}</b>.</div>`;
+      return;
+    }
+    state.adminTargetSpace = sp;
+    const mod = spaceModerationState(sp);
+    if (box) {
+      box.innerHTML = `
+        <div class="add-contact-card">
+          <div class="add-contact-info">
+            <div class="add-contact-name">${escapeHtml(sp.name || 'Space')} ${sp.featured ? '<span class="featured-pill">★ Featured</span>' : ''}</div>
+            <div class="add-contact-handle">${escapeHtml(sp.code || '')} · ${sp.memberCount || 1} members</div>
+            ${mod ? `<span class="admin-status-badge admin-status-banned">${escapeHtml(mod)}</span>` : ''}
+          </div>
+        </div>
+        <div class="admin-action-row">
+          <button type="button" class="btn btn-sm btn-primary" onclick="window.HubbleNest.adminOpenSpace('${sp.id}')">Open Space</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminLoadSpaceMembers()">Members</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminFeatureSpace()" ${sp.featured ? 'disabled' : ''}>★ Feature</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminUnfeatureSpace()" ${!sp.featured ? 'disabled' : ''}>Unfeature</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminSuspendSpace()">Suspend 7 days</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.HubbleNest.adminUnbanSpace()" ${!mod ? 'disabled' : ''}>Restore</button>
+          <button type="button" class="btn btn-sm btn-ghost admin-danger-btn" onclick="window.HubbleNest.adminBanSpace()" ${sp.status === 'banned' ? 'disabled' : ''}>Ban Space</button>
+        </div>
+        <div id="admin-space-members-box" style="margin-top: 12px;"></div>`;
+    }
+  } catch (err) {
+    console.error('Admin space lookup failed:', err);
+    if (box) box.innerHTML = `<div class="add-contact-miss">Lookup failed (${escapeHtml(err?.code || 'error')}).</div>`;
+  }
+}
+
+function adminRefreshSpaceCard() {
+  const input = document.getElementById('admin-space-lookup');
+  if (input && input.value.trim()) adminSearchSpace();
+}
+
+export async function adminFeatureSpace() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  try {
+    await updateDoc(doc(db, 'spaces', state.adminTargetSpace.id), {
+      featured: true,
+      featuredAt: Date.now(),
+      featuredBy: state.currentUser.uid
+    });
+    showToast(`"${state.adminTargetSpace.name}" is now featured on every dashboard.`, 'success');
+    adminRefreshSpaceCard();
+  } catch (err) {
+    console.error('Feature failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not feature this Space.', 'error', 6000);
+  }
+}
+
+export async function adminUnfeatureSpace() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  try {
+    await updateDoc(doc(db, 'spaces', state.adminTargetSpace.id), { featured: false });
+    showToast('Space removed from the featured slot.', 'info');
+    adminRefreshSpaceCard();
+  } catch (err) {
+    console.error('Unfeature failed:', err);
+    showToast('Could not unfeature this Space.', 'error');
+  }
+}
+
+export async function adminBanSpace() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  const sp = state.adminTargetSpace;
+  if (!window.confirm(`Ban "${sp.name}"? Members lose access until you restore it.`)) return;
+  try {
+    await updateDoc(doc(db, 'spaces', sp.id), { status: 'banned' });
+    showToast(`"${sp.name}" is banned.`, 'success');
+    adminRefreshSpaceCard();
+  } catch (err) {
+    console.error('Space ban failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not ban this Space.', 'error', 6000);
+  }
+}
+
+export async function adminSuspendSpace() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  const sp = state.adminTargetSpace;
+  const days = Number(window.prompt(`Suspend "${sp.name}" for how many days?`, '7'));
+  if (!days || days <= 0) return;
+  try {
+    await updateDoc(doc(db, 'spaces', sp.id), {
+      status: 'suspended',
+      suspendedUntilMs: Date.now() + days * 24 * 60 * 60 * 1000
+    });
+    showToast(`"${sp.name}" is suspended for ${days} day${days === 1 ? '' : 's'}.`, 'success');
+    adminRefreshSpaceCard();
+  } catch (err) {
+    console.error('Space suspend failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not suspend this Space.', 'error', 6000);
+  }
+}
+
+export async function adminUnbanSpace() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  try {
+    await updateDoc(doc(db, 'spaces', state.adminTargetSpace.id), {
+      status: 'active',
+      suspendedUntilMs: 0
+    });
+    showToast('Space restored.', 'success');
+    adminRefreshSpaceCard();
+  } catch (err) {
+    console.error('Space restore failed:', err);
+    showToast('Could not restore this Space.', 'error');
+  }
+}
+
+export function adminOpenSpace(spaceId) {
+  closeModalForAdmin();
+  openSpace(spaceId);
+}
+
+function closeModalForAdmin() { /* navigation away from the console is enough */ }
+
+export async function adminLoadSpaceMembers() {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  const box = document.getElementById('admin-space-members-box');
+  if (!box) return;
+  box.innerHTML = `<div class="add-contact-searching">Loading members…</div>`;
+  try {
+    const snap = await getDocs(collection(db, 'spaces', state.adminTargetSpace.id, 'members'));
+    const members = [];
+    snap.forEach(d => members.push({ id: d.id, ...d.data() }));
+    state.adminSpaceMembers = members;
+    if (members.length === 0) {
+      box.innerHTML = `<div class="add-contact-miss">This Space has no members.</div>`;
+      return;
+    }
+    box.innerHTML = members.map(m => `
+      <div class="member-card">
+        <div class="msg-avatar" style="width: 34px; height: 34px;">
+          <img src="${getAvatarUrl(m.photoURL, m.displayName)}" class="avatar-img" alt="" loading="lazy" decoding="async"/>
+        </div>
+        <div class="member-info">
+          <div class="member-name">${escapeHtml(m.displayName || 'Member')} ${m.role === 'admin' ? '<span class="admin-pill">admin</span>' : ''}</div>
+          <div class="member-role">@${escapeHtml(m.username || 'member')}</div>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost admin-danger-btn" onclick="window.HubbleNest.adminRemoveMemberFromSpace('${m.id}')" title="Remove from Space">Remove</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('Admin members load failed:', err);
+    box.innerHTML = `<div class="add-contact-miss">Could not load members (${escapeHtml(err?.code || 'error')}).</div>`;
+  }
+}
+
+export async function adminRemoveMemberFromSpace(memberUid) {
+  if (!state.isAdmin || !state.adminTargetSpace) return;
+  const m = state.adminSpaceMembers.find(x => x.id === memberUid);
+  if (!m) return;
+  if (!window.confirm(`Remove ${m.displayName || 'this member'} from "${state.adminTargetSpace.name}"?`)) return;
+  try {
+    await removeSpaceMember(state.adminTargetSpace.id, memberUid);
+    showToast(`${m.displayName || 'Member'} removed from the Space.`, 'info');
+    state.adminSpaceMembers = state.adminSpaceMembers.filter(x => x.id !== memberUid);
+    adminLoadSpaceMembers();
+  } catch (err) {
+    console.error('Admin member removal failed:', err);
+    showToast(err?.code === 'permission-denied'
+      ? 'The rules refuse this write — publish the new firestore.rules first.'
+      : 'Could not remove this member.', 'error', 6000);
+  }
 }
 
 /* ==========================================================================
@@ -4346,6 +5039,9 @@ Object.assign(window.HubbleNest, {
   gameToggleLike,
   handleGameCoverUpload,
   removeGameCover,
+  onGameLinkInput,
+  clearGameLink,
+  openLinkGameExternally,
 
   // Secure in-app file store (Firestore fallback for blocked Cloudinary families)
   downloadStoredFile,
@@ -4422,7 +5118,11 @@ Object.assign(window.HubbleNest, {
   handleSearchInput,
   handleSelectSearchResult: (type, id) => {
     closeModal('modal-global-search');
-    if (type === 'space') openSpace(id);
+    if (type === 'page') {
+      const page = findPageByKey(id);
+      if (page) page.go();
+    }
+    else if (type === 'space') openSpace(id);
     else if (type === 'user') openMemberProfilePage(id);
   },
 
@@ -4493,10 +5193,33 @@ Object.assign(window.HubbleNest, {
 
   // Contacts (People page & member profiles)
   addContactByUsername,
+  sendFriendRequestByUsername,
+  handleFriendRequestMessageInput,
   addFoundContact,
   removeContactFromList,
   addContactFromProfile,
   removeContactFromProfile,
+  leaveActiveSpace,
+
+  // Admin console — platform creator only
+  openAdminPage,
+  adminToggleNotifMode,
+  adminSendNotification,
+  adminSearchUser,
+  adminViewMember,
+  adminBanUser,
+  adminSuspendUser,
+  adminUnbanUser,
+  adminSearchSpace,
+  adminOpenSpace,
+  adminLoadSpaceMembers,
+  adminRemoveMemberFromSpace,
+  adminFeatureSpace,
+  adminUnfeatureSpace,
+  adminBanSpace,
+  adminSuspendSpace,
+  adminUnbanSpace,
+  dismissBannedGate,
 
   // Arcade: multi-file projects + fullscreen player
   toggleGameFullscreen,

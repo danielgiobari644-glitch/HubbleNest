@@ -76,6 +76,11 @@ let context = {
   connections: new Set() // uids this user is connected to (requests / DMs)
 };
 
+// True when the viewer is the platform admin — they see a delete control on
+// every post and may delete any of them (the rules allow isAdmin deletes).
+let feedAdminViewer = false;
+export function setFeedAdmin(isAdmin) { feedAdminViewer = !!isAdmin; }
+
 const SEEN_KEY = 'hn-seen-posts';
 const ENGAGED_KEY = 'hn-engaged-authors';
 const MAX_RENDER = 40;
@@ -349,6 +354,7 @@ function renderAttachments(p) {
 
 function renderPostCard(p, idx) {
   const isOwn = p.authorId === context.currentUserId;
+  const canDelete = isOwn || feedAdminViewer;
   const liked = Array.isArray(p.likedBy) && context.currentUserId && p.likedBy.includes(context.currentUserId);
   const likeCount = Array.isArray(p.likedBy) ? p.likedBy.length : (p.likeCount || 0);
   const commentCount = p.commentCount || 0;
@@ -373,8 +379,8 @@ function renderPostCard(p, idx) {
           <span class="feed-post-name">${escapeHtml(p.authorName || 'Member')}</span>
           <span class="feed-post-sub">${escapeHtml(p.authorUsername ? '@' + p.authorUsername : '')} · ${formatTimeAgo(p.createdAt)}</span>
         </div>
-        ${isOwn ? `
-          <button type="button" class="feed-post-delete" title="Delete this post" aria-label="Delete post" onclick="window.HubbleNest.feedDeletePost('${safeId}')">
+        ${canDelete ? `
+          <button type="button" class="feed-post-delete" title="${isOwn ? 'Delete this post' : 'Admin — delete this post'}" aria-label="Delete post" onclick="window.HubbleNest.feedDeletePost('${safeId}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
           </button>` : ''}
       </header>
@@ -693,8 +699,12 @@ export async function feedDeleteComment(postId, commentId) {
 
 export async function feedDeletePost(postId) {
   const post = postsCache.find(p => p.id === postId);
-  if (!post || post.authorId !== context.currentUserId) return;
-  if (!window.confirm('Delete this post permanently? Likes and comments go with it.')) return;
+  if (!post) return;
+  const isOwn = post.authorId === context.currentUserId;
+  if (!isOwn && !feedAdminViewer) return; // authors delete their own; admin deletes any
+  if (!window.confirm(isOwn
+    ? 'Delete this post permanently? Likes and comments go with it.'
+    : 'ADMIN: delete this member\'s post permanently? Likes and comments go with it.')) return;
   try {
     await deleteDoc(doc(db, 'feedPosts', postId));
     // Remove the public mirror too, if the post was published to the web.

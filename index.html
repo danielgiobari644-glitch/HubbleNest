@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=20) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=24) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=20" />
+  <link rel="modulepreload" href="./app.js?v=24" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=20" />
+  <link rel="stylesheet" href="./style.css?v=24" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -109,7 +109,15 @@
         'setGameEntry', 'setGameEntryByIndex', 'removeGameFileByIndex',
         'clearGameFiles', 'rtWrap',
         'downloadStoredFile', 'openStoredFile',
-        'handleGameCoverUpload', 'removeGameCover'
+        'handleGameCoverUpload', 'removeGameCover',
+        'sendFriendRequestByUsername', 'handleFriendRequestMessageInput',
+        'leaveActiveSpace', 'openAdminPage',
+        'adminToggleNotifMode', 'adminSendNotification',
+        'adminSearchUser', 'adminBanUser', 'adminSuspendUser', 'adminUnbanUser',
+        'adminSearchSpace', 'adminLoadSpaceMembers', 'adminRemoveMemberFromSpace',
+        'adminFeatureSpace', 'adminUnfeatureSpace',
+        'adminBanSpace', 'adminSuspendSpace', 'adminUnbanSpace', 'adminOpenSpace',
+        'dismissBannedGate'
       ];
       for (var i = 0; i < HANDLERS.length; i++) {
         (function (name) {
@@ -992,6 +1000,10 @@
             <span class="hn-ic" data-hn-icon="send"></span>
             <span>Direct Share</span>
           </div>
+          <div class="nav-link admin-nav-link" id="nav-admin" style="display: none;" onclick="window.HubbleNest.openAdminPage()" title="Admin Console — creator only">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+            <span>Admin</span>
+          </div>
           <div class="nav-link" id="sidebar-nav-notifications" onclick="window.HubbleNest.toggleNotificationsMenu()" title="Notifications">
             <span class="hn-ic" data-hn-icon="bell"></span>
             <span>Notifications</span>
@@ -1046,6 +1058,17 @@
                     Explore Spaces
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
                   </button>
+                  <!-- Play / Create games — always visible (especially on mobile) -->
+                  <div class="welcome-games-row" aria-label="Games shortcuts">
+                    <button type="button" class="welcome-game-btn welcome-game-play" onclick="window.HubbleNest.openArcadeView()">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="4.5"/><path d="M6.5 12h4"/><path d="M8.5 10v4"/><circle cx="15.6" cy="13.4" r=".6"/><circle cx="17.9" cy="10.9" r=".6"/></svg>
+                      <span>Play Games</span>
+                    </button>
+                    <button type="button" class="welcome-game-btn welcome-game-create" onclick="window.HubbleNest.openGameEditor(null)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                      <span>Create Game</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1180,7 +1203,7 @@
                     <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="4.5"/><path d="M6.5 12h4"/><path d="M8.5 10v4"/><circle cx="15.6" cy="13.4" r=".6"/><circle cx="17.9" cy="10.9" r=".6"/></svg></span>
                     <span>My Spaces</span>
                   </button>
-                  <button type="button" class="rail-quick-btn" onclick="window.HubbleNest.runFirestoreDoctor()">
+                  <button type="button" class="rail-quick-btn" id="rail-get-help-quick" style="display: none;" onclick="window.HubbleNest.runFirestoreDoctor()">
                     <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18v-3a8 8 0 0 1 16 0v3"/><rect x="2.5" y="14" width="4.5" height="6.5" rx="2"/><rect x="17" y="14" width="4.5" height="6.5" rx="2"/></svg></span>
                     <span>Get Help</span>
                   </button>
@@ -1285,9 +1308,14 @@
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
                   <span>Settings</span>
                 </button>
+                <button class="btn btn-ghost btn-sm space-leave-btn" id="space-leave-btn" onclick="window.HubbleNest.leaveActiveSpace()" title="Leave this Space">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                  <span>Leave</span>
+                </button>
               </div>
             </div>
           </div>
+          <div class="space-moderation-banner" id="space-moderation-banner" style="display: none;"></div>
 
           <!-- Space Navigation Tabs -->
           <nav class="space-nav">
@@ -1554,8 +1582,8 @@
               <span class="dash-hero-icon" aria-hidden="true">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </span>
-              <h1 class="dash-title">Contacts</h1>
-              <p class="dash-subtitle">Only people you added are listed here. Contacts chat instantly — no requests.</p>
+              <h1 class="dash-title">People</h1>
+              <p class="dash-subtitle">Send friend requests by username — private chat unlocks once they accept.</p>
             </div>
             <span class="dash-hero-deco" aria-hidden="true"></span>
             <div class="dash-actions grow">
@@ -1569,8 +1597,12 @@
           <div class="add-contact-bar">
             <div class="add-contact-row">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="add-contact-glyph"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
-              <input type="text" id="add-contact-username" class="form-input" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Add someone by their exact username — e.g. stellar_sam" onkeydown="if(event.key==='Enter') window.HubbleNest.addContactByUsername()" />
-              <button type="button" class="btn btn-primary" id="add-contact-btn" onclick="window.HubbleNest.addContactByUsername()">Add contact</button>
+              <input type="text" id="add-contact-username" class="form-input" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Enter a username" onkeydown="if(event.key==='Enter') window.HubbleNest.sendFriendRequestByUsername()" />
+              <button type="button" class="btn btn-primary" id="add-contact-btn" onclick="window.HubbleNest.sendFriendRequestByUsername()">Send Friend Request</button>
+            </div>
+            <div class="friend-request-message-wrap">
+              <textarea id="friend-request-message" class="form-textarea friend-request-textarea" rows="2" maxlength="120" placeholder="Personalize your request (Optional)" oninput="window.HubbleNest.handleFriendRequestMessageInput()"></textarea>
+              <div class="fr-char-count" id="fr-char-count">120</div>
             </div>
             <div class="add-contact-result" id="add-contact-result" style="display: none;"></div>
           </div>
@@ -1892,6 +1924,7 @@
                   <button type="button" class="feed-tab" id="game-tab-css" onclick="window.HubbleNest.setCodePane('css')">CSS</button>
                   <button type="button" class="feed-tab" id="game-tab-js" onclick="window.HubbleNest.setCodePane('js')">JavaScript</button>
                   <button type="button" class="feed-tab" id="game-tab-files" onclick="window.HubbleNest.setCodePane('files')">Files <span class="game-files-badge" id="game-files-badge"></span></button>
+                  <button type="button" class="feed-tab" id="game-tab-link" onclick="window.HubbleNest.setCodePane('link')" title="Add a game from a playable web URL"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Game link</button>
                 </div>
                 <div id="game-pane-html" class="game-code-pane"><textarea id="game-code-html" class="game-code-textarea" spellcheck="false" placeholder="Your game's HTML body…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
                 <div id="game-pane-css" class="game-code-pane" style="display:none;"><textarea id="game-code-css" class="game-code-textarea" spellcheck="false" placeholder="Your game's styles…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
@@ -1908,8 +1941,19 @@
                   <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
                   <div class="game-files-list" id="game-files-list"></div>
                 </div>
+                <div id="game-pane-link" class="game-code-pane" style="display:none;">
+                  <div class="game-link-pane">
+                    <label class="game-link-label" for="game-link-input">Playable game URL</label>
+                    <div class="game-link-row">
+                      <input type="url" id="game-link-input" class="game-link-input" spellcheck="false" autocomplete="off" placeholder="https://your-game.itch.io/neon-drift" oninput="window.HubbleNest.onGameLinkInput()" />
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameLink()">Clear</button>
+                    </div>
+                    <div class="game-link-status" id="game-link-status"></div>
+                    <div class="game-link-hint">Paste the direct link to an HTML5 web game and publish — members play it live right here in the app, inside the same protected player. Play counts, likes, ratings, comments and personal-best tracking all work exactly like built-in games. Great sources: itch.io game pages, your own hosted game, any public HTML5 game URL. If a site refuses to be framed, an “Open in new tab” shortcut appears during play. When a link is set it takes priority over the code tabs.</div>
+                  </div>
+                </div>
                 <div class="game-editor-footnote">
-                  Games run in a locked sandbox: no network, no cookies, no access to HubbleNest or other pages. Pressing keys is fine — the sandbox is not.
+                  Games run in a locked sandbox: no network, no cookies, no access to HubbleNest or other pages. Pressing keys is fine — the sandbox is not. Games added through a link play live from their own site in the same player — they need an https:// URL and a site that allows embedding.
                   <span id="game-editor-status"></span>
                 </div>
               </div>
@@ -1951,6 +1995,14 @@
                   <div class="arc-hud" id="arc-hud" hidden aria-live="off"></div>
                   <div class="game-player-frame-wrap">
                     <iframe id="player-frame" title="Playable game" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe>
+                  </div>
+                  <!-- Live-play note bar: only visible while an external link game runs -->
+                  <div class="player-link-note" id="player-link-note" hidden>
+                    <span class="pln-dot" aria-hidden="true"></span>
+                    <span id="player-link-note-text" class="pln-text">Playing live</span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openLinkGameExternally()">Open in new tab
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-left:4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>
+                    </button>
                   </div>
                   <div class="arc-pause-overlay" id="arc-pause-overlay" hidden>
                     <div class="arc-pause-card"><span class="arc-pause-icon" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></span><b>Paused</b><span>The game is frozen — press Resume to keep playing.</span></div>
@@ -2334,8 +2386,8 @@
                 </div>
               </div>
 
-              <div class="settings-divider">
-                <h4 class="settings-subtitle">Off-App Push Notifications — one-time setup</h4>
+              <div class="settings-divider admin-config-section" id="admin-push-config" style="display: none;">
+                <h4 class="settings-subtitle">Off-App Push Notifications — admin setup</h4>
                 <p class="settings-hint">
                   Saved here once, stored in this project's Firestore, and reused by every future deploy —
                   you never paste keys into files again. Get the Web Push key from Firebase Console →
@@ -2364,8 +2416,8 @@
                 </div>
               </div>
 
-              <div class="settings-divider">
-                <h4 class="settings-subtitle">AI Game Builder — one-time setup (optional)</h4>
+              <div class="settings-divider admin-config-section" id="admin-ai-config" style="display: none;">
+                <h4 class="settings-subtitle">AI Game Builder — admin setup (optional)</h4>
                 <p class="settings-hint">
                   Paste a free Google AI Studio key to have Gemini write full custom games from prompts
                   (aistudio.google.com → Get API key). Stored once in this project's Firestore like the push
@@ -2391,6 +2443,76 @@
               <div class="form-footer">
                 <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.loadDashboard()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="window.HubbleNest.handleSaveProfileFromPage()">Save Profile Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: ADMIN CONSOLE (platform creator only) -->
+        <div class="view-section" id="view-admin">
+          <div class="page-container">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <button type="button" class="back-link-btn" onclick="window.HubbleNest.loadDashboard()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  <span>Back to Home</span>
+                </button>
+                <h1>Admin Console</h1>
+                <p>Platform moderation — ban, suspend, feature, notify. Visible only to the HubbleNest creator.</p>
+              </div>
+              <span class="admin-shield-pill" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+                Creator
+              </span>
+            </div>
+
+            <div class="admin-grid">
+              <!-- Send notifications -->
+              <div class="settings-card admin-card">
+                <h4 class="settings-subtitle">Send a notification</h4>
+                <p class="settings-hint">Deliver an in-app alert (with a background push) to one particular member or to every member.</p>
+                <div class="admin-mode-row" role="radiogroup" aria-label="Notification audience">
+                  <label class="admin-mode-option"><input type="radio" name="admin-notif-mode" value="one" checked onchange="window.HubbleNest.adminToggleNotifMode('one')" /> One member</label>
+                  <label class="admin-mode-option"><input type="radio" name="admin-notif-mode" value="all" onchange="window.HubbleNest.adminToggleNotifMode('all')" /> All members</label>
+                </div>
+                <div class="form-group" id="admin-notif-target-row">
+                  <label class="form-label" for="admin-notif-username">Member username</label>
+                  <input type="text" id="admin-notif-username" class="form-input" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="e.g. gee" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="admin-notif-title">Title</label>
+                  <input type="text" id="admin-notif-title" class="form-input" maxlength="80" placeholder="e.g. Scheduled maintenance tonight" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="admin-notif-body">Message</label>
+                  <textarea id="admin-notif-body" class="form-textarea" rows="3" maxlength="300" placeholder="Write the announcement…"></textarea>
+                </div>
+                <div class="push-config-actions">
+                  <button type="button" class="btn btn-primary" id="admin-notif-send-btn" onclick="window.HubbleNest.adminSendNotification()">Send notification</button>
+                </div>
+                <div class="admin-op-status" id="admin-notif-status"></div>
+              </div>
+
+              <!-- People moderation -->
+              <div class="settings-card admin-card">
+                <h4 class="settings-subtitle">Moderate a member</h4>
+                <p class="settings-hint">Ban permanently or suspend for a window — the member is locked out everywhere the moment the flag lands.</p>
+                <div class="add-contact-row">
+                  <input type="text" id="admin-user-lookup" class="form-input" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Username to moderate — e.g. stellar_sam" onkeydown="if(event.key==='Enter') window.HubbleNest.adminSearchUser()" />
+                  <button type="button" class="btn btn-primary" onclick="window.HubbleNest.adminSearchUser()">Load member</button>
+                </div>
+                <div class="admin-result-box" id="admin-user-result"></div>
+              </div>
+
+              <!-- Space moderation -->
+              <div class="settings-card admin-card">
+                <h4 class="settings-subtitle">Moderate a Space</h4>
+                <p class="settings-hint">Feature a Space on every dashboard, ban or suspend it, remove any member, or open it directly.</p>
+                <div class="add-contact-row">
+                  <input type="text" id="admin-space-lookup" class="form-input" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Space code — e.g. HN-7K4P92" onkeydown="if(event.key==='Enter') window.HubbleNest.adminSearchSpace()" />
+                  <button type="button" class="btn btn-primary" onclick="window.HubbleNest.adminSearchSpace()">Load Space</button>
+                </div>
+                <div class="admin-result-box" id="admin-space-result"></div>
               </div>
             </div>
           </div>
@@ -2748,7 +2870,7 @@
       <div class="modal-header search-header">
         <div class="search-field">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="text" id="global-search-input" class="form-input bare" placeholder="Search spaces, members, files..." oninput="window.HubbleNest.handleSearchInput(this.value)" />
+          <input type="text" id="global-search-input" class="form-input bare" placeholder="Search pages, spaces, people..." oninput="window.HubbleNest.handleSearchInput(this.value)" />
         </div>
       </div>
       <div class="modal-body search-body">
@@ -2825,8 +2947,20 @@
     </div>
   </div>
 
+  <!-- Platform-admin overlay: shown when the signed-in account is banned or suspended -->
+  <div id="banned-gate" style="display: none;" role="alertdialog" aria-modal="true" aria-labelledby="banned-gate-title">
+    <div class="banned-gate-card">
+      <div class="banned-gate-icon" aria-hidden="true">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+      </div>
+      <h1 class="banned-gate-title" id="banned-gate-title">Account suspended</h1>
+      <p class="banned-gate-body" id="banned-gate-body"></p>
+      <button type="button" class="btn btn-primary" onclick="window.HubbleNest.dismissBannedGate()">Sign out</button>
+    </div>
+  </div>
+
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=20"></script>
+  <script type="module" src="./app.js?v=24"></script>
 
 </body>
 </html>

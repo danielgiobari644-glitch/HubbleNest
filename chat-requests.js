@@ -70,9 +70,15 @@ export async function getChatRelationship(currentUserId, targetUserId) {
 }
 
 /**
- * Send a Private Chat Request
+ * Send a Private Chat (Friend) Request
+ *
+ * @param {object} senderProfile  signed-in sender {uid, displayName, username, photoURL, bio}
+ * @param {object} receiverUser   target member's public card
+ * @param {string} [message]      optional personalized note (max 120 chars) —
+ *                                shown to the recipient together with the
+ *                                sender's name and @username.
  */
-export async function sendChatRequest(senderProfile, receiverUser) {
+export async function sendChatRequest(senderProfile, receiverUser, message = '') {
   if (!senderProfile || !receiverUser) {
     showToast('Unable to send request. Please try again.', 'error');
     return null;
@@ -110,6 +116,7 @@ export async function sendChatRequest(senderProfile, receiverUser) {
   }
 
   const requestId = getChatRequestId(senderProfile.uid, receiverUser.uid);
+  const cleanMessage = String(message || '').trim().slice(0, 120);
   const requestData = {
     id: requestId,
     senderId: senderProfile.uid,
@@ -122,6 +129,7 @@ export async function sendChatRequest(senderProfile, receiverUser) {
     receiverUsername: receiverUser.username || 'user',
     receiverPhoto: receiverUser.photoURL || '',
     receiverBio: receiverUser.bio || '',
+    message: cleanMessage,
     status: 'pending',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -130,14 +138,17 @@ export async function sendChatRequest(senderProfile, receiverUser) {
   try {
     await setDoc(doc(db, 'chatRequests', requestId), requestData);
 
-    // Notify the recipient
+    // Notify the recipient — the personalized note is part of the alert.
     await addDoc(collection(db, 'notifications'), {
       userId: receiverUser.uid,
       type: 'chat_request',
-      title: 'New Chat Request',
-      body: `${senderProfile.displayName || 'A member'} wants to chat with you.`,
+      title: 'New Friend Request',
+      body: cleanMessage
+        ? `@${senderProfile.username || 'member'} wants to be your friend: “${cleanMessage}”`
+        : `@${senderProfile.username || 'member'} (${senderProfile.displayName || 'A member'}) wants to be your friend.`,
       senderId: senderProfile.uid,
       senderName: senderProfile.displayName || 'Member',
+      senderUsername: senderProfile.username || 'user',
       senderPhoto: senderProfile.photoURL || '',
       requestId: requestId,
       isRead: false,
@@ -146,16 +157,18 @@ export async function sendChatRequest(senderProfile, receiverUser) {
 
     // Deliver a real background push (works even when HubbleNest is closed)
     sendPushToUser(receiverUser.uid, {
-      title: 'New Chat Request',
-      body: `${senderProfile.displayName || 'A member'} wants to chat with you.`,
+      title: 'New Friend Request',
+      body: cleanMessage
+        ? `@${senderProfile.username || 'member'}: “${cleanMessage}”`
+        : `@${senderProfile.username || 'member'} wants to be your friend.`,
       tag: 'chat_request'
     }).catch(() => {});
 
-    showToast(`Chat request sent to ${receiverUser.displayName || 'member'}.`, 'success');
+    showToast(`Friend request sent to @${receiverUser.username || 'member'}.`, 'success');
     return requestData;
   } catch (err) {
     console.error('Failed to send chat request:', err);
-    showToast('Could not send chat request. Please try again.', 'error');
+    showToast('Could not send the friend request. Please try again.', 'error');
     throw err;
   }
 }
@@ -193,8 +206,8 @@ export async function acceptChatRequest(requestId, currentUserProfile) {
       await addDoc(collection(db, 'notifications'), {
         userId: reqData.senderId,
         type: 'chat_request_accepted',
-        title: 'Chat Request Accepted',
-        body: `${currentUserProfile.displayName || 'A member'} accepted your chat request. You can now chat!`,
+        title: 'Friend Request Accepted',
+        body: `${currentUserProfile.displayName || 'A member'} (@${currentUserProfile.username || 'user'}) accepted your friend request. You can now chat!`,
         senderId: currentUserProfile.uid,
         senderName: currentUserProfile.displayName || 'Member',
         senderPhoto: currentUserProfile.photoURL || '',
@@ -205,8 +218,8 @@ export async function acceptChatRequest(requestId, currentUserProfile) {
 
       // Deliver a real background push (works even when HubbleNest is closed)
       sendPushToUser(reqData.senderId, {
-        title: 'Chat Request Accepted',
-        body: `${currentUserProfile.displayName || 'A member'} accepted your chat request. You can now chat!`,
+        title: 'Friend Request Accepted',
+        body: `${currentUserProfile.displayName || 'A member'} accepted your friend request. You can now chat!`,
         tag: 'chat_request_accepted'
       }).catch(() => {});
     } catch (notifErr) {

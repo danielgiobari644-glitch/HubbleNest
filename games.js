@@ -66,6 +66,7 @@ let playerGameId = null;
 let previewTimer = null;
 let editorCoverUrl = null;   // Cloudinary URL of the game's cover image (own games can change it anytime)
 let editorCoverBusy = false; // upload in flight — save waits for it
+let editorLinkUrl = '';      // https URL when editing/restoring a LINK game
 
 /* Multi-file game project (path → text content). Any code language: the
    files are stored verbatim in Firestore and served to the sandbox as
@@ -78,6 +79,21 @@ const MAX_TOTAL_BYTES = 600 * 1024; // well under Firestore's 1 MiB doc cap
 const MAX_FILE_COUNT = 150;
 const MAX_SINGLE_FILE_BYTES = 300 * 1024;
 const DRAFT_KEY = 'hn-arcade-draft';
+
+/* ========================================================================
+   Games created through LINKS
+   ==========================
+   A game whose source lives on another site (itch.io, a personal server,
+   any public HTML5 game URL) is stored as kind:'link' + linkUrl + linkHost
+   and plays LIVE inside the app's player. The framed page is cross-origin,
+   so the browser's same-origin policy already walls it off from HubbleNest
+   DOM/cookies/Firestore — the sandbox tokens only tune what the GAME may
+   do on its own origin (storage, popups, fullscreen, gamepad).
+   ======================================================================== */
+const LINK_SANDBOX = 'allow-scripts allow-same-origin allow-pointer-lock allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox';
+const LINK_ALLOW = 'autoplay; fullscreen; gamepad *';
+const CODE_SANDBOX = 'allow-scripts allow-pointer-lock allow-modals';
+let playingLinkUrl = null; // set while an external game is open ("Open in new tab")
 
 const els = () => ({
   grid: document.getElementById('arcade-grid'),
@@ -307,6 +323,7 @@ export function arcGameCard(g) {
         ${thumbInner}
         ${g.category ? `<span class="arc-card-cat">${escapeHtml(g.category)}</span>` : ''}
         ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
+        ${g.kind === 'link' && g.linkUrl ? `<span class="game-thumb-host" title="Plays live from ${escapeHtml(g.linkHost || 'its own site')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>${escapeHtml(g.linkHost || 'link')}</span>` : ''}
         <span class="arc-card-play-overlay">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> Play
         </span>
@@ -343,7 +360,7 @@ export function renderArcadeGrid() {
     if (arcadeFilter === 'mine' && g.authorId !== uid) return false;
     if (arcadeCategory && g.category !== arcadeCategory) return false;
     if (term) {
-      const hay = `${g.title || ''} ${g.description || ''} ${g.authorName || ''} ${g.category || ''}`.toLowerCase();
+      const hay = `${g.title || ''} ${g.description || ''} ${g.authorName || ''} ${g.category || ''} ${g.linkHost || ''}`.toLowerCase();
       if (!hay.includes(term)) return false;
     }
     return true;
@@ -367,8 +384,9 @@ export function renderArcadeGrid() {
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/><circle cx="15.5" cy="13" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg>
         </div>
         <h3 class="feed-empty-title">${filtered ? 'No games match' : (arcadeFilter === 'mine' ? 'You haven\'t published a game yet' : 'The Arcade is empty — be the first')}</h3>
-        <p class="feed-empty-desc">${filtered ? 'Try a different search or category — or create the game you were looking for.' : 'Write a game with HTML, CSS and JavaScript in the built-in editor. It takes about two minutes with the starter template, and anyone on HubbleNest can play it instantly.'}</p>
+        <p class="feed-empty-desc">${filtered ? 'Try a different search or category — or create the game you were looking for.' : 'Write a game with HTML, CSS and JavaScript in the built-in editor, paste a link to any web game, or let AI build one from a prompt — anyone on HubbleNest can play it instantly.'}</p>
         <button type="button" class="btn btn-primary" onclick="window.HubbleNest.openGameEditor(null)">Create your first game</button>
+        <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.openGameEditor(null, { focusPane: 'link' })">Add a game by link</button>
       </div>`;
     return;
   }
@@ -380,7 +398,7 @@ export function renderArcadeGrid() {
    Editor
    ======================================================================== */
 
-export function openGameEditor(gameId) {
+export function openGameEditor(gameId, opts = {}) {
   const { browse, editor, player } = els();
   if (!browse || !editor) return;
 
@@ -415,10 +433,12 @@ export function openGameEditor(gameId) {
     editorFiles = (game.files && typeof game.files === 'object') ? { ...game.files } : {};
     editorEntry = game.entryPath || currentEntryCandidate();
     editorCoverUrl = game.coverImage || null;
+    editorLinkUrl = (game.kind === 'link' && game.linkUrl) ? game.linkUrl : '';
     renderGameCoverPreview();
   } else {
     editorFiles = {};
     editorEntry = null;
+    editorLinkUrl = '';
     if (editorHeading) editorHeading.textContent = 'Create a game';
     // Restore an unsaved local draft if present (real autosave, real restore)
     let draft = null;
@@ -434,7 +454,8 @@ export function openGameEditor(gameId) {
       editorFiles = (draft.files && typeof draft.files === 'object') ? { ...draft.files } : {};
       editorEntry = draft.entryPath || currentEntryCandidate();
       editorCoverUrl = draft.coverImage || null;
-      if (draft.title || draft.html || Object.keys(editorFiles).length) {
+      editorLinkUrl = draft.linkUrl || '';
+      if (draft.title || draft.html || draft.linkUrl || Object.keys(editorFiles).length) {
         showToast('Restored your unsaved draft from this device.', 'info');
       }
     } else {
@@ -450,9 +471,17 @@ export function openGameEditor(gameId) {
     renderGameCoverPreview();
   }
 
+  // Link box: existing link games restore their URL (drafts did above).
+  const linkInput = document.getElementById('game-link-input');
+  if (linkInput) linkInput.value = editorLinkUrl || '';
+  updateGameLinkStatus();
+
   if (saveBtn) saveBtn.textContent = game ? 'Save changes' : 'Publish to Arcade';
   renderGameFilesPane();
-  setCodePane('html');
+  // Link games open on their Link tab; the hero's "Add a game by link" CTA
+  // lands there too (opts.focusPane === 'link').
+  const focusLink = opts?.focusPane === 'link' || (game && game.kind === 'link' && game.linkUrl);
+  setCodePane(focusLink ? 'link' : 'html');
   scheduleGamePreview();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -526,10 +555,92 @@ export function removeGameCover() {
 }
 
 export function setCodePane(pane) {
-  ['html', 'css', 'js', 'files'].forEach(p => {
+  ['html', 'css', 'js', 'files', 'link'].forEach(p => {
     document.getElementById(`game-tab-${p}`)?.classList.toggle('feed-tab-active', p === pane);
     document.getElementById(`game-pane-${p}`)?.style.setProperty('display', p === pane ? 'block' : 'none');
   });
+}
+
+/* ------------------------------------------------------------------
+   Games from links — validate + normalize the pasted URL
+   ------------------------------------------------------------------ */
+
+/** Read the link box: { ok, url, host } · { ok:false, empty:true } · { ok:false, error }. */
+function readGameLink() {
+  const raw = (document.getElementById('game-link-input')?.value || '').trim();
+  if (!raw) return { ok: false, empty: true, error: '' };
+  let u;
+  try { u = new URL(raw); } catch (e) { return { ok: false, error: 'not-a-url' }; }
+  if (u.protocol !== 'https:') return { ok: false, error: 'not-https' };
+  if (!u.hostname.includes('.')) return { ok: false, error: 'not-a-url' };
+  return { ok: true, url: u.href, host: u.hostname.replace(/^www\./, '') };
+}
+
+/** Inline validation line under the link box (+ auto-title from the URL slug). */
+function updateGameLinkStatus() {
+  const el = document.getElementById('game-link-status');
+  const link = readGameLink();
+  if (!el) return link;
+  if (link.empty) { el.textContent = ''; el.className = 'game-link-status'; return link; }
+  if (link.ok) {
+    el.innerHTML = `✓ Will play live from <b>${escapeHtml(link.host)}</b> inside the app.`;
+    el.className = 'game-link-status ok';
+    // While the title is still empty, suggest one from the URL slug —
+    // "neon-drift" becomes "Neon Drift". Deterministic, never invented.
+    const titleInput = document.getElementById('game-title-input');
+    if (titleInput && !titleInput.value.trim()) {
+      const slug = decodeURIComponent((link.url.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop() || ''));
+      const pretty = slug.replace(/[-_+.]+/g, ' ').trim().replace(/\s+/g, ' ');
+      const fromTitle = pretty ? pretty.replace(/\b\w/g, c => c.toUpperCase()) : link.host;
+      if (fromTitle) titleInput.value = fromTitle.slice(0, 80);
+    }
+  } else {
+    el.innerHTML = link.error === 'not-https'
+      ? '⚠ Only <b>https://</b> links can run inside the app — browsers block insecure frames.'
+      : '⚠ That does not look like a full URL — paste something like <b>https://your-game.itch.io/neon-drift</b>.';
+    el.className = 'game-link-status bad';
+  }
+  return link;
+}
+
+/** Editor input handler for the link box. */
+export function onGameLinkInput() {
+  updateGameLinkStatus();
+  scheduleGamePreview();
+}
+
+/** Clear the link box — the game falls back to its code/files (if any). */
+export function clearGameLink() {
+  const input = document.getElementById('game-link-input');
+  if (input) input.value = '';
+  const el = document.getElementById('game-link-status');
+  if (el) { el.textContent = 'Link cleared — this game will use its code/files again.'; el.className = 'game-link-status'; }
+  scheduleGamePreview();
+}
+
+/** "Open in new tab" on the live-play note bar (escape hatch for sites
+    that refuse to be framed — honest, never a fake blank frame). */
+export function openLinkGameExternally() {
+  if (!playingLinkUrl) return;
+  window.open(playingLinkUrl, '_blank', 'noopener');
+}
+
+/** Toolbar + note-bar adjustments while an external game is open. */
+function setPlayerLinkChrome(isLink, game) {
+  playingLinkUrl = isLink ? (game?.linkUrl || null) : null;
+  // Pause/Sound speak the internal game bridge over postMessage — an
+  // external site does not understand it, so hide them instead of
+  // pretending a random web game can be frozen from here.
+  document.getElementById('arc-tool-pause')?.toggleAttribute('hidden', isLink);
+  document.getElementById('arc-tool-sound')?.toggleAttribute('hidden', isLink);
+  const note = document.getElementById('player-link-note');
+  if (note) {
+    note.hidden = !isLink;
+    const txt = document.getElementById('player-link-note-text');
+    if (txt && isLink) {
+      txt.innerHTML = `Playing live from <b>${escapeHtml(game.linkHost || 'its own site')}</b> — if the frame stays blank, the site blocks embedding.`;
+    }
+  }
 }
 
 export function insertStarterGame() {
@@ -570,6 +681,7 @@ function saveEditorDraft() {
       files: editorFiles,
       entryPath: editorEntry,
       coverImage: editorCoverUrl,
+      linkUrl: document.getElementById('game-link-input')?.value || '',
       savedAt: Date.now()
     }));
   } catch (e) { /* quota — non-fatal */ }
@@ -578,7 +690,17 @@ function saveEditorDraft() {
 function renderGamePreview() {
   const frame = document.getElementById('game-preview-frame');
   if (!frame) return;
-  frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-modals');
+  const link = readGameLink();
+  if (link.ok) {
+    // The linked game plays live in the preview too — same frame the
+    // published game will use, with the same external sandbox.
+    frame.setAttribute('sandbox', LINK_SANDBOX);
+    frame.removeAttribute('srcdoc');
+    if (frame.src !== link.url) frame.src = link.url;
+    return;
+  }
+  frame.setAttribute('sandbox', CODE_SANDBOX);
+  frame.removeAttribute('src'); // a previous link preview must stop loading
   const entry = currentEntryCandidate();
   if (entry) {
     frame.srcdoc = buildSrcDocFromFiles(editorFiles, entry);
@@ -888,7 +1010,18 @@ export async function saveCurrentGame() {
   }
   const hasClassic = html.trim() || js.trim();
   const hasFiles = Object.keys(editorFiles).length > 0;
-  if (!hasClassic && !hasFiles) { showToast('Add at least some HTML or JavaScript — or upload your project files.', 'warning'); return; }
+  // A game link (Link tab) is a full third creation path: an https URL to a
+  // playable HTML5 web game. It wins over code/files at play time.
+  const link = readGameLink();
+  if (!link.ok && !link.empty) {
+    showToast(link.error === 'not-https'
+      ? 'Game links must start with https:// — browsers block insecure frames.'
+      : 'That game link is not a full URL — fix it or clear the Link tab.', 'warning');
+    setCodePane('link');
+    return;
+  }
+  const hasLink = link.ok;
+  if (!hasLink && !hasClassic && !hasFiles) { showToast('Add a game link, some HTML or JavaScript — or upload your project files.', 'warning'); return; }
   // Source-only projects (no HTML entry) are WELCOME: they are stored and
   // shared as readable source. The player shows the file tree and explains
   // that the browser cannot execute e.g. Python without a real runtime. 
@@ -915,7 +1048,12 @@ export async function saveCurrentGame() {
     entryPath: hasFiles ? entry : null,
     fileCount: hasFiles ? Object.keys(editorFiles).length : 0,
     languages: hasFiles ? detectLanguages(editorFiles) : [],
-    runnable: hasFiles ? !!entry : !!(html.trim() || js.trim()),
+    runnable: hasLink ? true : (hasFiles ? !!entry : !!(html.trim() || js.trim())),
+    // Link games: kind:'link' + the normalized URL + display host. Code games
+    // carry empty strings (stable doc shape — no field deletions needed).
+    kind: hasLink ? 'link' : '',
+    linkUrl: hasLink ? link.url : '',
+    linkHost: hasLink ? link.host : '',
     coverImage: editorCoverUrl || null,
     authorId: uid,
     authorName: me.displayName || 'Member',
@@ -1001,6 +1139,7 @@ export function openGamePlayer(gameId) {
   }
 
   playerGameId = gameId;
+  const isLink = game.kind === 'link' && !!game.linkUrl;
   const titleEl = document.getElementById('player-title');
   const metaEl = document.getElementById('player-meta');
   const frame = document.getElementById('player-frame');
@@ -1013,23 +1152,39 @@ export function openGamePlayer(gameId) {
     metaEl.innerHTML = `by <b>${escapeHtml(game.authorName || 'Member')}</b> · ${game.plays || 0} plays`;
   }
   if (frame) {
-    frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock allow-modals');
-    frame.setAttribute('allowfullscreen', 'true');
-    if (game.entryPath && game.files) {
-      frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
-    } else if (game.files && !game.entryPath) {
-      // SOURCE PROJECT (no HTML entry): honest state — show the file tree and
-      // say plainly that the browser cannot execute these languages.
-      frame.remove();
-      renderSourceProjectPanel(game);
+    if (isLink) {
+      // LIVE EXTERNAL PLAY — the game keeps running on its own host, framed
+      // in-app. Cross-origin isolation protects HubbleNest; the sandbox
+      // grants the game storage/popups/fullscreen on its OWN origin.
+      frame.setAttribute('sandbox', LINK_SANDBOX);
+      frame.setAttribute('allow', LINK_ALLOW);
+      frame.setAttribute('allowfullscreen', 'true');
+      frame.removeAttribute('srcdoc');
+      frame.src = game.linkUrl;
     } else {
-      frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+      frame.setAttribute('sandbox', CODE_SANDBOX);
+      frame.removeAttribute('allow');
+      frame.setAttribute('allowfullscreen', 'true');
+      if (game.entryPath && game.files) {
+        frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
+      } else if (game.files && !game.entryPath) {
+        // SOURCE PROJECT (no HTML entry): honest state — show the file tree and
+        // say plainly that the browser cannot execute these languages.
+        frame.remove();
+        renderSourceProjectPanel(game);
+      } else {
+        frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+      }
     }
   }
+  setPlayerLinkChrome(isLink, game);
   renderPlayerLike(game);
   if (metaEl && game.fileCount > 0) {
     const langs = (game.languages || []).map(l => `<span class="player-files-chip">${escapeHtml(l)}</span>`).join(' ');
     metaEl.innerHTML += ` · <span class="player-files-chip">${game.fileCount} project file${game.fileCount === 1 ? '' : 's'}</span> ${langs}`;
+  }
+  if (metaEl && isLink) {
+    metaEl.innerHTML += ` · <span class="player-live-chip" title="This game runs live from its own website inside the app"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-.5px;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> LIVE from ${escapeHtml(game.linkHost || 'the web')}</span>`;
   }
 
   // Arcade 2.0 gameplay shell: HUD/toolbar/info/progress/leaderboard/comments
@@ -1045,7 +1200,9 @@ export function restartCurrentGame() {
   const game = playerGameId ? gamesCache.find(g => g.id === playerGameId) : null;
   if (!game) return;
   const frame = document.getElementById('player-frame');
-  if (game.entryPath && game.files) {
+  if (game.kind === 'link' && game.linkUrl) {
+    frame.src = game.linkUrl; // re-assignment navigates the frame afresh
+  } else if (game.entryPath && game.files) {
     frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
   } else if (game.files && !game.entryPath) {
     return; // source-only project — nothing to restart
@@ -1102,7 +1259,15 @@ export function closeGamePlayer() {
   // End the play session and tear down gameplay panels FIRST (score submits
   // happen inside this hook — the frame is still alive here).
   window.HubbleNest?.onGameplayClose?.();
-  if (player) { player.style.display = 'none'; const f = document.getElementById('player-frame'); if (f) f.removeAttribute('srcdoc'); }
+  if (player) {
+    player.style.display = 'none';
+    const f = document.getElementById('player-frame');
+    if (f) {
+      f.removeAttribute('srcdoc');
+      f.src = 'about:blank'; // unload external games/audio for real
+    }
+  }
+  setPlayerLinkChrome(false, null);
   playerGameId = null;
   // After playing, Exit lands on the game's detail page when available.
   if (window.HubbleNest?.afterPlayerClose?.() === 'handled') return;
