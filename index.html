@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=24) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=26) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=24" />
+  <link rel="modulepreload" href="./app.js?v=26" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=24" />
+  <link rel="stylesheet" href="./style.css?v=26" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -94,7 +94,7 @@
         'closeGamePlayer', 'gameToggleLike', 'gameDelete',
         'openDirectShareView', 'setShareMode', 'createDirectShare', 'addFilesToShare',
         'copyShareLink', 'closeDirectShare', 'backToSharePicker', 'connectToShare',
-        'runFirestoreDoctor', 'retryActiveDirectChat', 'handleDirectComposerKey',
+        'retryActiveDirectChat', 'handleDirectComposerKey',
         'handleHomeComposerKey', 'chatWithPerson', 'loginWithEmail',
         'toggleComposerMenu', 'closeComposerMenu', 'composerMenuApply',
         'composerMenuPickImage', 'composerMenuPickFile',
@@ -112,6 +112,19 @@
         'handleGameCoverUpload', 'removeGameCover',
         'sendFriendRequestByUsername', 'handleFriendRequestMessageInput',
         'leaveActiveSpace', 'openAdminPage',
+        'openBotsView', 'openBotsMarketplace', 'openBotStudio', 'bstGo', 'setStudioMode',
+        'botsSetTab', 'botsSetCategory', 'botsHandleSearch', 'botsRetry', 'botsUseBot',
+        'botsCardMenu', 'botsShareBotById', 'toggleBotVisibility', 'deleteBotWithConfirm',
+        'botStudioMarkDirty', 'botStudioPickLogoTemplate', 'botStudioPickPreviewTemplate',
+        'botStudioUploadLogo', 'botStudioUploadPreview', 'botStudioRemoveLogo',
+        'botStudioRemovePreview', 'botStudioAddCustomCap', 'botStudioRemoveCustomCap',
+        'botStudioSave', 'botStudioCancelEdit', 'botStudioShare', 'botStudioTest',
+        'botLoadForEdit', 'openBotChat', 'botChatSend', 'botChatKey', 'botChatNew',
+        'botChatClear', 'botChatRetry', 'botChatUseSuggested', 'openBotProfile',
+        'botProfileRate', 'botProfileSubmitComment', 'botProfileLikeComment',
+        'botProfileEditComment', 'botProfileDeleteComment', 'botProfileReportComment',
+        'openGameWithAi',
+        'openHelpAssistant', 'closeHelpAssistant', 'toggleHelpAssistant',
         'adminToggleNotifMode', 'adminSendNotification',
         'adminSearchUser', 'adminBanUser', 'adminSuspendUser', 'adminUnbanUser',
         'adminSearchSpace', 'adminLoadSpaceMembers', 'adminRemoveMemberFromSpace',
@@ -996,6 +1009,10 @@
             <span class="hn-ic" data-hn-icon="game"></span>
             <span>Arcade</span>
           </div>
+          <div class="nav-link" id="nav-bots" onclick="window.HubbleNest.openBotsMarketplace()" title="Bots">
+            <span class="hn-ic" data-hn-icon="bot"></span>
+            <span>Bots</span>
+          </div>
           <div class="nav-link" id="nav-direct-share" onclick="window.HubbleNest.openDirectShareView()" title="Direct Share">
             <span class="hn-ic" data-hn-icon="send"></span>
             <span>Direct Share</span>
@@ -1067,6 +1084,10 @@
                     <button type="button" class="welcome-game-btn welcome-game-create" onclick="window.HubbleNest.openGameEditor(null)">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                       <span>Create Game</span>
+                    </button>
+                    <button type="button" class="welcome-game-btn welcome-game-ai" onclick="window.HubbleNest.openGameWithAi()" title="Describe a game — the AI builds it playable">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z"/></svg>
+                      <span>Create with AI</span>
                     </button>
                   </div>
                 </div>
@@ -1203,8 +1224,8 @@
                     <span class="rail-quick-icon tone-indigo"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="4.5"/><path d="M6.5 12h4"/><path d="M8.5 10v4"/><circle cx="15.6" cy="13.4" r=".6"/><circle cx="17.9" cy="10.9" r=".6"/></svg></span>
                     <span>My Spaces</span>
                   </button>
-                  <button type="button" class="rail-quick-btn" id="rail-get-help-quick" style="display: none;" onclick="window.HubbleNest.runFirestoreDoctor()">
-                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18v-3a8 8 0 0 1 16 0v3"/><rect x="2.5" y="14" width="4.5" height="6.5" rx="2"/><rect x="17" y="14" width="4.5" height="6.5" rx="2"/></svg></span>
+                  <button type="button" class="rail-quick-btn" id="rail-get-help-quick" style="display: inline-flex;" onclick="window.HubbleNest.openHelpAssistant()">
+                    <span class="rail-quick-icon tone-violet"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5.2"/><circle cx="12" cy="3.6" r="1.4"/><path d="M9.5 13.5v2M14.5 13.5v2"/></svg></span>
                     <span>Get Help</span>
                   </button>
                 </div>
@@ -1792,6 +1813,10 @@
                   <button type="button" class="arc-search-clear" id="arc-search-clear" onclick="window.HubbleNest.arcClearSearch()" aria-label="Clear search" style="display:none;">✕</button>
                 </div>
                 <div class="arc-topbar-actions">
+                  <button type="button" class="btn btn-ai arc-ai-btn" onclick="window.HubbleNest.openGameWithAi()" title="Describe a game — the AI builds it playable">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z"/></svg>
+                    Create with AI
+                  </button>
                   <button type="button" class="btn btn-primary btn-sm arc-create-btn" onclick="window.HubbleNest.openGameEditor(null)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px;"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                     Create Game
@@ -1855,7 +1880,10 @@
               </div>
               <div class="page-header-actions">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.insertStarterGame()">Insert starter game</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="game-ai-toggle" onclick="window.HubbleNest.toggleAiPanel()" title="Create a game from a text prompt">✨ Create with AI</button>
+                <button type="button" class="btn btn-ai btn-sm" id="game-ai-toggle" onclick="window.HubbleNest.toggleAiPanel()" title="Create a game from a text prompt">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z"/></svg>
+                  Create with AI
+                </button>
                 <button type="button" class="btn btn-primary btn-sm" id="game-save-btn" onclick="window.HubbleNest.saveCurrentGame()">Publish to Arcade</button>
               </div>
             </div>
@@ -2417,12 +2445,13 @@
               </div>
 
               <div class="settings-divider admin-config-section" id="admin-ai-config" style="display: none;">
-                <h4 class="settings-subtitle">AI Game Builder — admin setup (optional)</h4>
+                <h4 class="settings-subtitle">AI configuration — admin setup (optional)</h4>
                 <p class="settings-hint">
-                  Paste a free Google AI Studio key to have Gemini write full custom games from prompts
-                  (aistudio.google.com → Get API key). Stored once in this project's Firestore like the push
-                  config — it survives every redeploy. Without a key the Arcade still generates real playable
-                  games with its built-in game engine.
+                  Paste a free Google AI Studio key to switch on the platform AI — it writes full custom
+                  Arcade games from prompts AND powers every HubbleNest Bot conversation and the Get Help
+                  assistant (aistudio.google.com → Get API key). Stored once in this project's Firestore like
+                  the push config — it survives every redeploy. Without a key the Arcade still generates real
+                  playable games with its built-in game engine.
                 </p>
                 <div class="push-config-status" id="ai-config-status">
                   <div class="push-status-loading">Reading your AI configuration…</div>
@@ -2536,6 +2565,480 @@
             </div>
           </div>
         </div>
+
+        <!-- VIEW: BOTS MARKETPLACE (HubbleNest Bots) -->
+        <div class="view-section" id="view-bots">
+          <div class="bots-wrap">
+
+            <!-- Hero banner -->
+            <div class="bots-hero">
+              <img src="./bots-hero.svg" alt="" class="bots-hero-art" aria-hidden="true" />
+              <div class="bots-hero-copy">
+                <h1 class="bots-hero-title">HubbleNest <span class="bots-hero-grad">Bots</span></h1>
+                <p class="bots-hero-sub">Create, customise and share your own AI bots.</p>
+                <p class="bots-hero-note">Explore amazing bots from our community, rate, comment and use them.</p>
+                <div class="bots-hero-chips" aria-hidden="true">
+                  <span class="bots-chip">⚡ Create Your Bot</span>
+                  <span class="bots-chip">🧩 Tune Personality</span>
+                  <span class="bots-chip">🔒 Set Privacy</span>
+                  <span class="bots-chip">🚀 Share &amp; Grow</span>
+                </div>
+              </div>
+              <div class="bots-hero-actions">
+                <button type="button" class="bots-hero-cta" onclick="window.HubbleNest.openBotStudio('create')">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                  Create a Bot
+                </button>
+                <span class="bots-hero-tag">Bring your AI idea to life!</span>
+              </div>
+            </div>
+
+            <!-- Tabs + search + category -->
+            <div class="bots-toolbar">
+              <div class="bots-tabs" role="tablist" aria-label="Bot rankings">
+                <button type="button" class="bots-tab bots-tab-active" id="bots-tab-popular" onclick="window.HubbleNest.botsSetTab('popular')"><span class="bots-tab-ic">★</span> Popular</button>
+                <button type="button" class="bots-tab" id="bots-tab-trending" onclick="window.HubbleNest.botsSetTab('trending')"><span class="bots-tab-ic">🔥</span> Trending</button>
+                <button type="button" class="bots-tab" id="bots-tab-top" onclick="window.HubbleNest.botsSetTab('top')"><span class="bots-tab-ic">🏆</span> Top Rated</button>
+                <button type="button" class="bots-tab" id="bots-tab-latest" onclick="window.HubbleNest.botsSetTab('latest')"><span class="bots-tab-ic">🕐</span> Latest</button>
+                <button type="button" class="bots-tab" id="bots-tab-mine" onclick="window.HubbleNest.botsSetTab('mine')"><span class="bots-tab-ic">👤</span> My Bots</button>
+              </div>
+              <div class="bots-toolbar-right">
+                <div class="search-field bots-search-field">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input type="text" id="bots-search-input" class="form-input bare" placeholder="Search bots by name, topic or category..." oninput="window.HubbleNest.botsHandleSearch(this.value)" />
+                </div>
+                <select id="bots-category-select" class="arc-select bots-category-select" onchange="window.HubbleNest.botsSetCategory(this.value)" aria-label="Filter bots by category">
+                  <option value="All">All Bots</option>
+                  <option value="Education">Education</option>
+                  <option value="Productivity">Productivity</option>
+                  <option value="Writing">Writing</option>
+                  <option value="Creativity">Creativity</option>
+                  <option value="Business">Business</option>
+                  <option value="Coding">Coding</option>
+                  <option value="Bible &amp; Spiritual Study">Bible &amp; Spiritual Study</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Games">Games</option>
+                  <option value="Personal Assistance">Personal Assistance</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            </div>
+            <p class="bots-rank-note" id="bots-rank-note">most used community bots — ranked by real conversations started</p>
+
+            <!-- Grid + privacy panel -->
+            <div class="bots-layout">
+              <div class="bots-main-col">
+                <div class="bots-grid" id="bots-grid" aria-live="polite"></div>
+                <div class="bots-state-card" id="bots-empty" style="display: none;"></div>
+              </div>
+
+              <aside class="bots-side-panel" aria-label="Bot visibility explainer">
+                <div class="bots-rules-card">
+                  <span class="bots-rules-icon" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 5 3.2 8.4 7 10 3.8-1.6 7-5 7-10V6Z"/><path d="m9.2 11.8 2 2 3.6-3.6"/></svg>
+                  </span>
+                  <h3 class="bots-rules-title">Your Bots, Your Rules</h3>
+                  <p class="bots-rules-sub">Make your bot public for everyone or keep it private for your community.</p>
+                  <div class="bots-rules-options" aria-hidden="true">
+                    <div class="bots-rule-option bots-rule-active">
+                      <span class="bots-rule-ic">🌐</span>
+                      <span class="bots-rule-text"><b>Public</b><small>Visible to everyone</small></span>
+                      <span class="bots-rule-dot"></span>
+                    </div>
+                    <div class="bots-rule-option">
+                      <span class="bots-rule-ic">🔒</span>
+                      <span class="bots-rule-text"><b>Private</b><small>Only you can use it</small></span>
+                      <span class="bots-rule-dot"></span>
+                    </div>
+                  </div>
+                  <ul class="bots-rules-list" aria-label="What you can do">
+                    <li>Customize personality</li>
+                    <li>Add features</li>
+                    <li>Publish &amp; share</li>
+                  </ul>
+                  <button type="button" class="bots-side-cta" onclick="window.HubbleNest.openBotStudio('create')">Create a Bot
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+                  </button>
+                </div>
+              </aside>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- VIEW: BOT STUDIO (create / update / settings + live preview) -->
+        <div class="view-section" id="view-bot-studio">
+          <div class="bots-wrap">
+
+            <div class="bots-hero bots-hero-slim">
+              <img src="./bots-hero.svg" alt="" class="bots-hero-art" aria-hidden="true" />
+              <div class="bots-hero-copy">
+                <h1 class="bots-hero-title bots-hero-title-sm">HubbleNest <span class="bots-hero-grad">Bots</span></h1>
+                <p class="bots-hero-sub">Create, customise and share powerful AI bots with the community.</p>
+              </div>
+              <span class="bots-hero-power">HubbleNest Original</span>
+            </div>
+
+            <div class="bst-navrow" role="tablist" aria-label="Bot studio sections">
+              <button type="button" class="bst-nav-btn bst-nav-active" id="bst-tab-create" onclick="window.HubbleNest.bstGo('create')"><span aria-hidden="true">＋</span> Create Bot</button>
+              <button type="button" class="bst-nav-btn" id="bst-tab-mine" onclick="window.HubbleNest.bstGo('mine')"><span aria-hidden="true">🤖</span> My Bots</button>
+              <button type="button" class="bst-nav-btn" id="bst-tab-explore" onclick="window.HubbleNest.bstGo('explore')"><span aria-hidden="true">🧭</span> Explore Bots</button>
+              <button type="button" class="bst-nav-btn" id="bst-tab-top" onclick="window.HubbleNest.bstGo('top')"><span aria-hidden="true">★</span> Top Rated</button>
+              <button type="button" class="bst-nav-btn" id="bst-tab-trending" onclick="window.HubbleNest.bstGo('trending')"><span aria-hidden="true">🔥</span> Trending</button>
+            </div>
+
+            <div class="bst-layout">
+
+              <!-- Main configuration panel -->
+              <div class="bst-mainpanel">
+                <div class="bst-panelhead">
+                  <span class="bst-panelicon" aria-hidden="true">
+                    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5 4 4"/><path d="M13 7 8.7 2.7a2.41 2.41 0 0 0-3.4 0L2.7 5.3a2.41 2.41 0 0 0 0 3.4L7 13"/><path d="m8 6 2-2"/><path d="m18 16 2-2"/><path d="m17 11 4.3 4.3c.94.94.94 2.46 0 3.4l-2.6 2.6c-.94.94-2.46.94-3.4 0L11 17"/><path d="M21.174 6.812a2.625 2.625 0 0 0-3.612-3.516l-.838.576 3.89 3.832z"/></svg>
+                  </span>
+                  <div>
+                    <h2 class="bst-title" id="bst-title">Create or Update Your Bot</h2>
+                    <p class="bst-sub" id="bst-sub">Bring your AI bot to life. You can create a new bot or update an existing one.</p>
+                  </div>
+                </div>
+
+                <div class="bst-modes" role="radiogroup" aria-label="Studio mode">
+                  <button type="button" class="bst-mode-btn bst-mode-active" id="bst-mode-create" onclick="window.HubbleNest.setStudioMode('create')">＋ Create New Bot</button>
+                  <button type="button" class="bst-mode-btn" id="bst-mode-update" onclick="window.HubbleNest.setStudioMode('update')">🔄 Update Existing Bot</button>
+                  <button type="button" class="bst-mode-btn" id="bst-mode-settings" onclick="window.HubbleNest.setStudioMode('settings')">⚙️ Edit Bot Settings</button>
+                </div>
+
+                <!-- My Bots picker (update/settings modes) -->
+                <div id="bst-picker-wrap" style="display: none;">
+                  <p class="bst-picker-head">Your bots — pick one to edit, test or publish. Switch to <b>Create New Bot</b> to start fresh.</p>
+                  <div id="bot-mybots-list" class="bot-mybots-list"></div>
+                </div>
+
+                <!-- Configuration form -->
+                <div id="bst-form-wrap">
+                  <div class="bst-form-grid">
+                    <div class="bst-col">
+                      <div class="form-group">
+                        <label class="form-label" for="bot-name-input">Bot Name <i class="bst-req" title="Required">*</i></label>
+                        <input type="text" id="bot-name-input" class="form-input" maxlength="60" autocomplete="off" placeholder="e.g. Bible Helper" oninput="window.HubbleNest.botStudioMarkDirty()" />
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label" for="bot-short-desc-input">Short Description <i class="bst-req" title="Required">*</i></label>
+                        <input type="text" id="bot-short-desc-input" class="form-input" maxlength="160" autocomplete="off" placeholder="A short, catchy description..." oninput="window.HubbleNest.botStudioMarkDirty()" />
+                      </div>
+                      <div class="form-group bot-duo">
+                        <div>
+                          <label class="form-label" for="bot-category-select">Bot Category</label>
+                          <select id="bot-category-select" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                            <option value="Education">Education</option>
+                            <option value="Productivity">Productivity</option>
+                            <option value="Writing">Writing</option>
+                            <option value="Creativity">Creativity</option>
+                            <option value="Business">Business</option>
+                            <option value="Coding">Coding</option>
+                            <option value="Bible &amp; Spiritual Study">Bible &amp; Spiritual Study</option>
+                            <option value="Entertainment">Entertainment</option>
+                            <option value="Games">Games</option>
+                            <option value="Personal Assistance">Personal Assistance</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label" for="bot-visibility-select">Bot Visibility</label>
+                          <select id="bot-visibility-select" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                            <option value="public">Public</option>
+                            <option value="private">Private</option>
+                          </select>
+                          <p class="bst-field-hint" id="bot-visibility-help">Public bots can be discovered by everyone.</p>
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label" for="bot-detail-desc-input">Detailed description <span class="bst-opt">(optional)</span></label>
+                        <textarea id="bot-detail-desc-input" class="form-textarea" rows="2" maxlength="800" placeholder="What is this bot really good at? Who is it for?" oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                      </div>
+
+                      <!-- LOGO -->
+                      <div class="form-group">
+                        <label class="form-label">Bot Logo</label>
+                        <div class="bot-asset-picker">
+                          <input type="file" id="bot-logo-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.botStudioUploadLogo(this.files[0])" />
+                          <button type="button" class="bot-asset-drop" onclick="document.getElementById('bot-logo-input').click()" aria-label="Upload a bot logo">
+                            <img id="bot-logo-preview" src="" alt="Bot logo preview" />
+                            <span class="bot-asset-drop-text">Click to upload<br /><small>PNG, JPG or SVG (≤2MB)</small></span>
+                          </button>
+                          <span class="bot-asset-side">
+                            <button type="button" class="btn btn-ghost btn-sm" id="bot-logo-remove" style="display: none;" onclick="window.HubbleNest.botStudioRemoveLogo()">Remove</button>
+                            <span class="bot-asset-status" id="bot-logo-status"></span>
+                          </span>
+                        </div>
+                        <p class="bst-field-hint">Or choose from templates</p>
+                        <div class="bot-tpl-row" id="bot-logo-templates"></div>
+                      </div>
+
+                      <!-- PREVIEW IMAGE (independent of the logo) -->
+                      <div class="form-group">
+                        <label class="form-label">Preview Image <span class="bst-opt">— the bot's banner art, separate from its logo</span></label>
+                        <div class="bot-asset-picker">
+                          <input type="file" id="bot-previewimg-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.botStudioUploadPreview(this.files[0])" />
+                          <button type="button" class="bot-asset-drop bot-asset-drop-wide" onclick="document.getElementById('bot-previewimg-input').click()" aria-label="Upload a preview image">
+                            <img id="bot-previewimg-preview" src="" alt="Bot preview image" />
+                            <span class="bot-asset-drop-text">Click to upload<br /><small>PNG, JPG or SVG (≤2MB)</small></span>
+                          </button>
+                          <span class="bot-asset-side">
+                            <button type="button" class="btn btn-ghost btn-sm" id="bot-previewimg-remove" style="display: none;" onclick="window.HubbleNest.botStudioRemovePreview()">Remove</button>
+                            <span class="bot-asset-status" id="bot-previewimg-status"></span>
+                          </span>
+                        </div>
+                        <p class="bst-field-hint">Or choose a preview template</p>
+                        <div class="bot-tpl-row bot-tpl-row-wide" id="bot-previewimg-templates"></div>
+                      </div>
+                    </div>
+
+                    <div class="bst-col">
+                      <h3 class="bst-subhead">🧠 Bot Personality &amp; Features</h3>
+                      <div class="form-group">
+                        <label class="form-label" for="bot-personality-select">Personality Tone</label>
+                        <select id="bot-personality-select" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                          <option value="friendly">Friendly &amp; Helpful</option>
+                          <option value="professional">Professional</option>
+                          <option value="educational">Educational</option>
+                          <option value="creative">Creative</option>
+                          <option value="funny">Funny</option>
+                          <option value="concise">Concise</option>
+                          <option value="detailed">Detailed &amp; Engaging</option>
+                          <option value="custom">Custom Personality</option>
+                        </select>
+                      </div>
+                      <div class="form-group bot-duo">
+                        <div>
+                          <label class="form-label" for="bot-response-style">Response Style</label>
+                          <select id="bot-response-style" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                            <option value="balanced">Balanced</option>
+                            <option value="chatty">Conversational</option>
+                            <option value="formal">Formal</option>
+                            <option value="socratic">Step-by-step guide</option>
+                            <option value="bullets">Bullet points</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label" for="bot-response-length">Response Length</label>
+                          <select id="bot-response-length" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                            <option value="short">Short</option>
+                            <option value="medium">Medium</option>
+                            <option value="long">Detailed &amp; Engaging</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="form-group bot-duo">
+                        <div>
+                          <label class="form-label" for="bot-language-select">Language</label>
+                          <select id="bot-language-select" class="form-input" onchange="window.HubbleNest.botStudioMarkDirty()">
+                            <option value="Auto">Auto</option>
+                            <option value="English">English</option>
+                            <option value="Spanish">Spanish</option>
+                            <option value="French">French</option>
+                            <option value="Portuguese">Portuguese</option>
+                            <option value="German">German</option>
+                            <option value="Italian">Italian</option>
+                            <option value="Hindi">Hindi</option>
+                            <option value="Arabic">Arabic</option>
+                            <option value="Chinese">Chinese</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label" for="bot-formatting-input">Formatting preference</label>
+                          <input type="text" id="bot-formatting-input" class="form-input" maxlength="120" autocomplete="off" placeholder="e.g. use lists, keep it skimmable" oninput="window.HubbleNest.botStudioMarkDirty()" />
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label" for="bot-custom-instructions">Custom instructions</label>
+                        <textarea id="bot-custom-instructions" class="form-textarea" rows="3" maxlength="4000" placeholder="Anything your bot should always keep in mind — its role, expertise, style..." oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                      </div>
+                      <div class="form-group bot-duo">
+                        <div>
+                          <label class="form-label" for="bot-do-input">Things the bot should do <span class="bst-opt">(one per line)</span></label>
+                          <textarea id="bot-do-input" class="form-textarea" rows="2" maxlength="600" placeholder="Encourage the user&#10;Use simple words" oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                        </div>
+                        <div>
+                          <label class="form-label" for="bot-avoid-input">Things the bot should avoid <span class="bst-opt">(one per line)</span></label>
+                          <textarea id="bot-avoid-input" class="form-textarea" rows="2" maxlength="600" placeholder="Medical advice&#10;Long lectures" oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                        </div>
+                      </div>
+
+                      <div class="form-group">
+                        <label class="form-label">Key Features</label>
+                        <div id="bot-caps-box" class="bot-caps"></div>
+                        <div id="bot-cap-custom-wrap" class="bot-caps bot-caps-custom"></div>
+                        <div class="bot-cap-add">
+                          <input type="text" id="bot-cap-custom-input" class="form-input" maxlength="40" autocomplete="off" placeholder="Add your own capability..." onkeydown="if(event.key==='Enter'){ event.preventDefault(); window.HubbleNest.botStudioAddCustomCap(); }" />
+                          <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.botStudioAddCustomCap()">Add</button>
+                        </div>
+                      </div>
+
+                      <div class="form-group">
+                        <label class="form-label" for="bot-greeting-input">Welcome message</label>
+                        <textarea id="bot-greeting-input" class="form-textarea" rows="2" maxlength="500" placeholder="The first thing your bot says in a new chat..." oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label" for="bot-starters-input">Suggested conversation starters <span class="bst-opt">(one per line, up to 5)</span></label>
+                        <textarea id="bot-starters-input" class="form-textarea" rows="3" maxlength="400" placeholder="How do I get started?&#10;Help me plan my week&#10;Explain it simply" oninput="window.HubbleNest.botStudioMarkDirty()"></textarea>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="bst-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="bot-cancel-edit-btn" style="display: none;" onclick="window.HubbleNest.botStudioCancelEdit()">Cancel</button>
+                    <span class="bst-save-status" id="bot-save-status"></span>
+                    <button type="button" class="bot-save-cta" id="bot-save-btn" onclick="window.HubbleNest.botStudioSave()">🚀 Create Bot</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Live preview -->
+              <aside class="bst-preview-panel" aria-label="Live bot preview">
+                <div class="bst-preview-head">
+                  <span class="bst-preview-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                    Bot Preview
+                  </span>
+                  <span class="bp-live"><i aria-hidden="true"></i> Live Preview</span>
+                </div>
+                <img class="bp-cover" id="bp-cover" src="./bots-hero.svg" alt="" aria-hidden="true" />
+                <img class="bp-logo" id="bp-logo" src="" alt="Bot logo preview" />
+                <h3 class="bp-name" id="bp-name">Your Bot</h3>
+                <div class="bp-badges">
+                  <span class="bp-badge bp-badge-public" id="bp-vis">Public</span>
+                  <span class="bp-badge bp-badge-cat" id="bp-category">Education</span>
+                  <span class="bp-badge bp-badge-pers" id="bp-personality">Friendly &amp; Helpful</span>
+                  <span class="bp-badge bp-badge-rating" id="bp-rating" style="display: none;"></span>
+                </div>
+                <p class="bp-desc" id="bp-desc">Give your bot a short description and it will show up right here.</p>
+                <div class="bp-chips" id="bp-caps"></div>
+                <button type="button" class="bp-test-btn" onclick="window.HubbleNest.botStudioTest()">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5Z"/></svg>
+                  Test Your Bot
+                </button>
+                <button type="button" class="bp-share-btn" onclick="window.HubbleNest.botStudioShare()">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  Share Bot
+                </button>
+              </aside>
+            </div>
+
+            <!-- Pro tips + Your Bots -->
+            <div class="bst-footrow">
+              <div class="bst-tips">
+                <span class="bst-foot-icon" aria-hidden="true">💡</span>
+                <div>
+                  <b>Pro Tips</b>
+                  <p>Give your bot a clear name, add a catchy description and choose the right features to make it more useful and engaging.</p>
+                </div>
+              </div>
+              <div class="bst-yourbots">
+                <span class="bst-foot-icon" aria-hidden="true">🤖</span>
+                <div>
+                  <b>Your Bots</b>
+                  <p>Manage your created bots.</p>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.bstGo('mine')">View All
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- VIEW: BOT CHAT (conversation with a bot, or studio test mode) -->
+        <div class="view-section" id="view-bot-chat">
+          <div class="bots-wrap bot-chat-wrap">
+            <div class="bot-chat-header">
+              <button type="button" class="back-link-btn" onclick="window.HubbleNest.openBotsMarketplace()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                <span>All Bots</span>
+              </button>
+              <img id="bot-chat-logo" class="bot-chat-logo" src="" alt="" aria-hidden="true" />
+              <div class="bot-chat-id">
+                <h2 id="bot-chat-name">Bot</h2>
+                <p id="bot-chat-desc"></p>
+              </div>
+              <span class="bot-chat-mode-badge" id="bot-chat-mode-badge" style="display: none;"></span>
+              <div class="bot-chat-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="bot-chat-retry" style="display: none;" onclick="window.HubbleNest.botChatRetry()">Try again</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.botChatNew()">New conversation</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.botChatClear()">Clear</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="bot-chat-share" style="display: none;">Share</button>
+              </div>
+            </div>
+
+            <div class="bot-chat-starters" id="bot-chat-starters"></div>
+            <div class="bot-chat-messages" id="bot-chat-messages" aria-live="polite"></div>
+
+            <div class="bot-chat-composer">
+              <textarea id="bot-chat-input" class="bot-chat-input" rows="1" maxlength="2000" placeholder="Message this bot... (Enter to send, Shift+Enter for a new line)" onkeydown="window.HubbleNest.botChatKey(event)"></textarea>
+              <button type="button" class="bot-chat-send" onclick="window.HubbleNest.botChatSend()" aria-label="Send message">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: BOT PUBLIC PROFILE (details, ratings, reviews) -->
+        <div class="view-section" id="view-bot-profile">
+          <div class="bots-wrap bot-prof-wrap">
+            <button type="button" class="back-link-btn" onclick="window.HubbleNest.openBotsMarketplace()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              <span>All Bots</span>
+            </button>
+
+            <div class="botprof-hero">
+              <img id="botprof-bg" class="botprof-bg" src="" alt="" aria-hidden="true" />
+              <div class="botprof-hero-body">
+                <img id="botprof-logo" class="botprof-logo" src="" alt="Bot logo" />
+                <div class="botprof-id">
+                  <h1 id="botprof-name">Bot</h1>
+                  <div class="botprof-creator" id="botprof-creator"></div>
+                  <div class="bp-badges" id="botprof-badges"></div>
+                </div>
+                <div class="botprof-actions">
+                  <button type="button" class="bots-hero-cta" id="botprof-use">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5Z"/></svg>
+                    Use Bot
+                  </button>
+                  <button type="button" class="btn btn-secondary" id="botprof-share">Share</button>
+                  <button type="button" class="btn btn-secondary" id="botprof-edit" style="display: none;">Edit in Studio</button>
+                </div>
+              </div>
+              <p class="botprof-privnote" id="botprof-privnote" style="display: none;">🔒 This bot is private — only its creator can use and test it.</p>
+            </div>
+
+            <p class="botprof-desc" id="botprof-desc"></p>
+
+            <div class="botprof-grid">
+              <div class="botprof-main">
+                <div class="botprof-card">
+                  <h3 class="botprof-card-h">Ratings &amp; Reviews <span class="botprof-count">(<span id="botprof-comments-count">0</span>)</span></h3>
+                  <div class="botprof-rate-row">
+                    <div class="botprof-stars" id="botprof-stars" role="radiogroup" aria-label="Rate this bot"></div>
+                    <span class="botprof-rating-summary" id="botprof-rating-summary"></span>
+                  </div>
+                  <div id="botprof-comment-composer" class="botprof-comment-composer">
+                    <textarea id="botprof-comment-input" class="form-textarea" rows="2" maxlength="600" placeholder="Write a short review — what does this bot help you with?"></textarea>
+                    <div class="botprof-comment-foot">
+                      <span class="bst-field-hint">Reviews are public and tied to your name.</span>
+                      <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.botProfileSubmitComment()">Post review</button>
+                    </div>
+                  </div>
+                  <div id="botprof-comments-list" class="botprof-comments"></div>
+                </div>
+              </div>
+              <aside class="botprof-side">
+                <h3 class="botprof-side-h">More like this</h3>
+                <div id="botprof-related" class="botprof-related"></div>
+              </aside>
+            </div>
+          </div>
+        </div>
+
 
       </section>
 
@@ -2960,7 +3463,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=24"></script>
+  <script type="module" src="./app.js?v=26"></script>
 
 </body>
 </html>

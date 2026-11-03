@@ -14,14 +14,15 @@ import {
 
 export async function executeGlobalSearch(term, currentUserId) {
   if (!term || term.trim().length < 2) {
-    return { spaces: [], people: [], files: [] };
+    return { spaces: [], people: [], files: [], bots: [] };
   }
 
   const clean = term.trim().toLowerCase();
   const results = {
     spaces: [],
     people: [],
-    files: []
+    files: [],
+    bots: []
   };
 
   try {
@@ -51,6 +52,24 @@ export async function executeGlobalSearch(term, currentUserId) {
         ) {
           results.people.push(u);
         }
+      }
+    });
+    // 3. Search PUBLIC bots only — private bots never surface in search
+    const botsSnap = await getDocs(
+      query(collection(db, 'bots'), where('visibility', '==', 'public'), limit(40))
+    );
+    botsSnap.forEach((d) => {
+      const b = d.data();
+      const haystack = [
+        b.name, b.shortDescription, b.description, b.category, b.ownerUsername
+      ].map(v => String(v || '').toLowerCase());
+      if (haystack.some(v => v.includes(clean))) {
+        results.bots.push({
+          id: d.id,
+          name: b.name || 'Bot',
+          shortDescription: b.shortDescription || '',
+          category: b.category || ''
+        });
       }
     });
   } catch (err) {

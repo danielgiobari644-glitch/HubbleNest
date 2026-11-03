@@ -515,6 +515,119 @@ service cloud.firestore {
     }
 
     // ======================================================================
+    // HubbleNest Bots — AI bot marketplace
+    //
+    // VISIBILITY IS A REAL BOUNDARY: a single bot doc is readable signed-out
+    // or by other members ONLY when visibility == 'public'. Private bots are
+    // owner-only (plus the platform admin) at the RULES level — knowing a bot
+    // id or its share URL grants nothing. Listing queries must filter by
+    // visibility (the app always does: where('visibility','==','public')) or
+    // by ownerUid, so every result is individually provable.
+    //
+    // Counter trust (same model as the Arcade): any signed-in member may bump
+    // ONLY the aggregate fields through updateDoc — usage tracking happens on
+    // the first conversation with a bot, ratings through the id-anchored
+    // botRatings transaction, comment counts on real comment writes. Nothing
+    // else on the document may be touched by a non-owner.
+    // ======================================================================
+    match /bots/{botId} {
+      allow get: if isAuthenticated() && (
+        resource.data.get('visibility', '') == 'public' ||
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid ||
+        isAdmin());
+      // Listing is provably safe only for constrained queries: the
+      // marketplace/search must filter visibility == 'public', and "my bots"
+      // must filter ownerUid == the caller. A bare listing (which would leak
+      // PRIVATE bots' full configuration to any member) is rejected.
+      allow list: if isAuthenticated() && (
+        resource.data.get('visibility', '') == 'public' ||
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid ||
+        isAdmin());
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'ownerUid') == request.auth.uid &&
+        !isBannedNow() &&
+        fieldStr(request.resource.data, 'name').size() >= 1 &&
+        fieldStr(request.resource.data, 'name').size() <= 60 &&
+        fieldStr(request.resource.data, 'visibility') in ['public', 'private'] &&
+        (request.resource.data.get('usageCount', 0) == 0 &&
+         request.resource.data.get('ratingSum', 0) == 0 &&
+         request.resource.data.get('ratingCount', 0) == 0);
+      allow update: if isAuthenticated() && (
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid ||
+        isAdmin() ||
+        touchesOnly(['usageCount', 'lastUsedAt', 'ratingSum', 'ratingCount', 'commentCount']));
+      allow delete: if isAdmin() || (isAuthenticated() &&
+        fieldStr(resource.data, 'ownerUid') == request.auth.uid);
+    }
+
+    // One rating per member per bot (doc id = uid_botId, mirrors gameRatings).
+    match /botRatings/{ratingId} {
+      allow get, list: if isAuthenticated();
+      allow create, update: if isAuthenticated() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.botId is string &&
+        request.resource.data.botId.size() >= 1 && request.resource.data.botId.size() <= 80 &&
+        request.resource.data.stars is int &&
+        request.resource.data.stars >= 1 && request.resource.data.stars <= 5 &&
+        ratingId == request.resource.data.uid + '_' + request.resource.data.botId;
+      allow delete: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid;
+    }
+
+    // Public reviews on public bots. The app only writes comments to bots it
+    // can read (visibility == public), so reads are member-wide.
+    match /botComments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'authorId') == request.auth.uid &&
+        fieldStr(request.resource.data, 'botId').size() >= 1 &&
+        fieldStr(request.resource.data, 'botId').size() <= 80 &&
+        request.resource.data.text is string &&
+        request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 600;
+      allow update: if isAuthenticated() && (
+        fieldStr(resource.data, 'authorId') == request.auth.uid ||
+        touchesOnly(['likedBy']));
+      // Authors and the platform admin moderate comments.
+      allow delete: if isAdmin() || (isAuthenticated() &&
+        fieldStr(resource.data, 'authorId') == request.auth.uid);
+    }
+
+    // Private per-member conversations with a bot. Doc id = uid_botId and
+    // every write repeats uid, so ownership is verifiable from the request
+    // itself. Messages inherit the same ownership through the parent get().
+    match /botChats/{chatId} {
+      allow get, list: if isAuthenticated() && (
+        chatId.split('_')[0] == request.auth.uid ||
+        (resource != null && fieldStr(resource.data, 'uid') == request.auth.uid));
+      allow create: if isAuthenticated() &&
+        chatId.split('_')[0] == request.auth.uid &&
+        fieldStr(request.resource.data, 'uid') == request.auth.uid;
+      allow update, delete: if isAuthenticated() &&
+        chatId.split('_')[0] == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() &&
+          (chatId.split('_')[0] == request.auth.uid ||
+           (exists(/databases/$(database)/documents/botChats/$(chatId)) &&
+            fieldStr(get(/databases/$(database)/documents/botChats/$(chatId)).data, 'uid') == request.auth.uid));
+        allow create: if isAuthenticated() &&
+          exists(/databases/$(database)/documents/botChats/$(chatId)) &&
+          fieldStr(get(/databases/$(database)/documents/botChats/$(chatId)).data, 'uid') == request.auth.uid;
+        allow update, delete: if isAuthenticated() &&
+          exists(/databases/$(database)/documents/botChats/$(chatId)) &&
+          fieldStr(get(/databases/$(database)/documents/botChats/$(chatId)).data, 'uid') == request.auth.uid;
+      }
+    }
+
+    // Abuse reports (bots and bot comments) — members create, only the
+    // platform admin can read or manage them.
+    match /botReports/{reportId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isAuthenticated() &&
+        fieldStr(request.resource.data, 'reporterUid') == request.auth.uid;
+    }
+
+    // ======================================================================
     // Direct Share (file handoff via 6-character code or QR link)
     //
     // The document ID IS the share code (unguessable: 31^6 ≈ 887 million

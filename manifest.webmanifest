@@ -40,6 +40,11 @@
       "name": "Messages",
       "url": "./index.html#messages",
       "description": "Open private direct messages"
+    },
+    {
+      "name": "Bots",
+      "url": "./index.html#bots",
+      "description": "Discover and create AI bots"
     }
   ]
 }

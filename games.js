@@ -40,12 +40,14 @@ import {
 import {
   showToast,
   escapeHtml,
-  getAvatarUrl
+  getAvatarUrl,
+  handlePermissionError
 } from './utils.js';
 
 import { formatBytes, uploadToCloudinary } from './cloudinary.js';
 
-import { handlePermissionError } from './firestore-doctor.js';
+// permission-denied guidance now lives in utils.js (Connection Doctor retired)
+// (imported below from './utils.js' where the rest of utils come from)
 
 import { buildSrcDocFromFiles, buildSrcDoc, detectLanguages, normalizeGamePath } from './public-game-builder.js';
 
@@ -232,8 +234,8 @@ export function startArcade() {
     if (grid) {
       grid.innerHTML = `<div class="feed-error-card">
         <div class="feed-error-title">The Arcade could not load</div>
-        <div class="feed-error-desc">${escapeHtml(err.code || 'error')} — the Connection Doctor can pinpoint the exact rule to fix.</div>
-        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button></div>`;
+        <div class="feed-error-desc">${escapeHtml(err.code || 'error')} — check your internet connection and sign-in state, then try again.</div>
+        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.openArcadeView()">Try again</button></div>`;
     }
     if (err?.code === 'permission-denied') handlePermissionError('arcade');
   });
@@ -482,6 +484,8 @@ export function openGameEditor(gameId, opts = {}) {
   // lands there too (opts.focusPane === 'link').
   const focusLink = opts?.focusPane === 'link' || (game && game.kind === 'link' && game.linkUrl);
   setCodePane(focusLink ? 'link' : 'html');
+  // "Create with AI" entry points land with the prompt panel already open.
+  if (opts?.ai) toggleAiPanel(true);
   scheduleGamePreview();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -1090,7 +1094,7 @@ export async function saveCurrentGame() {
     console.error('Game save failed:', err);
     if (statusEl) { statusEl.textContent = ''; }
     showToast(err?.code === 'permission-denied'
-      ? 'The rules on your Firebase project block saving games — run Connection Doctor.'
+      ? 'Saving the game was blocked by your Firebase security rules — check your sign-in state and try again.'
       : (err.message || 'Could not save the game.'), 'error');
     if (err?.code === 'permission-denied') handlePermissionError('arcade save');
   } finally {

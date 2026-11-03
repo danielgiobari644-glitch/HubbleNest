@@ -30,9 +30,10 @@ import { generateQrDataUrl } from './qr.js';
 // Universal uploads with the Firestore byte-store fallback (blocked families).
 import { uploadFileAnywhere, isStoredAttachment } from './file-blob.js';
 
-import { showToast, escapeHtml, formatTimeAgo, getAvatarUrl } from './utils.js';
+import { showToast, escapeHtml, formatTimeAgo, getAvatarUrl, handlePermissionError } from './utils.js';
 
-import { handlePermissionError } from './firestore-doctor.js';
+// permission-denied guidance now lives in utils.js (Connection Doctor retired)
+// (imported below from './utils.js' where the rest of utils come from)
 
 /* ========================================================================
    State
@@ -185,7 +186,7 @@ export async function createDirectShare() {
   } catch (err) {
     console.error('Share creation failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Rules on your Firebase project block Direct Share — run Connection Doctor.'
+      ? 'Direct Share was blocked by the project rules — sign in again and retry, or ask the Get Help assistant.'
       : (err.message || 'Could not create the share.'), 'error');
     if (err?.code === 'permission-denied') handlePermissionError('direct share create');
   } finally {
@@ -418,7 +419,7 @@ export async function connectToShare(rawCode) {
     if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = 'Connect'; }
     console.error('Share connect failed:', err);
     showErr(err?.code === 'permission-denied'
-      ? 'Rules on your Firebase project block Direct Share — run Connection Doctor.'
+      ? 'Direct Share was blocked by the project rules — sign in again and retry, or ask the Get Help assistant.'
       : `Could not reach the share: ${err?.message || 'unknown error'}`);
     if (err?.code === 'permission-denied') handlePermissionError('direct share connect');
   }

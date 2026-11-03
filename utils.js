@@ -230,3 +230,17 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+/**
+ * Friendly handling of a Firestore permission-denied error (replaces the old
+ * Connection Doctor auto-open): throttled, actionable guidance pointing at
+ * the built-in Get Help assistant instead of a diagnostic panel.
+ */
+let lastPermErrAt = 0;
+export function handlePermissionError(source) {
+  const now = Date.now();
+  if (now - lastPermErrAt < 20000) return;
+  lastPermErrAt = now;
+  console.warn('[HubbleNest] permission-denied in', source);
+  showToast('That action was blocked — your connection or sign-in state may have dropped. Check both, try once more, or ask the Get Help assistant.', 'warning', 6500);
+}

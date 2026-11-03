@@ -50,7 +50,8 @@ import {
   escapeHtml,
   formatTimeAgo,
   getAvatarUrl,
-  linkify
+  linkify,
+  handlePermissionError
 } from './utils.js';
 
 // Rich text: posts and comments render REAL formatting (bold, italic,
@@ -58,7 +59,8 @@ import {
 // Markdown symbols. linkify stays for legacy snippet helpers.
 import { renderRichText } from './format.js';
 
-import { handlePermissionError } from './firestore-doctor.js';
+// permission-denied guidance now lives in utils.js (Connection Doctor retired)
+// (imported below from './utils.js' where the rest of utils come from)
 
 /* ========================================================================
    Module state
@@ -245,8 +247,8 @@ export function startCommunityFeed(userProfile, currentUserId, connections = new
       el.innerHTML = `
         <div class="feed-error-card">
           <div class="feed-error-title">The community feed could not load</div>
-          <div class="feed-error-desc">${escapeHtml(err.code || 'permission-denied')} — your Firebase rules need a refresh. The Connection Doctor can pinpoint it.</div>
-          <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button>
+          <div class="feed-error-desc">${escapeHtml(err.code || 'permission-denied')} — check your internet connection and sign-in state, then try again.</div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.loadDashboard()">Try again</button>
         </div>`;
     }
     if (err?.code === 'permission-denied' || String(err?.message || '').includes('permissions')) {
@@ -494,7 +496,7 @@ export async function handleHomePost() {
   } catch (err) {
     console.error('Post failed:', err);
     showToast(err?.message?.includes('permission') || err?.code === 'permission-denied'
-      ? 'The rules on your Firebase project block posting — run the Connection Doctor from the footer of this screen.'
+      ? 'Posting was blocked by your Firebase security rules — check your sign-in state and try again, or ask the Get Help assistant.'
       : (err.message || 'Could not post right now'), 'error');
     if (err?.code === 'permission-denied') handlePermissionError('feed composer');
   } finally {
@@ -585,7 +587,7 @@ export async function feedToggleLike(postId) {
     }
   } catch (err) {
     console.error('Like failed:', err);
-    showToast('Could not save your like — check Connection Doctor if it repeats.', 'error');
+    showToast('Could not save your like — check your connection and try again.', 'error');
   }
 }
 
@@ -683,7 +685,7 @@ export async function feedSubmitComment(postId) {
     }
   } catch (err) {
     console.error('Comment failed:', err);
-    showToast('Could not post the comment — if this repeats, run Connection Doctor.', 'error');
+    showToast('Could not post the comment — check your connection and try again.', 'error');
   }
 }
 

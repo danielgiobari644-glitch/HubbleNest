@@ -388,12 +388,12 @@ portfolio again (they can still reach it anytime via the account menu →
   browser with a per-conversation key (Web Crypto); ciphertext only in Firestore
 - **Notification center** with unread badges (Firestore realtime)
 - **Background push notifications** via FCM — works when the app is closed
-- **Connection Doctor** — live self-diagnosis of Firestore rules with
-  one-click fixes (run `window.HubbleNest.runFirestoreDoctor()` or from any
-  permission-denied error card)
+- **Get Help AI assistant** — a built-in AI guide that knows every corner of
+  the app (opens from the dashboard "Get Help" quick action, the Help Centre,
+  or global search); the same platform AI powers every HubbleNest Bot
 - **PWA** — installable (with iOS "Add to Home Screen" guidance), offline shell
   via service worker, Firestore local persistence
-- **Fast loading & self-updating deploys** — service worker v13 serves every
+- **Fast loading & self-updating deploys** — the service worker serves every
   shell asset, Firebase SDK chunk, Google Font and Cloudinary image instantly
   from cache on repeat visits (stale-while-revalidate with no-cache
   revalidation), versioned asset URLs + a one-time auto-reload mean every
@@ -409,10 +409,11 @@ index.html · style.css · app.js
 firebase.js · auth.js · spaces.js · chat.js · private-chat.js · chat-requests.js
 people.js · profile.js · files.js · links.js · announcements.js · members.js
 notifications.js · fcm-sender.js · cloudinary.js · encryption.js · qr.js · search.js · ai-game-builder.js
+ai-client.js · bots.js · help-ai.js
 settings.js · utils.js
 community.js · games.js · public-game-builder.js · direct-share.js
-firestore-doctor.js · format.js · contacts.js · icons.js
+format.js · contacts.js · icons.js
 service-worker.js · manifest.webmanifest · firestore.rules · README.md
 public.css · sitemap.xml · robots.txt · 404.html · 15 public pages
-+ icons & illustrations (PNG / SVG at root)
++ icons & illustrations (PNG / SVG at root, incl. bots-hero.svg)
 ```

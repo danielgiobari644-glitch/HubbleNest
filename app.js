@@ -36,12 +36,16 @@ window.HubbleNest = window.HubbleNest || {};
 })();
 
 // Same-document hash navigation (user edits the URL, clicks an invite link
-// from inside the app): process the invite without a full reload.
+// or a shared bot link from inside the app): process it without a reload.
 window.addEventListener('hashchange', () => {
   try {
     const h = decodeURIComponent(window.location.hash || '');
     if (/^#join=/i.test(h) || /^#share=/i.test(h)) {
       checkUrlJoinParam();
+      return;
+    }
+    if (/^#bot=/i.test(h) || /^#bots\b/i.test(h)) {
+      if (state.currentUser) handleBotDeepLink();
     }
   } catch (e) { /* non-fatal */ }
 });
@@ -213,11 +217,12 @@ import {
   getAvatarUrl, 
   openModal, 
   closeModal, 
-  linkify 
+  linkify,
+  handlePermissionError 
 } from './utils.js';
 
 // Community feed (real posts + ranking algorithm), Arcade, Direct Share,
-// and the Firestore Connection Doctor (replaces the old home.js space-mirror feed)
+// HubbleNest Bots (AI bot platform) and the Get Help AI assistant
 import {
   startCommunityFeed,
   stopCommunityFeed,
@@ -296,9 +301,56 @@ import {
 } from './direct-share.js';
 
 import {
-  runFirestoreDoctor,
-  handlePermissionError
-} from './firestore-doctor.js';
+  openBotsMarketplace,
+  openBotStudio,
+  bstGo,
+  setStudioMode,
+  botsSetTab,
+  botsSetCategory,
+  botsHandleSearch,
+  botsRetry,
+  botsUseBot,
+  botsCardMenu,
+  botsShareBotById,
+  toggleBotVisibility,
+  deleteBotWithConfirm,
+  botStudioMarkDirty,
+  botStudioPickLogoTemplate,
+  botStudioPickPreviewTemplate,
+  botStudioUploadLogo,
+  botStudioUploadPreview,
+  botStudioRemoveLogo,
+  botStudioRemovePreview,
+  botStudioAddCustomCap,
+  botStudioRemoveCustomCap,
+  botStudioSave,
+  botStudioCancelEdit,
+  botStudioShare,
+  botStudioTest,
+  botLoadForEdit,
+  openBotChat,
+  botChatSend,
+  botChatKey,
+  botChatNew,
+  botChatClear,
+  botChatRetry,
+  botChatUseSuggested,
+  openBotProfile,
+  botProfileRate,
+  botProfileSubmitComment,
+  botProfileLikeComment,
+  botProfileEditComment,
+  botProfileDeleteComment,
+  botProfileReportComment,
+  handleBotDeepLink,
+  stopAllBotsActivity
+} from './bots.js';
+
+import {
+  openHelpAssistant,
+  closeHelpAssistant,
+  toggleHelpAssistant
+} from './help-ai.js';
 
 // Unified HubbleNest icon system — one local SVG set for the whole UI.
 import { installIconSystem } from './icons.js';
@@ -689,6 +741,10 @@ onAuthStateChanged(auth, async (user) => {
     loadDashboard();
     subscribeNotifications();
     checkUrlJoinParam();
+    // Bot deep links (#bot=ID / #bots) — only when no invite link claimed the URL.
+    if (!sessionStorage.getItem('pendingJoinCode') && !sessionStorage.getItem('pendingShareCode')) {
+      handleBotDeepLink();
+    }
   } else {
     state.currentUser = null;
     state.userProfile = null;
@@ -696,6 +752,8 @@ onAuthStateChanged(auth, async (user) => {
     stopCommunityFeed();
     stopArcade();
     stopDirectShare();
+    stopAllBotsActivity();
+    closeHelpAssistant();
     if (state.conversationsUnsub) { state.conversationsUnsub(); state.conversationsUnsub = null; }
     if (state.incomingReqUnsub) { state.incomingReqUnsub(); state.incomingReqUnsub = null; }
     // Only NEW users see the marketing portfolio. Anyone who has already
@@ -725,9 +783,9 @@ function setupAuthenticatedUI() {
   // never render it on the landing or auth pages.
   document.body.classList.add('hn-app-active');
 
-  // Admin-only surfaces: sidebar Admin console, Connection Doctor quick
-  // action, and the push / AI configuration sections. Everyone else —
-  // including signed-out visitors — never sees them.
+  // Admin-only surfaces: sidebar Admin console and the push / AI
+  // configuration sections. Everyone else — including signed-out visitors —
+  // never sees them. (The Connection Doctor was retired in v25.)
   syncAdminOnlyUI();
 
   // Pending-friend map (sent & received requests) drives the "Pending"
@@ -820,8 +878,8 @@ function setupAuthenticatedUI() {
 /**
  * Show or hide every admin-only surface based on the signed-in account.
  * - Sidebar "Admin" console entry
- * - Dashboard "Get Help" (Connection Doctor) quick action
  * - Profile page push + AI configuration sections
+ * ("Get Help" is the AI assistant now — visible to every member.)
  */
 function syncAdminOnlyUI() {
   const admin = isPlatformAdmin();
@@ -831,7 +889,7 @@ function syncAdminOnlyUI() {
   if (adminNav) adminNav.style.display = admin ? 'flex' : 'none';
 
   const railHelp = document.getElementById('rail-get-help-quick');
-  if (railHelp) railHelp.style.display = admin ? 'inline-flex' : 'none';
+  if (railHelp) railHelp.style.display = 'inline-flex';
 
   const pushCfg = document.getElementById('admin-push-config');
   if (pushCfg) pushCfg.style.display = admin ? 'block' : 'none';
@@ -2553,7 +2611,7 @@ export async function addSpaceMemberFromContacts(memberUid) {
   } catch (err) {
     console.error('Add member failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Your Firestore rules block adding members — run Connection Doctor.'
+      ? 'Adding members was blocked — check the sign-in state and try again, or ask the Get Help assistant.'
       : 'Could not add this member.', 'error');
   }
 }
@@ -2573,7 +2631,7 @@ export async function removeSpaceMemberByUid(memberUid) {
   } catch (err) {
     console.error('Remove member failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Your Firestore rules block removing members — run Connection Doctor.'
+      ? 'Removing members was blocked — you may no longer be an admin of this Space.'
       : 'Could not remove this member.', 'error');
   }
 }
@@ -2605,7 +2663,7 @@ export async function leaveActiveSpace() {
   } catch (err) {
     console.error('Leave space failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Your Firestore rules block leaving — run Connection Doctor.'
+      ? 'Leaving was blocked — check your connection, sign in again and retry.'
       : 'Could not leave this Space. Please try again.', 'error');
   }
 }
@@ -2703,8 +2761,8 @@ export async function loadMyContacts() {
     console.error('Contacts listener error:', err);
     container.innerHTML = `<div class="feed-error-card">
       <div class="feed-error-title">Your contacts could not load</div>
-      <div class="feed-error-desc">${escapeHtml(err.code || 'error')} — the Connection Doctor can pinpoint the exact rule to fix.</div>
-      <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button></div>`;
+      <div class="feed-error-desc">${escapeHtml(err.code || 'error')} — check your connection and sign-in state, then retry. The Get Help assistant can walk you through it.</div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.openHelpAssistant()">Get Help</button></div>`;
     if (err?.code === 'permission-denied') handlePermissionError('contacts');
   });
 }
@@ -3178,7 +3236,7 @@ export async function chatWithPerson(targetUserId) {
   } catch (err) {
     console.error('Friend request from People card failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Your Firestore rules block friend requests — run Connection Doctor.'
+      ? 'The friend request could not be sent — check your connection and try again.'
       : 'Could not start this chat. Please try again.', 'error');
     if (err?.code === 'permission-denied') handlePermissionError('people chat button');
   }
@@ -3207,6 +3265,15 @@ export function openArcadeView() {
   // inside (honest sign-in prompts, no fake content).
   initArcadeShell();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/**
+ * "Create with AI" entry points (welcome card, Arcade top bar): jump straight
+ * into the game editor with the AI prompt panel already open.
+ */
+export function openGameWithAi() {
+  openArcadeView();
+  openGameEditor(null, { ai: true });
 }
 
 export function openDirectShareViewWrapper(deepLinkCode = null) {
@@ -3404,10 +3471,10 @@ function showDirectChatError(err) {
     <div class="chat-error-card">
       <div class="chat-error-title">${denied ? 'This conversation is blocked by your Firestore rules' : 'This conversation could not load'}</div>
       <div class="chat-error-desc">${denied
-        ? 'Your Firebase project\'s published rules are refusing the read. The Connection Doctor checks every rule live and tells you exactly which line to fix — most people are back in under a minute.'
+        ? 'Your account is being refused read access on this conversation. Sign in again, then retry — if it persists, the Get Help assistant and the project admin can help.'
         : 'Check your connection and try again.'}</div>
       <div class="chat-error-actions">
-        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.runFirestoreDoctor()">Run Connection Doctor</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.openHelpAssistant()">Get Help</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.retryActiveDirectChat()">Retry</button>
       </div>
     </div>`;
@@ -4074,7 +4141,7 @@ export async function handleCodeSearch(code) {
           previewBtn.disabled = false;
           previewBtn.textContent = 'Join Space';
           showToast(err?.code === 'permission-denied'
-            ? 'Your Firestore rules block joining — run Connection Doctor.'
+            ? 'Joining was blocked — double-check the code, your connection, and try once more.'
             : (err.message || 'Could not join this Space.'), 'error');
         }
       };
@@ -4288,7 +4355,7 @@ export async function handleJoinPageCodeSearch(code) {
           btn.disabled = false;
           btn.textContent = 'Join Space';
           showToast(err?.code === 'permission-denied'
-            ? 'Your Firestore rules block joining — run Connection Doctor.'
+            ? 'Joining was blocked — double-check the code, your connection, and try once more.'
             : (err.message || 'Could not join this Space.'), 'error');
         }
       };
@@ -4397,6 +4464,10 @@ const APP_PAGES = [
   { key: 'messages',    label: 'Private Messages',    desc: 'Chats & incoming friend requests',         keywords: 'messages chat direct dm inbox requests', go: () => openDirectMessagesView() },
   { key: 'arcade',      label: 'Arcade — Play Games', desc: 'Play, like and rate community games',      keywords: 'arcade games play fun scores leaderboard gaming', go: () => openArcadeView() },
   { key: 'create-game', label: 'Create a Game',       desc: 'Arcade game editor (code, AI or link)',    keywords: 'create game editor build new game ai link', go: () => { openArcadeView(); openGameEditor(null); } },
+  { key: 'bots',        label: 'Bots Marketplace',    desc: 'Discover & use community AI bots',         keywords: 'bots ai assistant marketplace discover robot chat', go: () => openBotsMarketplace() },
+  { key: 'create-bot',  label: 'Create a Bot',        desc: 'Bot studio — personality, logo, skills',   keywords: 'create bot ai studio personality logo publish', go: () => openBotStudio('create') },
+  { key: 'my-bots',     label: 'My Bots',             desc: 'Manage the bots you created',              keywords: 'my bots manage edit delete publish visibility', go: () => openBotStudio('update') },
+  { key: 'get-help',    label: 'Get Help — AI Assistant', desc: 'Chat with the HubbleNest Helper',      keywords: 'help assistant ai support guide how to troubleshoot', go: () => openHelpAssistant() },
   { key: 'create-space',label: 'Create a Space',      desc: 'Start your own community',                 keywords: 'create new space group build community', go: () => openCreateSpacePage() },
   { key: 'join',        label: 'Join a Space',        desc: 'Enter a Space code or scan a QR invite',   keywords: 'join code invite qr enter space', go: () => openJoinSpacePage() },
   { key: 'direct-share',label: 'Direct Share',        desc: 'Hand off files with a 6-letter code',      keywords: 'direct share files transfer handoff qr code', go: () => openDirectShareViewWrapper() },
@@ -4451,6 +4522,15 @@ export async function handleSearchInput(term) {
     html += results.people.map(p => `
       <div class="menu-item" onclick="window.HubbleNest.handleSelectSearchResult('user', '${p.uid}')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg> <span>${escapeHtml(p.displayName)}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">@${escapeHtml(p.username)}</span>
+      </div>
+    `).join('');
+  }
+
+  if (results.bots && results.bots.length > 0) {
+    html += `<div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); padding: 8px 12px; font-weight: 600;">Bots</div>`;
+    html += results.bots.map(b => `
+      <div class="menu-item" onclick="window.HubbleNest.handleSelectSearchResult('bot', '${b.id}')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5.2"/><circle cx="12" cy="3.6" r="1.4"/><path d="M9.5 13.5v2M14.5 13.5v2"/></svg> <span>${escapeHtml(b.name || 'Bot')}</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto;">${escapeHtml(b.shortDescription || b.category || 'AI bot')}</span>
       </div>
     `).join('');
   }
@@ -5057,8 +5137,56 @@ Object.assign(window.HubbleNest, {
   backToSharePicker,
   connectToShare,
 
-  // Firestore Connection Doctor
-  runFirestoreDoctor,
+  // HubbleNest Bots — marketplace · studio · chat · profile
+  openBotsView: openBotsMarketplace,
+  openBotsMarketplace,
+  openBotStudio,
+  bstGo,
+  setStudioMode,
+  botsSetTab,
+  botsSetCategory,
+  botsHandleSearch,
+  botsRetry,
+  botsUseBot,
+  botsCardMenu,
+  botsShareBotById,
+  toggleBotVisibility,
+  deleteBotWithConfirm,
+  botStudioMarkDirty,
+  botStudioPickLogoTemplate,
+  botStudioPickPreviewTemplate,
+  botStudioUploadLogo,
+  botStudioUploadPreview,
+  botStudioRemoveLogo,
+  botStudioRemovePreview,
+  botStudioAddCustomCap,
+  botStudioRemoveCustomCap,
+  botStudioSave,
+  botStudioCancelEdit,
+  botStudioShare,
+  botStudioTest,
+  botLoadForEdit,
+  openBotChat,
+  botChatSend,
+  botChatKey,
+  botChatNew,
+  botChatClear,
+  botChatRetry,
+  botChatUseSuggested,
+  openBotProfile,
+  botProfileRate,
+  botProfileSubmitComment,
+  botProfileLikeComment,
+  botProfileEditComment,
+  botProfileDeleteComment,
+  botProfileReportComment,
+  handleBotDeepLink,
+  openGameWithAi,
+
+  // Get Help — the HubbleNest Helper (AI assistant)
+  openHelpAssistant,
+  closeHelpAssistant,
+  toggleHelpAssistant,
 
   // Notifications
   handleNotificationClick,
@@ -5124,6 +5252,7 @@ Object.assign(window.HubbleNest, {
     }
     else if (type === 'space') openSpace(id);
     else if (type === 'user') openMemberProfilePage(id);
+    else if (type === 'bot') openBotProfile(id);
   },
 
   // Profile & Theme
@@ -5359,7 +5488,7 @@ export async function savePushConfigFromSettings() {
   } catch (err) {
     console.error('Push config save failed:', err);
     showToast(err?.code === 'permission-denied'
-      ? 'Only the member who configured push first (or the rules) can update it — run Connection Doctor for details.'
+      ? 'Only the member who configured push first can update it.'
       : (err.message || 'Could not save the push configuration.'), 'error', 6000);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save push configuration'; }
@@ -5427,7 +5556,7 @@ export async function initAiSettingsUI() {
       statusEl.innerHTML = `
         <div class="push-status-row push-status-ok">
           <span class="push-status-dot"></span>
-          <span><b>Gemini connected:</b> model ${escapeHtml(model)} — Arcade prompts write fully custom games. The key survives every redeploy.</span>
+          <span><b>AI connected:</b> model ${escapeHtml(model)} — Arcade prompts, every HubbleNest Bot and the Get Help assistant are live. The key survives every redeploy.</span>
         </div>`;
       const keyInput = document.getElementById('ai-key-input');
       const modelInput = document.getElementById('ai-model-input');
@@ -5436,7 +5565,7 @@ export async function initAiSettingsUI() {
       statusEl.innerHTML = `
         <div class="push-status-row push-status-info">
           <span class="push-status-dot"></span>
-          <span><b>No AI key yet</b> — the Arcade uses its built-in game engine (real playable games, zero config). Add a free Gemini key for fully AI-written games.</span>
+          <span><b>No AI key yet</b> — the Arcade uses its built-in game engine (real playable games, zero config), while Bots and the Get Help assistant wait for a key. Add a free Google AI Studio key to switch everything on.</span>
         </div>`;
     }
   } catch (err) {
