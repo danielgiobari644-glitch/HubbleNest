@@ -52,6 +52,7 @@ import { formatBytes, uploadToCloudinary } from './cloudinary.js';
 import { buildSrcDocFromFiles, buildSrcDoc, detectLanguages, normalizeGamePath } from './public-game-builder.js';
 
 import { generateGameCode, getAiConfig } from './ai-game-builder.js';
+import { getLastAiFailure } from './ai-client.js';
 
 /* ========================================================================
    State
@@ -846,9 +847,14 @@ export async function refreshAiPanelStatus() {
   const el = document.getElementById('game-ai-status-line');
   if (!el) return;
   const cfg = await getAiConfig();
-  el.innerHTML = cfg.apiKey
-    ? `✨ <b>Gemini AI connected</b> (${escapeHtml(cfg.model)}) — your prompts are written into full custom games.`
-    : `Running on the <b>built-in game engine</b> — real playable games from your prompt, no key needed. For fully AI-written games add a Gemini key once in Profile &amp; Settings → AI Game Builder.`;
+  if (!cfg.apiKey) {
+    el.innerHTML = `Running on the <b>built-in game engine</b> — real playable games from your prompt, no key needed. For fully AI-written games the admin adds a key once in Profile &amp; Settings → AI configuration.`;
+    return;
+  }
+  const fail = getLastAiFailure();
+  el.innerHTML = fail
+    ? `⚠ <b>The AI rejected the last request</b> (${escapeHtml(String(fail.message || fail.kind).slice(0, 110))}) — prompts fall back to the built-in engine until the admin fixes the AI configuration in Profile &amp; Settings.`
+    : `✨ <b>AI connected</b> (${escapeHtml(cfg.model)}) — your prompts are written into full custom games.`;
 }
 
 function setEditorCode({ title, description, html, css, js }) {
@@ -886,10 +892,16 @@ export async function generateGameFromPrompt() {
     saveEditorDraft();
     if (statusEl) {
       statusEl.textContent = result.source === 'gemini'
-        ? '✓ Game written by Gemini AI — tweak anything, then Publish.'
-        : '✓ Game built by the built-in engine' + (result.fallbackReason ? ` (Gemini unavailable: ${String(result.fallbackReason).slice(0, 90)})` : '') + ' — tweak anything, then Publish.';
+        ? '✓ Game written by the AI exactly from your description — tweak anything, then Publish.'
+        : '⚠ The AI was unavailable, so a starter template was built instead' +
+          (result.fallbackReason ? ` — ${String(result.fallbackReason).slice(0, 130)}` : '') +
+          '. It may not match every detail of your description — the admin can fix the AI in Profile & Settings → AI configuration, then generate again.';
     }
-    showToast('Game generated — press Play in the live preview!', 'success', 4200);
+    if (result.source === 'gemini') {
+      showToast('Game generated from your description — press Play in the live preview!', 'success', 4200);
+    } else {
+      showToast('AI unavailable — a starter template was built instead. See the note under the Generate button for the exact reason.', 'warning', 6500);
+    }
   } catch (err) {
     console.error('AI game generation failed:', err);
     if (statusEl) statusEl.textContent = 'Generation failed: ' + (err.message || 'unknown error');
@@ -944,7 +956,11 @@ export async function scaffoldProjectWithAi() {
     setCodePane('files');
     scheduleGamePreview();
     saveEditorDraft();
-    showToast(`Playable version generated as index.html — your ${paths.length} source file${paths.length === 1 ? '' : 's'} stay${paths.length === 1 ? 's' : ''} in the project.`, 'success', 5200);
+    if (result.source === 'gemini') {
+      showToast(`Playable version generated as index.html — your ${paths.length} source file${paths.length === 1 ? '' : 's'} stay${paths.length === 1 ? 's' : ''} in the project.`, 'success', 5200);
+    } else {
+      showToast(`Playable shell built by the built-in engine${result.fallbackReason ? ` — the AI was unavailable (${String(result.fallbackReason).slice(0, 80)})` : ''}. Your source files stay in the project.`, 'warning', 6500);
+    }
   } catch (err) {
     console.error('AI scaffold failed:', err);
     showToast('Could not generate a playable version: ' + (err.message || 'unknown error'), 'error', 6000);

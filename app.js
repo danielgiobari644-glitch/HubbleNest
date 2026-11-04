@@ -281,6 +281,15 @@ import {
   openLinkGameExternally
 } from './games.js';
 
+// Platform AI health — used by the admin AI configuration panel to show the
+// exact live state (last real success/failure) and to run real test requests.
+import {
+  probeAiConfig,
+  invalidateAiRuntimeCache,
+  getLastAiFailure,
+  getLastAiSuccess
+} from './ai-client.js';
+
 import {
   registerArcade,
   initArcadeShell,
@@ -5369,6 +5378,7 @@ Object.assign(window.HubbleNest, {
   retryPushActivation,
   initAiSettingsUI,
   saveAiConfigFromSettings,
+  testAiFromSettings,
 
   // Rich-text compose toolbar
   rtWrap
@@ -5438,17 +5448,18 @@ export async function initPushSettingsUI() {
       ${activationErr ? `
       <div class="push-status-row push-status-warn">
         <span class="push-status-dot"></span>
-        <span><b>Activation failed on this device</b> (${escapeHtml(activationErr.code || 'error')}) —
-          this needs the one-time project fix: enable the
-          <a href="https://console.developers.google.com/apis/api/fcm.googleapis.com/overview?project=hubblenest" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary);">Firebase Cloud Messaging API</a>,
-          generate a Web Push certificate in Firebase Console → Project Settings → Cloud Messaging, then save it below.
-          If the Web API key is restricted (Google Cloud Console → Credentials), allow this site.</span>
+        <span><b>Activation failed on this device</b> (${escapeHtml(activationErr.code || 'error')}).
+          For a 401 / token-subscribe-failed this is a one-time PROJECT fix only the owner can do:
+          <b>1.</b> open the Firebase Console link below → <b>2.</b> make sure Firebase Cloud Messaging API is enabled
+          <b>3.</b> under “Web Push certificates” press <b>Generate key pair</b>
+          <b>4.</b> paste the public key below and press Save — every device retries automatically, no reload needed.</span>
       </div>` : ''}
       <div class="push-status-row push-status-info">
         <span class="push-status-dot"></span>
         <span>Reminder: the Firebase Cloud Messaging API must stay <b>enabled</b> for the hubblenest project (Google Cloud Console → APIs &amp; Services). That project setting also persists — it is never affected by re-uploading the app.</span>
       </div>
-      <div class="push-status-row push-status-info" style="justify-content: flex-end; gap: 10px;">
+      <div class="push-status-row push-status-info" style="justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
+        <a class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem; text-decoration: none;" href="https://console.firebase.google.com/u/0/project/hubblenest/settings/cloudmessaging" target="_blank" rel="noopener noreferrer">Open Firebase Console → Cloud Messaging ↗</a>
         <button type="button" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;" onclick="window.HubbleNest.retryPushActivation()">Retry activation on this device</button>
       </div>`;
     // Pre-fill the VAPID field when a project key is already stored.
@@ -5550,27 +5561,76 @@ export async function initAiSettingsUI() {
   statusEl.innerHTML = `<div class="push-status-loading">Reading your AI configuration…</div>`;
   try {
     const snap = await getDoc(doc(db, 'config', 'ai'));
+    const ok = getLastAiSuccess();
+    const fail = getLastAiFailure();
     if (snap.exists() && snap.data().apiKey) {
       const d = snap.data();
-      const model = d.model || 'gemini-2.0-flash';
+      const model = String(d.model || 'gemini-2.0-flash').trim();
+      const key = String(d.apiKey || '');
+      const fp = `${key.slice(0, 7)}…${key.slice(-4)}`;
+      const health = fail
+        ? `<div class="push-status-row push-status-warn">
+             <span class="push-status-dot"></span>
+             <span><b>The last AI request failed</b> (${escapeHtml(String(fail.message || fail.kind).slice(0, 170))}). Press <b>Test AI configuration</b> to verify a fix once you have replaced the key.</span>
+           </div>`
+        : (ok ? `<div class="push-status-row push-status-ok">
+             <span class="push-status-dot"></span>
+             <span><b>AI verified working</b> — the most recent real request succeeded.</span>
+           </div>` : '');
       statusEl.innerHTML = `
         <div class="push-status-row push-status-ok">
           <span class="push-status-dot"></span>
-          <span><b>AI connected:</b> model ${escapeHtml(model)} — Arcade prompts, every HubbleNest Bot and the Get Help assistant are live. The key survives every redeploy.</span>
-        </div>`;
-      const keyInput = document.getElementById('ai-key-input');
+          <span><b>Key saved:</b> ${escapeHtml(fp)} · model ${escapeHtml(model)} — Arcade prompts, every HubbleNest Bot and the Get Help assistant run on it. Stored in Firestore and survives every redeploy.</span>
+        </div>
+        ${health}`;
       const modelInput = document.getElementById('ai-model-input');
       if (modelInput && !modelInput.value) modelInput.value = model;
     } else {
       statusEl.innerHTML = `
         <div class="push-status-row push-status-info">
           <span class="push-status-dot"></span>
-          <span><b>No AI key yet</b> — the Arcade uses its built-in game engine (real playable games, zero config), while Bots and the Get Help assistant wait for a key. Add a free Google AI Studio key to switch everything on.</span>
+          <span><b>No AI key yet</b> — the Arcade uses its built-in game engine (real playable games, zero config), while Bots and the Get Help assistant wait for a key. Get a free Google AI Studio key to switch everything on.</span>
         </div>`;
     }
   } catch (err) {
     console.warn('AI config status failed:', err);
     statusEl.innerHTML = `<div class="push-status-row push-status-warn"><span class="push-status-dot"></span><span>Could not read the AI configuration (${escapeHtml(err?.code || 'error')}).</span></div>`;
+  }
+}
+
+/**
+ * REAL configuration test — sends one tiny genuine request through the exact
+ * same request layer bots/games/helper use, and reports the exact verdict
+ * (invalid key, blocked key, quota, wrong model …) instead of a guess.
+ * Tests the typed key first (before saving), otherwise the saved one.
+ */
+export async function testAiFromSettings() {
+  const statusEl = document.getElementById('ai-config-status');
+  const btn = document.getElementById('ai-test-btn');
+  const typedKey = (document.getElementById('ai-key-input')?.value || '').trim();
+  const typedModel = (document.getElementById('ai-model-input')?.value || '').trim();
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  if (statusEl) statusEl.innerHTML = `<div class="push-status-loading">Sending a real test request to the AI…</div>`;
+  try {
+    const res = await probeAiConfig(typedKey ? { apiKey: typedKey, model: typedModel } : {});
+    let row;
+    if (res.ok) {
+      row = `<div class="push-status-row push-status-ok">
+        <span class="push-status-dot"></span>
+        <span><b>AI test passed</b> — the service answered in ${res.ms} ms on ${escapeHtml(res.model)} ("${escapeHtml(res.reply || 'ready')}"). Bots, Get Help and AI game creation are live${typedKey ? ' — press Save AI configuration to keep the key you typed' : ''}.</span>
+      </div>`;
+      showToast('AI test passed — the configuration is working.', 'success');
+    } else {
+      row = `<div class="push-status-row push-status-warn">
+        <span class="push-status-dot"></span>
+        <span><b>AI test FAILED</b> — ${escapeHtml(res.detail || 'unknown reason')}<br>
+        Fix: create a fresh key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary);">aistudio.google.com/app/apikey</a>, paste it below, then press <b>Save AI configuration</b> (the key is tested automatically right after saving).</span>
+      </div>`;
+      showToast('AI test failed — the exact reason is shown in the panel.', 'error', 6000);
+    }
+    if (statusEl) statusEl.innerHTML = row + statusEl.innerHTML;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Test AI configuration'; }
   }
 }
 
@@ -5583,7 +5643,17 @@ export async function saveAiConfigFromSettings() {
   const apiKey = (keyInput?.value || '').trim();
   const model = (modelInput?.value || '').trim() || 'gemini-2.0-flash';
   if (!apiKey) {
-    showToast('Paste your Gemini API key first (aistudio.google.com → Get API key).', 'warning', 5000);
+    showToast('Paste your Google AI Studio key first — create one free at aistudio.google.com/app/apikey.', 'warning', 6000);
+    return;
+  }
+  // The project's Firebase Web API key is NOT an AI key — catch this common
+  // mix-up before it is saved (it would make every AI request fail).
+  if (apiKey === 'AIzaSyDfMNtJ9fl_4kWdNlLcPQlhG5kuxR35CO4') {
+    showToast('That is this project\'s Firebase Web API key, not an AI Studio key. Create a separate key at aistudio.google.com/app/apikey and paste that.', 'error', 8000);
+    return;
+  }
+  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(apiKey)) {
+    showToast('That does not look like a Google AI Studio key — real keys start with "AIza" and are about 39 characters. Get one at aistudio.google.com/app/apikey.', 'error', 8000);
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -5594,9 +5664,24 @@ export async function saveAiConfigFromSettings() {
       ownerUid: uid,
       updatedAt: serverTimestamp()
     }, { merge: true });
-    showToast('AI configuration saved — the Arcade can now write games with Gemini.', 'success', 5000);
     if (keyInput) keyInput.value = '';
+    invalidateAiRuntimeCache();
+    // Verify the saved key with a REAL request immediately — the admin learns
+    // in seconds whether bots/games/helper are actually live, with the exact
+    // failure reason when they are not.
+    const probe = await probeAiConfig();
     await initAiSettingsUI();
+    const statusEl = document.getElementById('ai-config-status');
+    if (statusEl) {
+      const row = probe.ok
+        ? `<div class="push-status-row push-status-ok"><span class="push-status-dot"></span><span><b>AI test passed</b> — the service answered in ${probe.ms} ms on ${escapeHtml(probe.model)}. Arcade prompts, bots and Get Help are live.</span></div>`
+        : `<div class="push-status-row push-status-warn"><span class="push-status-dot"></span><span><b>Saved — but the test request FAILED</b> — ${escapeHtml(probe.detail || 'unknown reason')}<br>Fix: get a fresh key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style="color: var(--accent-primary);">aistudio.google.com/app/apikey</a> and save it again.</span></div>`;
+      statusEl.innerHTML = row + statusEl.innerHTML;
+    }
+    showToast(probe.ok
+      ? 'AI configuration saved and verified — bots, Get Help and AI game creation are live.'
+      : 'AI configuration saved, but the test request failed — see the reason in the panel.',
+      probe.ok ? 'success' : 'error', 8000);
   } catch (err) {
     console.error('AI config save failed:', err);
     showToast(err?.code === 'permission-denied'
@@ -5641,6 +5726,15 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#notif-bell-btn') && !e.target.closest('#notifications-dropdown-menu')) {
     document.getElementById('notifications-dropdown-menu')?.classList.remove('menu-active');
   }
+});
+
+// Connectivity changes — calm, honest notices. Firestore's offline cache
+// keeps the app fully usable while offline; writes queue and sync on return.
+window.addEventListener('offline', () => {
+  showToast('You are offline — HubbleNest keeps working, and everything you post syncs automatically when the connection returns.', 'info', 5200);
+});
+window.addEventListener('online', () => {
+  showToast('Back online — syncing your data now.', 'success', 3000);
 });
 
 // Category filtering click handlers

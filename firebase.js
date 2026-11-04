@@ -68,7 +68,13 @@ try {
   firestoreInstance = initializeFirestore(app, {
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager()
-    })
+    }),
+    // Auto-detects networks where the default gRPC-style channel is blocked
+    // (school/campus/office proxies, some ISPs and VPNs) and transparently
+    // falls back to long polling — fixes "Could not reach Cloud Firestore
+    // backend. Backend didn't respond within 10 seconds" on those networks
+    // instead of leaving clients stuck in offline mode.
+    experimentalAutoDetectLongPolling: true
   });
 } catch (e) {
   console.warn('Could not initialize multi-tab persistent cache, falling back to standard Firestore:', e);

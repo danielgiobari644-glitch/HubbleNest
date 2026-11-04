@@ -20,23 +20,16 @@
  * preview, and the member stays in control before publishing.
  */
 
-import { db, doc, getDoc } from './firebase.js';
+import { getAiRuntime, callGenerateContent, safeAiErrorMessage, AiUserError } from './ai-client.js';
 
 /* ======================================================================
    AI CONFIG (config/ai — one-time setup in Settings, like the push config)
    ====================================================================== */
 
+/** Same vault as every other AI feature — one shared cached runtime. */
 export async function getAiConfig() {
-  try {
-    const snap = await getDoc(doc(db, 'config', 'ai'));
-    if (snap.exists()) {
-      const d = snap.data();
-      return { apiKey: d.apiKey || '', model: d.model || 'gemini-2.0-flash', ownerUid: d.ownerUid || '' };
-    }
-  } catch (e) {
-    console.warn('[HubbleNest] AI config not readable:', e?.code || e);
-  }
-  return { apiKey: '', model: 'gemini-2.0-flash', ownerUid: '' };
+  const cfg = await getAiRuntime();
+  return { apiKey: cfg.apiKey, model: cfg.model, ownerUid: '' };
 }
 
 /* ======================================================================
@@ -110,10 +103,15 @@ function defaultTitle(archetype) {
    GEMINI PATH
    ====================================================================== */
 
-const GEMINI_SYSTEM_PROMPT = `You are a senior HTML5 game developer. Write a COMPLETE, playable browser game.
+const GEMINI_SYSTEM_PROMPT = `You are a senior HTML5 game developer. Write a COMPLETE, playable browser game that matches the member's request EXACTLY.
 Answer with ONLY a JSON object (no markdown fences, no commentary) with EXACTLY these keys:
 {"title": string (max 60 chars), "description": string (max 200 chars), "html": string, "css": string, "js": string}
-Rules:
+FIDELITY RULES — the highest priority:
+- Implement EVERY mechanic, object, character, enemy, item, power-up, obstacle, rule, control, level, color, theme, setting and scoring detail the request mentions. Never drop, merge or substitute requested content.
+- If the request names a specific concept ("zombie survival shooter", "football penalty shootout", "space trading game", "chess"), build THAT game — not the nearest generic template.
+- When the request is underspecified, build the most standard version of the described game and reflect the request's own words in the title and description.
+- Every number the request gives (speed, sizes, counts, lives, targets) must be used as given.
+Technical rules:
 - html is the BODY content only (no <html>/<head>/<body> tags, no <script> or <link> tags).
 - css is plain CSS; js is plain browser JavaScript (canvas API allowed and encouraged).
 - The game MUST run instantly with no external assets, no network, no imports, no localStorage
@@ -122,32 +120,34 @@ Rules:
 - Keep total size under 350 KB. Make it polished, juicy and fun.`;
 
 export async function generateWithGemini(prompt, apiKey, model) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || 'gemini-2.0-flash')}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const requested = String(model || '').trim() || 'gemini-2.0-flash';
+  const generationConfig = { temperature: 0.8, maxOutputTokens: /gemini-(2\.5|3)/i.test(requested) ? 32768 : 8192 };
+  // Thinking-aware models burn output budget on hidden reasoning — switch it
+  // off so the entire budget goes to the game code itself.
+  if (/gemini-(2\.5|3)/i.test(requested)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+
+  // callGenerateContent classifies every failure into an exact, actionable
+  // message (invalid key / blocked key / quota / bad model …) and self-heals
+  // retired model names down a known-good chain.
+  const { text } = await callGenerateContent(
+    { apiKey, model: requested },
+    {
       contents: [{ role: 'user', parts: [{ text: GEMINI_SYSTEM_PROMPT + '\n\nGame request: ' + prompt }] }],
-      generationConfig: { temperature: 0.8, maxOutputTokens: 8192 }
-    })
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json())?.error?.message || ''; } catch (e) { /* ignore */ }
-    throw new Error(`Gemini API ${res.status}: ${detail.slice(0, 180) || res.statusText}`);
-  }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+      generationConfig
+    },
+    { allowModelFallback: true }
+  );
+
   const cleaned = text.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
   let obj;
   try { obj = JSON.parse(cleaned); } catch (e) {
     // Tolerate a JSON object embedded in prose
     const m = cleaned.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('The AI answer was not valid game JSON.');
+    if (!m) throw new AiUserError('The AI answered, but not with a valid game — try generating again.');
     obj = JSON.parse(m[0]);
   }
   if (!obj || typeof obj.html !== 'string' || typeof obj.js !== 'string') {
-    throw new Error('The AI answer was missing the html/js game code.');
+    throw new AiUserError('The AI answer was missing the game code — try generating again.');
   }
   return {
     title: String(obj.title || 'AI Game').slice(0, 60),
@@ -444,8 +444,9 @@ export function synthesizeGameFromPrompt(prompt) {
 
 /**
  * One entry point used by the Arcade editor.
- * Tries Gemini when a key is configured; falls back to the built-in
- * synthesizer (and reports honestly which path produced the game).
+ * Tries the AI when a key is configured; falls back to the built-in
+ * synthesizer and reports the EXACT reason the AI path failed, so a
+ * template game can never silently masquerade as the described one.
  */
 export async function generateGameCode(prompt) {
   const cfg = await getAiConfig();
@@ -454,9 +455,10 @@ export async function generateGameCode(prompt) {
       const result = await generateWithGemini(prompt, cfg.apiKey, cfg.model);
       return { ...result, fallbackReason: null };
     } catch (err) {
-      console.warn('[HubbleNest] Gemini generation failed, using the built-in game synthesizer:', err.message);
+      const reason = safeAiErrorMessage(err);
+      console.warn('[HubbleNest] AI game generation failed — built-in synthesizer used instead. Reason:', reason);
       const result = synthesizeGameFromPrompt(prompt);
-      return { ...result, fallbackReason: err.message };
+      return { ...result, fallbackReason: reason };
     }
   }
   return { ...synthesizeGameFromPrompt(prompt), fallbackReason: null };

@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=26) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=27) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=26" />
+  <link rel="modulepreload" href="./app.js?v=27" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=26" />
+  <link rel="stylesheet" href="./style.css?v=27" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -99,7 +99,7 @@
         'toggleComposerMenu', 'closeComposerMenu', 'composerMenuApply',
         'composerMenuPickImage', 'composerMenuPickFile',
         'toggleAiPanel', 'refreshAiPanelStatus', 'generateGameFromPrompt',
-        'scaffoldProjectWithAi', 'saveAiConfigFromSettings', 'initAiSettingsUI',
+        'scaffoldProjectWithAi', 'saveAiConfigFromSettings', 'testAiFromSettings', 'initAiSettingsUI',
         'handleSaveProfileFromPage', 'dismissInstallBanner',
         'loadMyContacts', 'addContactByUsername', 'addFoundContact',
         'removeContactFromList', 'addContactFromProfile', 'removeContactFromProfile',
@@ -2441,6 +2441,7 @@
                 <div class="push-config-actions">
                   <button type="button" class="btn btn-primary" id="push-save-btn" onclick="window.HubbleNest.savePushConfigFromSettings()">Save push configuration</button>
                   <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.testPushFromSettings()">Send a test push to this device</button>
+                  <a class="btn btn-secondary" style="text-decoration: none;" href="https://console.firebase.google.com/u/0/project/hubblenest/settings/cloudmessaging" target="_blank" rel="noopener noreferrer">Open Firebase Console → Cloud Messaging ↗</a>
                 </div>
               </div>
 
@@ -2466,7 +2467,13 @@
                 </div>
                 <div class="push-config-actions">
                   <button type="button" class="btn btn-primary" id="ai-save-btn" onclick="window.HubbleNest.saveAiConfigFromSettings()">Save AI configuration</button>
+                  <button type="button" class="btn btn-secondary" id="ai-test-btn" onclick="window.HubbleNest.testAiFromSettings()">Test AI configuration</button>
+                  <a class="btn btn-secondary" style="text-decoration: none;" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Get a free API key ↗</a>
                 </div>
+                <p class="settings-hint">
+                  Valid models: <b>gemini-2.0-flash</b> (recommended) or <b>gemini-2.5-flash</b>. The Test button sends one real
+                  request and reports the exact result — so an invalid, expired or restricted key can never hide behind a generic error.
+                </p>
               </div>
 
               <div class="form-footer">
@@ -3463,7 +3470,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=26"></script>
+  <script type="module" src="./app.js?v=27"></script>
 
 </body>
 </html>

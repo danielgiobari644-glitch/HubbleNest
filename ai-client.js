@@ -1,23 +1,28 @@
 /**
- * HubbleNest AI Client — the shared intelligence layer for Bots and the
- * built-in HubbleNest Helper.
+ * HubbleNest AI Client — the shared intelligence layer for Bots, the
+ * HubbleNest Helper and the Arcade's AI game builder.
  *
  * Architecture (honest, no placeholders):
  *  - The platform key lives ONCE in Firestore `config/ai` (saved by the
- *    project owner in Profile & Settings → AI configuration). It is the same
- *    vault the Arcade's AI Game Builder already uses, so one configuration
- *    powers games, bots and the helper.
+ *    project owner in Profile & Settings → AI configuration). One
+ *    configuration powers games, bots and the helper.
  *  - Requests are real HTTPS round-trips to the configured model endpoint.
  *    Nothing is simulated; when no key is configured the caller gets a clear,
  *    actionable setup message instead of a fake answer.
+ *  - EVERY failure is classified from Google's real response body
+ *    (error.message + error.details[].reason) and turned into a precise,
+ *    actionable, UI-safe message — an invalid/expired key can never again
+ *    masquerade as a generic "connection problem".
+ *  - Invalid or retired model names self-heal: the client transparently
+ *    retries down a known-good model chain.
  *  - The provider stays an implementation detail: no provider name, model
- *    name or endpoint is ever rendered in the user interface. UI strings only
- *    ever say "AI".
+ *    name or endpoint is ever rendered in normal user interfaces. UI strings
+ *    only ever say "AI" (the admin configuration panel is the one exception:
+ *    it names Gemini because the key is created there).
  *  - Upgrade path (documented, not pretended): this is a client-side
  *    integration because HubbleNest ships as a static app. Rate limiting is
  *    enforced client-side (per-device cooldowns + daily caps); a server-side
- *    proxy (e.g. a Cloud Function in front of the same config vault) is the
- *    documented hardening step when one becomes available.
+ *    proxy is the documented hardening step when one becomes available.
  */
 
 import { db, doc, getDoc } from './firebase.js';
@@ -35,8 +40,8 @@ export async function getAiRuntime() {
     const snap = await getDoc(doc(db, 'config', 'ai'));
     if (snap.exists() && snap.data().apiKey) {
       cfg = {
-        apiKey: String(snap.data().apiKey || ''),
-        model: String(snap.data().model || 'gemini-2.0-flash')
+        apiKey: String(snap.data().apiKey || '').trim(),
+        model: String(snap.data().model || 'gemini-2.0-flash').trim() || 'gemini-2.0-flash'
       };
     }
   } catch (e) {
@@ -45,6 +50,12 @@ export async function getAiRuntime() {
   cachedConfig = cfg;
   cachedAt = now;
   return cfg;
+}
+
+/** Forget the cached runtime (called right after the admin saves a key). */
+export function invalidateAiRuntimeCache() {
+  cachedConfig = null;
+  cachedAt = 0;
 }
 
 /** Is the platform AI configured? */
@@ -108,6 +119,244 @@ export function safeAiErrorMessage(err) {
     return 'The AI service is at capacity right now. Please try again in a little while.';
   }
   return 'The AI could not answer right now. Check your connection and try again.';
+}
+
+/* ----------------------------------------------------------------------
+   Failure taxonomy — real causes, exact messages.
+   Google's error body is parsed into { message, reason } and mapped:
+     API_KEY_INVALID / "API key not valid"  → key-invalid
+     API_KEY_SERVICE_BLOCKED / 403          → key-blocked
+     404 NOT_FOUND (model)                  → model-missing  (self-heals)
+     RESOURCE_EXHAUSTED / 429               → quota
+     400 "Unknown name"/"Invalid JSON"      → retryable shape (self-heals)
+     503 UNAVAILABLE                        → overloaded
+   ---------------------------------------------------------------------- */
+
+const AI_KEY_FIX = 'The admin can fix this once in Profile & Settings → AI configuration — free keys: aistudio.google.com/app/apikey.';
+
+function looksLikeModelMissing(status, message) {
+  if (status === 404) return true;
+  return /not found|not supported|unsupported/i.test(message || '');
+}
+
+function classifyModelFailure(status, apiMessage, reason) {
+  const msg = String(apiMessage || '');
+  const why = String(reason || '');
+  if (status === 400 && (why === 'API_KEY_INVALID' || why === 'API_KEY_EXPIRED' || /api key not valid|api key expired/i.test(msg))) {
+    return {
+      kind: 'key-invalid',
+      message: `The saved AI key was rejected by the AI service as invalid or expired — bots, Get Help and AI game creation all fail until it is replaced. ${AI_KEY_FIX}`
+    };
+  }
+  if (status === 403 || why === 'API_KEY_SERVICE_BLOCKED' || why === 'API_TARGET_BLOCKED' || /are blocked|permission denied/i.test(msg)) {
+    return {
+      kind: 'key-blocked',
+      message: `The AI service blocked this app's key (the key is restricted, or the AI API is switched off for it). ${AI_KEY_FIX}`
+    };
+  }
+  if (looksLikeModelMissing(status, msg)) {
+    return {
+      kind: 'model-missing',
+      message: 'The configured AI model name does not exist. The admin should set the model to "gemini-2.0-flash" (or "gemini-2.5-flash") in Profile & Settings → AI configuration.'
+    };
+  }
+  if (status === 429 || why === 'RESOURCE_EXHAUSTED' || /quota/i.test(msg)) {
+    return {
+      kind: 'quota',
+      message: 'The AI is at its request quota right now. Please try again in a little while.'
+    };
+  }
+  if (status === 503 || why === 'UNAVAILABLE' || /overloaded|unavailable/i.test(msg)) {
+    return {
+      kind: 'overloaded',
+      message: 'The AI is overloaded at the moment. Give it a minute and try again.'
+    };
+  }
+  if (status === 400 && /unknown name|invalid json payload|invalid value/i.test(msg)) {
+    return {
+      kind: 'bad-request-retryable',
+      message: 'The AI rejected one of the request options — HubbleNest will retry it in a simpler form automatically.'
+    };
+  }
+  return {
+    kind: 'unknown',
+    message: `The AI could not answer right now (service error ${status || '—'}). Check your connection and try again; if it keeps failing, the admin should run "Test AI configuration" in Profile & Settings.`
+  };
+}
+
+/** The last model-level failure/success — surfaced in the admin AI panel. */
+let lastAiFailure = null;   // { at, kind, status, message, model }
+let lastAiSuccess = null;   // { at, model, ms }
+
+export function getLastAiFailure() { return lastAiFailure; }
+export function getLastAiSuccess() { return lastAiSuccess; }
+export function resetAiHealth() { lastAiFailure = null; lastAiSuccess = null; }
+
+/* ----------------------------------------------------------------------
+   Low-level model call (implementation detail — never surfaced raw in UI).
+   ---------------------------------------------------------------------- */
+
+const MODEL_FALLBACK_CHAIN = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+
+/** gemini-2.5+ accept a thinkingConfig switch; older models reject it. */
+function isThinkingAwareModel(model) {
+  return /gemini-(2\.5|3)/i.test(String(model || ''));
+}
+
+async function rawModelRequest(model, apiKey, body) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    const err = new AiUserError('The AI is unreachable right now — check your internet connection and try again.');
+    err.kind = 'network';
+    throw err;
+  }
+  return res;
+}
+
+async function parseErrorResponse(res) {
+  let apiMessage = '';
+  let reason = '';
+  try {
+    const data = await res.json();
+    apiMessage = data?.error?.message || '';
+    const details = Array.isArray(data?.error?.details) ? data.error.details : [];
+    for (const d of details) {
+      if (d?.reason) { reason = d.reason; break; }
+    }
+  } catch (e) { /* body unreadable — fall through with empty strings */ }
+  return { apiMessage, reason };
+}
+
+function extractAnswerText(data) {
+  return data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+}
+
+function stripOptionalRequestFields(body) {
+  // Keep only what every model version accepts: contents + systemInstruction.
+  const minimal = { contents: body.contents };
+  if (body.systemInstruction) minimal.systemInstruction = body.systemInstruction;
+  if (body.generationConfig) {
+    const gc = {};
+    if (body.generationConfig.temperature !== undefined) gc.temperature = body.generationConfig.temperature;
+    if (body.generationConfig.maxOutputTokens !== undefined) gc.maxOutputTokens = body.generationConfig.maxOutputTokens;
+    minimal.generationConfig = gc;
+  }
+  return minimal;
+}
+
+/**
+ * One classified round-trip to the model endpoint.
+ * Throws AiUserError with the EXACT actionable reason on failure.
+ * @returns {{ text: string, model: string }}
+ */
+export async function callGenerateContent(cfg, body, opts = {}) {
+  const apiKey = String(cfg?.apiKey || '').trim();
+  if (!apiKey) {
+    throw new AiUserError('HubbleNest AI is not switched on yet. The project admin can enable it once in Profile & Settings → AI configuration.');
+  }
+  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(apiKey)) {
+    throw new AiUserError(`The saved AI key does not look like a Google AI Studio key (real keys start with "AIza" and are ~39 characters). ${AI_KEY_FIX}`);
+  }
+
+  const configuredModel = String(cfg?.model || '').trim() || 'gemini-2.0-flash';
+  const allowFallback = opts.allowModelFallback !== false;
+  const chain = [configuredModel];
+  if (allowFallback) {
+    for (const m of MODEL_FALLBACK_CHAIN) {
+      if (m !== configuredModel && chain.length < 3) chain.push(m);
+    }
+  }
+
+  let lastClassified = null;
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    // Two shapes per model: full body first, minimal body when the model
+    // rejects an optional field (400 "Unknown name" / "Invalid JSON payload").
+    for (let shape = 0; shape < 2; shape++) {
+      const attemptBody = shape === 0 ? body : stripOptionalRequestFields(body);
+      const res = await rawModelRequest(model, apiKey, attemptBody);
+
+      if (res.ok) {
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* treated as empty below */ }
+        const text = extractAnswerText(data);
+        if (!text.trim()) {
+          const block = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason;
+          lastAiFailure = { at: Date.now(), kind: 'empty', status: 200, model, message: block || 'empty answer' };
+          throw new AiUserError(block && !/STOP/i.test(block)
+            ? 'The AI declined to answer that one. Try rephrasing your message.'
+            : 'The AI returned an empty answer — try sending that again.');
+        }
+        lastAiSuccess = { at: Date.now(), model, ms: opts._startedAt ? Math.round(performance.now() - opts._startedAt) : null };
+        lastAiFailure = null;
+        return { text: text.trim(), model };
+      }
+
+      const { apiMessage, reason } = await parseErrorResponse(res);
+      const cls = classifyModelFailure(res.status, apiMessage, reason);
+      lastClassified = { ...cls, status: res.status, model };
+
+      // A model name that does not exist → transparently try the next one.
+      if (cls.kind === 'model-missing' && i < chain.length - 1) {
+        console.warn(`[HubbleNest] AI model "${model}" not available (${res.status}) — retrying with "${chain[i + 1]}".`);
+        break; // next model in chain
+      }
+      // An optional field the model does not know → retry same model, minimal shape.
+      if (cls.kind === 'bad-request-retryable' && shape === 0) {
+        console.warn(`[HubbleNest] AI rejected a request option (${apiMessage.slice(0, 120)}) — retrying with a minimal request shape.`);
+        continue;
+      }
+      // Everything else is final: report the exact cause.
+      lastAiFailure = { at: Date.now(), kind: cls.kind, status: res.status, model, message: apiMessage.slice(0, 240) || cls.kind };
+      console.warn(`[HubbleNest] AI request failed (${res.status} ${cls.kind}): ${apiMessage.slice(0, 180)}`);
+      const err = new AiUserError(cls.message);
+      err.kind = cls.kind;
+      err.httpStatus = res.status;
+      err.apiMessage = apiMessage;
+      throw err;
+    }
+  }
+
+  // The whole chain was model-missing.
+  lastAiFailure = { at: Date.now(), kind: 'model-missing', status: 404, model: configuredModel, message: 'no model in the fallback chain answered' };
+  const err = new AiUserError(lastClassified?.message || 'The configured AI model name does not exist. The admin should set the model to "gemini-2.0-flash" in Profile & Settings → AI configuration.');
+  err.kind = 'model-missing';
+  throw err;
+}
+
+/**
+ * Real configuration probe for the admin "Test AI configuration" button.
+ * Sends a tiny genuine request and returns the exact verdict.
+ * @param {{ apiKey?: string, model?: string }} [override]  test an unsaved key first
+ * @returns {{ ok: boolean, model?: string, ms?: number, reply?: string, detail?: string }}
+ */
+export async function probeAiConfig(override = {}) {
+  let cfg;
+  if (override && override.apiKey) {
+    cfg = { apiKey: String(override.apiKey).trim(), model: String(override.model || 'gemini-2.0-flash').trim() };
+  } else {
+    cfg = await getAiRuntime();
+  }
+  if (!cfg.apiKey) {
+    return { ok: false, detail: 'No AI key to test yet — paste a key below and save, then test again.' };
+  }
+  const t0 = performance.now();
+  try {
+    const { text, model } = await callGenerateContent(cfg, {
+      contents: [{ role: 'user', parts: [{ text: 'Reply with exactly this single word: ready' }] }],
+      generationConfig: { temperature: 0 }
+    }, { allowModelFallback: true, _startedAt: t0 });
+    return { ok: true, model, ms: Math.round(performance.now() - t0), reply: text.slice(0, 60) };
+  } catch (err) {
+    return { ok: false, model: cfg.model, detail: safeAiErrorMessage(err) };
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -205,13 +454,18 @@ export async function sendBotChatMessage(bot, history, message) {
   }
   contents.push({ role: 'user', parts: [{ text }] });
 
-  const res = await requestModel(cfg, {
+  const generationConfig = { temperature: 0.85, maxOutputTokens: 2048, topP: 0.95 };
+  // Thinking-aware models spend tokens thinking first — switch it off so the
+  // whole budget goes to the reply (and so short budgets cannot truncate it).
+  if (isThinkingAwareModel(cfg.model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+
+  const res = await callGenerateContent(cfg, {
     systemInstruction: { parts: [{ text: buildBotSystemPrompt(bot) }] },
     contents,
-    generationConfig: { temperature: 0.85, maxOutputTokens: 2048, topP: 0.95 }
+    generationConfig
   });
   bumpDailyCount();
-  return { text: res };
+  return { text: res.text };
 }
 
 /* ----------------------------------------------------------------------
@@ -259,45 +513,14 @@ export async function sendHelperMessage(history, message) {
   }
   contents.push({ role: 'user', parts: [{ text }] });
 
-  const res = await requestModel(cfg, {
+  const generationConfig = { temperature: 0.6, maxOutputTokens: 1200, topP: 0.9 };
+  if (isThinkingAwareModel(cfg.model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+
+  const res = await callGenerateContent(cfg, {
     systemInstruction: { parts: [{ text: HELPER_SYSTEM_PROMPT }] },
     contents,
-    generationConfig: { temperature: 0.6, maxOutputTokens: 1200, topP: 0.9 }
+    generationConfig
   });
   bumpDailyCount();
-  return { text: res };
-}
-
-/* ----------------------------------------------------------------------
-   Low-level model call (implementation detail — never surfaced in UI).
-   ---------------------------------------------------------------------- */
-async function requestModel(cfg, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-  } catch (e) {
-    throw new AiUserError('The AI is unreachable right now — check your internet connection and try again.');
-  }
-  if (!res.ok) {
-    let code = '';
-    try { code = (await res.json())?.error?.status || ''; } catch (e) { /* ignore */ }
-    const err = new Error(`model request failed (${res.status}) ${code}`);
-    err.status = res.status;
-    err.code = code;
-    throw err;
-  }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-  if (!text.trim()) {
-    const block = data?.promptFeedback?.blockReason;
-    throw new AiUserError(block
-      ? 'The AI declined to answer that one. Try rephrasing your message.'
-      : 'The AI returned an empty answer — try sending that again.');
-  }
-  return text.trim();
+  return { text: res.text };
 }

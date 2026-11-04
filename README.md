@@ -202,6 +202,52 @@ effect server-side), but the following stay client-side only:
   content writes (posts, messages, requests, games, joins), not just in the
   UI.
 
+**"@firebase/firestore: Could not reach Cloud Firestore backend. Backend
+didn't respond within 10 seconds… the client will operate in offline mode":**
+that warning means the device's network could not reach Google's servers in
+that moment — the app KEEPS WORKING (reads come from the on-device cache and
+writes queue up), and everything syncs automatically the moment connectivity
+returns. To make flaky or restricted networks converge faster, this build
+enables Firestore's automatic long-polling fallback
+(`experimentalAutoDetectLongPolling` in `firebase.js`) — it detects proxies,
+campus/office firewalls and VPNs that block the default streaming channel and
+switches to a plain HTTPS poll that they allow. You should no longer see
+repeated 10-second backend timeouts on those networks. The app also raises a
+calm toast when the device goes offline and when it comes back — no separate
+diagnostics panel is needed.
+
+**Bots, Get Help or the AI game builder fail — generativelanguage.googleapis.com
+returns 400 "API key not valid" (or bots answer with a failure message):**
+the AI key saved in Firestore `config/ai` was rejected by the AI service —
+it is invalid, expired, or was revoked. This is fixed with a fresh FREE key
+(2 minutes):
+
+1. Open <https://aistudio.google.com/app/apikey> (sign in with any Google
+   account) → **Create API key** → copy the key that starts with `AIza`
+   (about 39 characters — it is NOT the project's Firebase Web API key).
+2. Open HubbleNest → **Profile & Settings → AI configuration** (admin only)
+   → paste the key → **Save AI configuration**. The app now runs a REAL test
+   request immediately after saving and shows the verdict:
+   **"AI test passed"** (bots, Get Help and AI game creation are live) or the
+   exact failure reason with the fix.
+3. You can also press **Test AI configuration** at any time — it sends one
+   tiny real request through the same request layer every AI feature uses.
+4. If the test still fails after replacing the key, the reasons the panel
+   reports are exact: *invalid or expired key* (create another one),
+   *key restricted / API blocked* (create a key without API restrictions), or
+   *quota exhausted* (wait and retry). An outdated model name also self-heals:
+   the app transparently retries on a known-good model chain.
+
+**AI game creation falls back to a "starter template" instead of writing the
+described game:** that is the honest fallback — it only happens when the AI
+request itself failed (typically the 400 invalid-key case above) or no key is
+saved yet. The editor status line and toast show the exact reason; fix the AI
+key per the section above, press **Test AI configuration**, and the next
+"⚡ Generate my game" writes the real described game. The prompt engine is
+instructed to implement EVERY mechanic, character, number and rule from the
+description — when the AI path succeeds, the game matches the description
+exactly.
+
 **After deploying a new build, an old service worker keeps serving stale
 files (or the app renders a MIX of old and new code):**
 the shipped worker (v12) makes deploys converge by themselves:
