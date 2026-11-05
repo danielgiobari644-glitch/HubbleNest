@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=27) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=28) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=27" />
+  <link rel="modulepreload" href="./app.js?v=28" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=27" />
+  <link rel="stylesheet" href="./style.css?v=28" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -2450,7 +2450,9 @@
                 <p class="settings-hint">
                   Paste a free Google AI Studio key to switch on the platform AI — it writes full custom
                   Arcade games from prompts AND powers every HubbleNest Bot conversation and the Get Help
-                  assistant (aistudio.google.com → Get API key). Stored once in this project's Firestore like
+                  assistant. Get it at aistudio.google.com → Get API key: Google now issues secure
+                  <b>"AQ." Auth keys</b> (they start with "AQ."); classic "AIza" keys are accepted while
+                  they still work. Stored once in this project's Firestore like
                   the push config — it survives every redeploy. Without a key the Arcade still generates real
                   playable games with its built-in game engine.
                 </p>
@@ -2459,11 +2461,11 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="ai-key-input">Gemini API key</label>
-                  <input type="password" id="ai-key-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="AIza… (leave blank to keep the saved one)" />
+                  <input type="password" id="ai-key-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="AQ.… or AIza… (leave blank to keep the saved one)" />
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="ai-model-input">Model</label>
-                  <input type="text" id="ai-model-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="gemini-2.0-flash" />
+                  <input type="text" id="ai-model-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="gemini-2.5-flash" />
                 </div>
                 <div class="push-config-actions">
                   <button type="button" class="btn btn-primary" id="ai-save-btn" onclick="window.HubbleNest.saveAiConfigFromSettings()">Save AI configuration</button>
@@ -2471,8 +2473,9 @@
                   <a class="btn btn-secondary" style="text-decoration: none;" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Get a free API key ↗</a>
                 </div>
                 <p class="settings-hint">
-                  Valid models: <b>gemini-2.0-flash</b> (recommended) or <b>gemini-2.5-flash</b>. The Test button sends one real
-                  request and reports the exact result — so an invalid, expired or restricted key can never hide behind a generic error.
+                  Valid models: <b>gemini-2.5-flash</b> (recommended), <b>gemini-2.0-flash</b> or
+                  <b>gemini-flash-latest</b>. The Test button sends one real
+                  request and reports the exact result — so an invalid, expired, retired or restricted key can never hide behind a generic error.
                 </p>
               </div>
 
@@ -3470,7 +3473,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=27"></script>
+  <script type="module" src="./app.js?v=28"></script>
 
 </body>
 </html>

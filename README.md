@@ -219,24 +219,33 @@ diagnostics panel is needed.
 **Bots, Get Help or the AI game builder fail — generativelanguage.googleapis.com
 returns 400 "API key not valid" (or bots answer with a failure message):**
 the AI key saved in Firestore `config/ai` was rejected by the AI service —
-it is invalid, expired, or was revoked. This is fixed with a fresh FREE key
-(2 minutes):
+it is invalid, expired, revoked, or it is a classic key that Google has now
+permanently retired. This is fixed with a fresh FREE key (2 minutes):
 
 1. Open <https://aistudio.google.com/app/apikey> (sign in with any Google
-   account) → **Create API key** → copy the key that starts with `AIza`
-   (about 39 characters — it is NOT the project's Firebase Web API key).
+   account) → **Create API key** → copy the key. Google's security
+   infrastructure has been permanently upgraded: AI Studio now exclusively
+   issues **Auth keys that start with `AQ.`** (they contain dots). The classic
+   `AIza` Traffic keys (~39 characters) are being rejected outright by Google,
+   so if your saved key starts with `AIza` and fails, replacing it with a new
+   `AQ.` key is the fix. It is NOT the project's Firebase Web API key.
 2. Open HubbleNest → **Profile & Settings → AI configuration** (admin only)
-   → paste the key → **Save AI configuration**. The app now runs a REAL test
+   → paste the `AQ.` key → **Save AI configuration**. Both key formats are
+   accepted, and the key is sent through the documented `x-goog-api-key`
+   header. The app now runs a REAL test
    request immediately after saving and shows the verdict:
    **"AI test passed"** (bots, Get Help and AI game creation are live) or the
    exact failure reason with the fix.
 3. You can also press **Test AI configuration** at any time — it sends one
    tiny real request through the same request layer every AI feature uses.
 4. If the test still fails after replacing the key, the reasons the panel
-   reports are exact: *invalid or expired key* (create another one),
-   *key restricted / API blocked* (create a key without API restrictions), or
+   reports are exact: *invalid, expired or retired key* (create another one),
+   *credentials rejected with 401* (create the key in a NEW AI Studio project —
+   a known Google-side rollout issue), *key restricted / API blocked*
+   (create a key without API restrictions), or
    *quota exhausted* (wait and retry). An outdated model name also self-heals:
-   the app transparently retries on a known-good model chain.
+   the app transparently retries on a known-good model chain
+   (`gemini-2.5-flash` → `gemini-flash-latest` → `gemini-2.0-flash`).
 
 **AI game creation falls back to a "starter template" instead of writing the
 described game:** that is the honest fallback — it only happens when the AI

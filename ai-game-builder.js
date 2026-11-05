@@ -120,7 +120,7 @@ Technical rules:
 - Keep total size under 350 KB. Make it polished, juicy and fun.`;
 
 export async function generateWithGemini(prompt, apiKey, model) {
-  const requested = String(model || '').trim() || 'gemini-2.0-flash';
+  const requested = String(model || '').trim() || 'gemini-2.5-flash';
   const generationConfig = { temperature: 0.8, maxOutputTokens: /gemini-(2\.5|3)/i.test(requested) ? 32768 : 8192 };
   // Thinking-aware models burn output budget on hidden reasoning — switch it
   // off so the entire budget goes to the game code itself.

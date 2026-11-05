@@ -15,6 +15,12 @@
  *    masquerade as a generic "connection problem".
  *  - Invalid or retired model names self-heal: the client transparently
  *    retries down a known-good model chain.
+ *  - KEY FORMATS (2026 Google security upgrade): Google AI Studio now
+ *    exclusively issues "AQ." Auth keys (Google's permanent replacement for
+ *    classic "AIza" Traffic keys, which Google rejects outright since its
+ *    staged shutdown completed). Both real formats are accepted; requests
+ *    authenticate through the documented x-goog-api-key header, which works
+ *    for every format and keeps the key out of URLs and proxy logs.
  *  - The provider stays an implementation detail: no provider name, model
  *    name or endpoint is ever rendered in normal user interfaces. UI strings
  *    only ever say "AI" (the admin configuration panel is the one exception:
@@ -35,13 +41,13 @@ const CONFIG_TTL_MS = 5 * 60 * 1000;
 export async function getAiRuntime() {
   const now = Date.now();
   if (cachedConfig && now - cachedAt < CONFIG_TTL_MS) return cachedConfig;
-  let cfg = { apiKey: '', model: 'gemini-2.0-flash' };
+  let cfg = { apiKey: '', model: 'gemini-2.5-flash' };
   try {
     const snap = await getDoc(doc(db, 'config', 'ai'));
     if (snap.exists() && snap.data().apiKey) {
       cfg = {
         apiKey: String(snap.data().apiKey || '').trim(),
-        model: String(snap.data().model || 'gemini-2.0-flash').trim() || 'gemini-2.0-flash'
+        model: String(snap.data().model || 'gemini-2.5-flash').trim() || 'gemini-2.5-flash'
       };
     }
   } catch (e) {
@@ -134,6 +140,22 @@ export function safeAiErrorMessage(err) {
 
 const AI_KEY_FIX = 'The admin can fix this once in Profile & Settings → AI configuration — free keys: aistudio.google.com/app/apikey.';
 
+/* ----------------------------------------------------------------------
+   Key validation — both REAL Google formats, no guessing:
+     "AQ.…"   Auth key — what Google AI Studio now exclusively issues
+              (Google's permanent security upgrade; contains dots).
+     "AIza…"  classic Traffic key (~39 chars) — accepted while Google's
+              staged retirement completes, but retired ones are rejected
+              by Google outright, so a fresh "AQ." key is the reliable
+              choice when an old key starts failing with 400 API_KEY_INVALID.
+   ---------------------------------------------------------------------- */
+const AI_KEY_PATTERN = /^(?:AIza[0-9A-Za-z_-]{30,}|AQ\.[A-Za-z0-9._-]{20,})$/;
+
+/** True when the string is a real Google AI Studio key (either format). */
+export function isValidAiKey(key) {
+  return AI_KEY_PATTERN.test(String(key || '').trim());
+}
+
 function looksLikeModelMissing(status, message) {
   if (status === 404) return true;
   return /not found|not supported|unsupported/i.test(message || '');
@@ -145,7 +167,13 @@ function classifyModelFailure(status, apiMessage, reason) {
   if (status === 400 && (why === 'API_KEY_INVALID' || why === 'API_KEY_EXPIRED' || /api key not valid|api key expired/i.test(msg))) {
     return {
       kind: 'key-invalid',
-      message: `The saved AI key was rejected by the AI service as invalid or expired — bots, Get Help and AI game creation all fail until it is replaced. ${AI_KEY_FIX}`
+      message: `The AI service rejected the saved key as invalid, expired or retired — Google has permanently retired the classic "AIza" Traffic keys, so old keys now fail with exactly this error. Create a fresh key (new keys are "AQ." Auth keys) — bots, Get Help and AI game creation all come back the moment it is saved. ${AI_KEY_FIX}`
+    };
+  }
+  if (status === 401 || why === 'UNAUTHENTICATED' || /ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(`${why} ${msg}`)) {
+    return {
+      kind: 'auth-rejected',
+      message: `The AI service rejected the saved key's credentials (401). Create a FRESH key at aistudio.google.com/app/apikey (new keys are "AQ." Auth keys, already restricted to the AI API) and save it in Profile & Settings → AI configuration. If a brand-new key is still rejected, create it inside a NEW AI Studio project — that is a known Google-side rollout issue. ${AI_KEY_FIX}`
     };
   }
   if (status === 403 || why === 'API_KEY_SERVICE_BLOCKED' || why === 'API_TARGET_BLOCKED' || /are blocked|permission denied/i.test(msg)) {
@@ -157,7 +185,7 @@ function classifyModelFailure(status, apiMessage, reason) {
   if (looksLikeModelMissing(status, msg)) {
     return {
       kind: 'model-missing',
-      message: 'The configured AI model name does not exist. The admin should set the model to "gemini-2.0-flash" (or "gemini-2.5-flash") in Profile & Settings → AI configuration.'
+      message: 'The configured AI model name does not exist. The admin should set the model to "gemini-2.5-flash" (or "gemini-flash-latest") in Profile & Settings → AI configuration.'
     };
   }
   if (status === 429 || why === 'RESOURCE_EXHAUSTED' || /quota/i.test(msg)) {
@@ -196,7 +224,7 @@ export function resetAiHealth() { lastAiFailure = null; lastAiSuccess = null; }
    Low-level model call (implementation detail — never surfaced raw in UI).
    ---------------------------------------------------------------------- */
 
-const MODEL_FALLBACK_CHAIN = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+const MODEL_FALLBACK_CHAIN = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
 
 /** gemini-2.5+ accept a thinkingConfig switch; older models reject it. */
 function isThinkingAwareModel(model) {
@@ -204,12 +232,16 @@ function isThinkingAwareModel(model) {
 }
 
 async function rawModelRequest(model, apiKey, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  // Auth via the documented x-goog-api-key header — it is the one method
+  // Google accepts for BOTH key formats (new "AQ." Auth keys and classic
+  // "AIza" Traffic keys), and it keeps the key out of URLs, where proxies,
+  // browser history and server logs would otherwise record it.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   let res;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(body)
     });
   } catch (e) {
@@ -261,11 +293,11 @@ export async function callGenerateContent(cfg, body, opts = {}) {
   if (!apiKey) {
     throw new AiUserError('HubbleNest AI is not switched on yet. The project admin can enable it once in Profile & Settings → AI configuration.');
   }
-  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(apiKey)) {
-    throw new AiUserError(`The saved AI key does not look like a Google AI Studio key (real keys start with "AIza" and are ~39 characters). ${AI_KEY_FIX}`);
+  if (!isValidAiKey(apiKey)) {
+    throw new AiUserError(`The saved AI key is not a valid Google AI Studio key. Google now issues "AQ." Auth keys (they start with "AQ."); classic keys started with "AIza" and are being retired. ${AI_KEY_FIX}`);
   }
 
-  const configuredModel = String(cfg?.model || '').trim() || 'gemini-2.0-flash';
+  const configuredModel = String(cfg?.model || '').trim() || 'gemini-2.5-flash';
   const allowFallback = opts.allowModelFallback !== false;
   const chain = [configuredModel];
   if (allowFallback) {
@@ -326,7 +358,7 @@ export async function callGenerateContent(cfg, body, opts = {}) {
 
   // The whole chain was model-missing.
   lastAiFailure = { at: Date.now(), kind: 'model-missing', status: 404, model: configuredModel, message: 'no model in the fallback chain answered' };
-  const err = new AiUserError(lastClassified?.message || 'The configured AI model name does not exist. The admin should set the model to "gemini-2.0-flash" in Profile & Settings → AI configuration.');
+  const err = new AiUserError(lastClassified?.message || 'The configured AI model name does not exist. The admin should set the model to "gemini-2.5-flash" in Profile & Settings → AI configuration.');
   err.kind = 'model-missing';
   throw err;
 }
@@ -340,7 +372,7 @@ export async function callGenerateContent(cfg, body, opts = {}) {
 export async function probeAiConfig(override = {}) {
   let cfg;
   if (override && override.apiKey) {
-    cfg = { apiKey: String(override.apiKey).trim(), model: String(override.model || 'gemini-2.0-flash').trim() };
+    cfg = { apiKey: String(override.apiKey).trim(), model: String(override.model || 'gemini-2.5-flash').trim() };
   } else {
     cfg = await getAiRuntime();
   }

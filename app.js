@@ -287,7 +287,8 @@ import {
   probeAiConfig,
   invalidateAiRuntimeCache,
   getLastAiFailure,
-  getLastAiSuccess
+  getLastAiSuccess,
+  isValidAiKey
 } from './ai-client.js';
 
 import {
@@ -5565,7 +5566,7 @@ export async function initAiSettingsUI() {
     const fail = getLastAiFailure();
     if (snap.exists() && snap.data().apiKey) {
       const d = snap.data();
-      const model = String(d.model || 'gemini-2.0-flash').trim();
+      const model = String(d.model || 'gemini-2.5-flash').trim();
       const key = String(d.apiKey || '');
       const fp = `${key.slice(0, 7)}…${key.slice(-4)}`;
       const health = fail
@@ -5641,7 +5642,7 @@ export async function saveAiConfigFromSettings() {
   const modelInput = document.getElementById('ai-model-input');
   const btn = document.getElementById('ai-save-btn');
   const apiKey = (keyInput?.value || '').trim();
-  const model = (modelInput?.value || '').trim() || 'gemini-2.0-flash';
+  const model = (modelInput?.value || '').trim() || 'gemini-2.5-flash';
   if (!apiKey) {
     showToast('Paste your Google AI Studio key first — create one free at aistudio.google.com/app/apikey.', 'warning', 6000);
     return;
@@ -5652,8 +5653,8 @@ export async function saveAiConfigFromSettings() {
     showToast('That is this project\'s Firebase Web API key, not an AI Studio key. Create a separate key at aistudio.google.com/app/apikey and paste that.', 'error', 8000);
     return;
   }
-  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(apiKey)) {
-    showToast('That does not look like a Google AI Studio key — real keys start with "AIza" and are about 39 characters. Get one at aistudio.google.com/app/apikey.', 'error', 8000);
+  if (!isValidAiKey(apiKey)) {
+    showToast('That is not a valid Google AI Studio key. Google now issues "AQ." Auth keys — they start with "AQ." and contain dots (classic "AIza" keys are accepted while they still work, but Google is retiring them). Create a fresh key at aistudio.google.com/app/apikey.', 'error', 8000);
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
