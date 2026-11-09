@@ -274,6 +274,11 @@ the shipped worker (v12) makes deploys converge by themselves:
 - **The page auto-reloads once** when a newly installed worker takes over
   (`controllerchange`), so the classic "deployed but nothing changed, had to
   reload twice" is gone.
+- **Open tabs and installed PWAs discover new deploys by themselves**: the app
+  re-checks the worker every 20 minutes, whenever the tab becomes visible
+  again, and when the network returns (`registration.update()`). A new deploy
+  is installed + claimed + the page reloads once automatically — members no
+  longer need to refresh manually to see new HubbleNest changes.
 
 If a tab is STILL stuck on a worker from v8 or earlier (strict cache-first):
 migrate it once: DevTools → Application → Service Workers → **Unregister**,

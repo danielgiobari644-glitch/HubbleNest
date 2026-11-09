@@ -1377,13 +1377,30 @@ export async function botChatSend(retryText = null) {
     const botMsg = { role: 'bot', text: answer, createdAt: new Date() };
     lastFailedMessage = null;
 
-    if (chatIsTest) {
-      chatMessages.push(botMsg);
-    } else {
-      // persist both turns for this member's private history
-      const col = collection(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`, 'messages');
-      await addDoc(col, { role: 'user', text, createdAt: serverTimestamp() });
-      await addDoc(col, { role: 'bot', text: answer, createdAt: serverTimestamp() });
+    // Show the answer IMMEDIATELY and unconditionally — the AI really replied,
+    // so the member must see it even if the Firestore persistence below fails.
+    // Previously a persistence failure swallowed the whole answer behind an
+    // error bubble, which looked exactly like "this bot is not working".
+    chatMessages.push(botMsg);
+    renderChatMessages();
+
+    if (!chatIsTest) {
+      // Persist both turns for this member's private history. The rules
+      // require the parent chat doc to exist first; registerBotUse usually
+      // creates it when the chat opens, but a fast first message could race
+      // it — this idempotent merge makes the write sequence self-healing.
+      // Persistence is best-effort: a failure here costs the transcript,
+      // never the conversation itself.
+      try {
+        await setDoc(doc(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`), {
+          uid: auth.currentUser.uid, botId: chatBotId
+        }, { merge: true });
+        const col = collection(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`, 'messages');
+        await addDoc(col, { role: 'user', text, createdAt: serverTimestamp() });
+        await addDoc(col, { role: 'bot', text: answer, createdAt: serverTimestamp() });
+      } catch (persistErr) {
+        console.warn('[HubbleNest] bot chat persistence failed (answer still shown):', persistErr?.code || persistErr);
+      }
     }
   } catch (err) {
     userMsg.pending = false;

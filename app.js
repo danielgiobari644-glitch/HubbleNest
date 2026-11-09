@@ -482,29 +482,44 @@ let directAnimatedIds = null;
 // Register the service worker as early as possible so the PWA is
 // installable even on the public landing page (and works offline there).
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('./service-worker.js');
+
+      // DEPLOY WATCH: the browser only re-downloads the service worker script
+      // on page navigation — a tab or installed PWA that stays open for hours
+      // would otherwise NEVER discover a new deploy, which is exactly why
+      // members had to refresh manually to see new HubbleNest changes. A
+      // periodic check (plus a check whenever the tab becomes visible again
+      // or the network returns) finds every new build on its own; the new
+      // service worker skipWaiting+claims, and the controllerchange handler
+      // below reloads the page once so the new code goes live instantly.
+      const checkForDeploy = () => { try { reg.update().catch(() => {}); } catch (e) { /* noop */ } };
+      setInterval(checkForDeploy, 20 * 60 * 1000);          // every 20 minutes
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForDeploy();
+      });
+      window.addEventListener('online', checkForDeploy);
+      checkForDeploy();
+    } catch (e) { /* registration failed — the app still works from the network */ }
   });
 
-  // DEPLOY AUTO-REFRESH: when a newly-installed service worker takes over
-  // (skipWaiting + clients.claim fire controllerchange), reload ONCE so every
-  // module, stylesheet and the HTML shell come from the new cache atomically.
-  // Without this, the first load after a deploy renders a MIX of old cached
-  // JS/CSS and new HTML — the classic "I deployed but nothing changed" bug.
-  // The sessionStorage guard makes the reload happen at most once per tab
-  // session, so it can never loop.
-  try {
-    let claimedOnce = sessionStorage.getItem('hn-sw-claimed') === '1';
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (claimedOnce) {
-        sessionStorage.setItem('hn-sw-claimed', '0');
-        window.location.reload();
-        return;
-      }
-      claimedOnce = true;
-      sessionStorage.setItem('hn-sw-claimed', '1');
-    });
-  } catch (e) { /* sessionStorage unavailable — skip auto-refresh */ }
+  // DEPLOY AUTO-REFRESH (reworked): when a newly-installed service worker
+  // takes over an ALREADY-controlled page (skipWaiting + clients.claim fire
+  // controllerchange), reload ONCE per page lifetime so every module,
+  // stylesheet and the HTML shell come from the new cache atomically.
+  // The previous sessionStorage state machine mis-armed across page loads and
+  // swallowed the reload on the second deploy of the same tab session — this
+  // in-memory guard can never skip a deploy and can never loop: a reload
+  // starts a fresh page whose controller is already the new worker, so no
+  // further controllerchange fires until the NEXT deploy.
+  let swReloadArmed = !!navigator.serviceWorker.controller; // first-ever claim on a brand-new tab needs no reload
+  let swReloadDone = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!swReloadArmed || swReloadDone) return;
+    swReloadDone = true;
+    window.location.reload();
+  });
 }
 
 function isStandaloneDisplay() {
@@ -2520,10 +2535,15 @@ function renderMembersList() {
       <div class="space-contacts-admin-head">
         <div>
           <b>Member management</b>
-          <div class="space-contacts-admin-sub">Add from your contacts, or remove existing members. Anyone with the Space code joins instantly.</div>
+          <div class="space-contacts-admin-sub">Add members by their EXACT username (or from your contacts), remove existing members. Anyone with the Space code also joins instantly.</div>
         </div>
         <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.toggleSpaceContactsPicker()">+ Add contacts</button>
       </div>
+      <div class="space-add-by-username">
+        <input type="text" id="space-add-username-input" class="form-input" placeholder="Exact username, e.g. gee" autocomplete="off" spellcheck="false" />
+        <button type="button" class="btn btn-primary btn-sm" id="space-add-username-btn" onclick="window.HubbleNest.addSpaceMemberByUsername()">Add member</button>
+      </div>
+      <div id="space-add-username-result"></div>
       <div id="space-contacts-picker" style="display: none;"></div>
     </div>` : '';
 
@@ -2614,6 +2634,7 @@ export async function addSpaceMemberFromContacts(memberUid) {
       username: contact.username,
       photoURL: contact.photoURL
     }, 'member');
+    if (!res.already) await notifySpaceMemberAdded(state.activeSpace, contact);
     showToast(res.already
       ? `${contact.displayName} is already a member.`
       : `${contact.displayName} added to the Space.`, res.already ? 'info' : 'success');
@@ -2623,6 +2644,85 @@ export async function addSpaceMemberFromContacts(memberUid) {
     showToast(err?.code === 'permission-denied'
       ? 'Adding members was blocked — check the sign-in state and try again, or ask the Get Help assistant.'
       : 'Could not add this member.', 'error');
+  }
+}
+
+/**
+ * Real off-app + in-app notice for a member added to a Space by an admin.
+ * The notification carries the adder's identity; the RECIPIENT decides how
+ * prominent the "not in your contacts" warning and the leave opt-out are —
+ * contacts are owner-private, so the adder cannot (and must not) read them.
+ * Fire-and-forget: a notification failure never undoes the membership.
+ */
+async function notifySpaceMemberAdded(space, memberProfile) {
+  try {
+    const adder = state.currentUser;
+    if (!space?.id || !memberProfile?.uid || !adder || memberProfile.uid === adder.uid) return;
+    const body = `${adder.displayName || adder.username || 'A space admin'} added you to "${space.name || 'a Space'}".`;
+    await setDoc(doc(collection(db, 'notifications')), {
+      userId: memberProfile.uid,
+      type: 'space_added',
+      title: 'Added to a Space',
+      body,
+      spaceId: space.id,
+      spaceName: space.name || '',
+      adderUid: adder.uid,
+      adderName: adder.displayName || '',
+      adderUsername: adder.username || '',
+      isRead: false,
+      createdAt: serverTimestamp()
+    });
+    sendPushToUser(memberProfile.uid, {
+      title: 'Added to a Space',
+      body,
+      tag: 'space_added'
+    }).catch(() => {});
+  } catch (e) {
+    console.warn('[HubbleNest] space-add notification skipped:', e?.code || e);
+  }
+}
+
+/**
+ * SPACE ADMIN — add a member by their EXACT username.
+ * Real username lookup (findUserByUsername), real membership write
+ * (addMemberToSpace), real notification + off-app push to the added member.
+ */
+export async function addSpaceMemberByUsername() {
+  if (state.activeSpaceRole !== 'admin' && !state.isAdmin) return;
+  const input = document.getElementById('space-add-username-input');
+  const btn = document.getElementById('space-add-username-btn');
+  const result = document.getElementById('space-add-username-result');
+  const raw = (input?.value || '').trim().replace(/^@/, '');
+  if (!raw) { showToast('Type the member\'s exact username first.', 'info'); return; }
+  if (!state.activeSpace) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  const showResult = (html) => { if (result) { result.style.display = 'block'; result.innerHTML = html; } };
+  try {
+    const peer = await findUserByUsername(raw);
+    if (!peer) {
+      showResult(`<div class="space-add-miss">No HubbleNest member has the username <b>@${escapeHtml(raw)}</b>. Usernames are exact — check the spelling.</div>`);
+      return;
+    }
+    if (peer.uid === state.currentUser.uid) {
+      showResult(`<div class="space-add-miss">That is you — you are already a member of this Space.</div>`);
+      return;
+    }
+    const res = await addMemberToSpace(state.activeSpace.id, {
+      uid: peer.uid,
+      displayName: peer.displayName,
+      username: peer.username,
+      photoURL: peer.photoURL
+    }, 'member');
+    if (!res.already) await notifySpaceMemberAdded(state.activeSpace, peer);
+    showResult(`<div class="space-add-hit"><b>@${escapeHtml(peer.username)}</b> (${escapeHtml(peer.displayName || 'Member')}) ${res.already ? 'is already a member of this Space.' : 'is now a member — they have been notified.'}</div>`);
+    if (input) input.value = '';
+    renderMembersList();
+  } catch (err) {
+    console.error('Add member by username failed:', err);
+    showResult(`<div class="space-add-miss">Could not add this member${err?.code === 'permission-denied' ? ' — the write was blocked, check your sign-in state and admin role' : ''}. Please try again.</div>`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Add member'; }
   }
 }
 
@@ -4031,14 +4131,84 @@ function renderNotificationsPanel() {
   }
 
   listEl.innerHTML = state.notifications.map(n => {
+    // "Added to a Space" rows get a decorated slot: when the adder is not in
+    // the recipient's contacts, decorateSpaceAddedNotifications() fills it
+    // with the warning and the real leave opt-out.
+    const spaceAddedSlot = (n.type === 'space_added' && n.spaceId && n.adderUid)
+      ? `<div id="space-added-extra-${n.id}" style="margin-top: 8px; display: none;"></div>`
+      : '';
     return `
       <div class="menu-item ${n.isRead ? '' : 'unread'}" style="flex-direction: column; align-items: flex-start; cursor: pointer; border-left: ${n.isRead ? 'none' : '3px solid var(--accent-primary)'};" onclick="window.HubbleNest.handleNotificationClick('${n.id}', '${n.spaceId || ''}')">
         <div style="font-weight: 600; font-size: 0.85rem;">${escapeHtml(n.title)}</div>
         <div style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(n.body)}</div>
         <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">${formatTimeAgo(n.createdAt)}</div>
+        ${spaceAddedSlot}
       </div>
     `;
   }).join('');
+
+  decorateSpaceAddedNotifications();
+}
+
+/**
+ * "Added to a Space" notifications: when the adder is NOT in the recipient's
+ * contacts (no accepted friend/chat relationship and no contacts entry), the
+ * recipient sees an explicit warning and a one-click opt-out that really
+ * removes them from the Space. Contacts are owner-private, so this check can
+ * only run on the recipient's own side — the admin who added them can never
+ * read (or fake) this state.
+ */
+async function decorateSpaceAddedNotifications() {
+  const myUid = state.currentUser?.uid;
+  if (!myUid) return;
+  const targets = state.notifications.filter(n => n.type === 'space_added' && n.spaceId && n.adderUid);
+  for (const n of targets) {
+    const slot = document.getElementById(`space-added-extra-${n.id}`);
+    if (!slot || slot.dataset.done === '1') continue;
+    let connected = false;
+    try {
+      const rel = await getChatRelationship(myUid, n.adderUid);
+      const status = rel?.data?.status;
+      if (rel && (status === 'accepted' || rel.direction === 'connected')) connected = true;
+      if (!connected) {
+        const contactSnap = await getDoc(doc(db, 'contacts', `${myUid}_${n.adderUid}`));
+        connected = contactSnap.exists();
+      }
+    } catch (e) { /* read failure — the row just renders plain */ }
+    slot.dataset.done = '1';
+    if (connected) {
+      slot.style.display = 'none';
+    } else {
+      slot.style.display = 'block';
+      slot.innerHTML = `
+        <div class="notif-optout">
+          <div class="notif-optout-warn">⚠ @${escapeHtml(n.adderUsername || n.adderName || 'this member')} is not in your contacts.</div>
+          <button type="button" class="btn btn-sm btn-ghost notif-optout-leave" onclick="event.stopPropagation(); window.HubbleNest.leaveSpaceFromNotification('${n.id}')">Leave "${escapeHtml(n.spaceName || 'this Space')}"</button>
+        </div>`;
+    }
+  }
+}
+
+/**
+ * Opt-out: leave a Space directly from its "added to a Space" notification —
+ * a real leaveSpace write (the same self-removal as the Space header's Leave
+ * button), then the notification is cleaned up.
+ */
+export async function leaveSpaceFromNotification(notifId) {
+  const notif = state.notifications.find(n => n.id === notifId);
+  if (!notif?.spaceId || !state.currentUser) return;
+  const adderLabel = notif.adderName ? notif.adderName : (notif.adderUsername ? '@' + notif.adderUsername : 'a space admin');
+  if (!window.confirm(`Leave "${notif.spaceName || 'this Space'}"? You were added by ${adderLabel}, who is not in your contacts.`)) return;
+  try {
+    const removed = await leaveSpace(notif.spaceId, state.currentUser.uid);
+    try { await deleteDoc(doc(db, 'notifications', notifId)); } catch (e) { /* best-effort */ }
+    state.notifications = state.notifications.filter(n => n.id !== notifId);
+    renderNotificationsPanel();
+    showToast(removed ? `You left ${notif.spaceName || 'the Space'}.` : 'You were not a member of that Space.', 'info');
+  } catch (err) {
+    console.error('Opt-out leave failed:', err);
+    showToast('Could not leave the Space — check your connection and try again.', 'error');
+  }
 }
 
 /* ==========================================================================
@@ -5200,6 +5370,7 @@ Object.assign(window.HubbleNest, {
 
   // Notifications
   handleNotificationClick,
+  leaveSpaceFromNotification,
 
   // Files
   handleSpaceFileUpload,
@@ -5224,6 +5395,7 @@ Object.assign(window.HubbleNest, {
   removeSpaceMemberByUid,
   toggleSpaceContactsPicker,
   addSpaceMemberFromContacts,
+  addSpaceMemberByUsername,
 
   // Space Admin Controls
   handleSaveSpaceSettings: async () => {

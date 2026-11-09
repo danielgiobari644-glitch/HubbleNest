@@ -5996,6 +5996,52 @@ h1, h2, h3, h4 {
 .space-contacts-admin-sub { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
 .space-contacts-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 4px; }
 
+/* Add member by EXACT username (space admins) */
+.space-add-by-username {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.space-add-by-username .form-input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: 38px;
+}
+.space-add-by-username .btn { flex: 0 0 auto; white-space: nowrap; }
+.space-add-miss {
+  color: var(--status-danger);
+  font-size: 0.82rem;
+  padding: 8px 4px 2px;
+  line-height: 1.45;
+}
+.space-add-hit {
+  color: var(--status-success, #34d399);
+  font-size: 0.82rem;
+  padding: 8px 4px 2px;
+  line-height: 1.45;
+}
+
+/* "Added to a Space" notification — non-contact warning + leave opt-out */
+.notif-optout {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 8px;
+}
+.notif-optout-warn {
+  font-size: 0.78rem;
+  color: var(--status-warning, #fbbf24);
+  font-weight: 600;
+}
+.notif-optout-leave {
+  align-self: flex-start;
+  color: var(--status-danger);
+}
+
 /* ==========================================================================
    PUSH SETTINGS CARD (one-time config)
    ========================================================================== */
