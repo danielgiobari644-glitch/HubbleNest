@@ -298,9 +298,7 @@ function renderChips() {
 const SECTION_ICONS = {
   featured: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
   trending: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>',
-  recent: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   popular: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
-  community: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   saved: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>'
 };
 
@@ -308,29 +306,25 @@ const SECTION_ICONS = {
  * Discovery sections — every section is a REAL sort of REAL records:
  *  Featured  = highest member rating (needs ≥1 rating), ties by likes
  *  Trending  = most played
- *  Recent    = newest published
  *  Popular   = most liked
- *  Community = newest from other members
  *  Saved     = my bookmarks
+ *  (v30: the two newest-first discovery rows were removed on purpose —
+ *   the browse list already sorts by newest on demand.)
  */
 function renderSections() {
   const wrap = els().sections;
   const emptyBox = els().homeEmpty;
   if (!wrap) return;
   const games = window.HubbleNest?.getGamesCache?.() || [];
-  const uid = myUid();
 
   const byCat = games.filter(g => activeCategory === 'all' || g.category === activeCategory);
   const rated = byCat.filter(g => ratingOf(g).count > 0);
-  const others = byCat.filter(g => g.authorId && g.authorId !== uid);
   const savedGames = byCat.filter(g => bookmarks.has(g.id));
 
   const sections = [
     { key: 'featured', label: 'Featured Games', icon: SECTION_ICONS.featured, list: [...rated].sort((a, b) => ratingOf(b).avg - ratingOf(a).avg || (b.likedBy?.length || 0) - (a.likedBy?.length || 0)).slice(0, 10), sort: 'rating' },
     { key: 'trending', label: 'Trending Games', icon: SECTION_ICONS.trending, list: [...byCat].sort((a, b) => (b.plays || 0) - (a.plays || 0)).filter(g => (g.plays || 0) > 0).slice(0, 10), sort: 'plays' },
-    { key: 'recent', label: 'Recently Added', icon: SECTION_ICONS.recent, list: [...byCat].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 10), sort: 'newest' },
     { key: 'popular', label: 'Popular Games', icon: SECTION_ICONS.popular, list: [...byCat].sort((a, b) => (b.likedBy?.length || 0) - (a.likedBy?.length || 0)).filter(g => (g.likedBy?.length || 0) > 0).slice(0, 10), sort: 'likes' },
-    { key: 'community', label: 'From the Community', icon: SECTION_ICONS.community, list: [...others].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 10), sort: 'newest' },
     { key: 'saved', label: 'My Saved Games', icon: SECTION_ICONS.saved, list: savedGames, sort: null, target: 'activity' }
   ].filter(s => s.list.length > 0);
 
@@ -430,7 +424,12 @@ function renderGameDetail(gameId, opts = {}) {
     : `<span class="arc-cover-initials" style="background:linear-gradient(135deg,hsl(${hue} 62% 26%),hsl(${(hue + 46) % 360} 70% 16%));">${escapeHtml(initials)}</span>`;
 
   const isLink = g.kind === 'link' && !!g.linkUrl;
-  const runnable = isLink || (g.runnable !== false && (g.entryPath || g.html?.trim?.() || g.js?.trim?.()));
+  // v30: the browse cache is field-masked, so classic games carry no html/js
+  // here. Runnability is derived from structure instead: link games play,
+  // multi-file projects play (entryPath), and only true source-only projects
+  // (files but no HTML entry) are stored as readable source.
+  const isSourceOnly = !isLink && !g.entryPath && (g.fileCount || 0) > 0;
+  const runnable = isLink || (g.runnable !== false && !isSourceOnly);
 
   box.innerHTML = `
     <div class="arc-detail-back">

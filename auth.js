@@ -201,13 +201,24 @@ export async function loginWithEmail(email, password) {
   } catch (err) {
     console.error('Login error:', err);
     let message = 'Failed to sign in. Please verify your email and password.';
+    // Firebase's enumeration protection reports BOTH unknown emails and
+    // wrong passwords as auth/invalid-credential — the message says exactly
+    // that, and points straight at the designed reset flow.
     if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-      message = 'Incorrect email or password. Please try again.';
+      message = 'That email and password don\u2019t match an account. Re-check your password, or reset it below.';
     } else if (err.code === 'auth/too-many-requests') {
-      message = 'Too many failed attempts. Please try again in a few minutes.';
+      message = 'Too many failed attempts. Please try again in a few minutes, or reset your password.';
+    } else if (err.code === 'auth/invalid-email') {
+      message = 'Please provide a valid email address.';
+    } else if (err.code === 'auth/network-request-failed') {
+      message = 'Network problem — check your internet connection and try again.';
+    } else if (err.code === 'auth/user-disabled') {
+      message = 'This account has been disabled. Contact the HubbleNest team.';
     }
     showToast(message, 'error');
-    throw new Error(message);
+    const wrapped = new Error(message);
+    wrapped.code = err.code;
+    throw wrapped;
   }
 }
 
@@ -292,25 +303,43 @@ getRedirectResult(auth).catch((err) => {
 });
 
 /**
- * Send Password Reset Email
+ * Send Password Reset Email.
+ *
+ * v30: returns a structured result so the designed forgot-password card can
+ * show inline errors and its own success state (the old version only made a
+ * toast). With email enumeration protection (enabled by default), Firebase
+ * deliberately returns SUCCESS even for an unknown address — that is the
+ * correct, honest behaviour for the UI: the inbox check happens in email.
  */
 export async function resetPassword(email) {
-  if (!email || !email.includes('@')) {
-    showToast('Please enter a valid email address.', 'error');
-    return false;
+  const clean = String(email || '').trim();
+  if (!clean || !clean.includes('@')) {
+    const message = 'Please enter a valid email address.';
+    showToast(message, 'error');
+    return { ok: false, code: 'invalid-email', message };
   }
   try {
-    await sendPasswordResetEmail(auth, email);
-    showToast('Password reset link sent to your email.', 'success');
-    return true;
+    await sendPasswordResetEmail(auth, clean);
+    showToast('Password reset link sent — check your inbox.', 'success');
+    return { ok: true, code: null, message: 'Reset link sent' };
   } catch (err) {
     console.error('Reset password error:', err);
-    let msg = 'Failed to send reset email. Please try again.';
-    if (err.code === 'auth/user-not-found') {
-      msg = 'No account found with this email.';
+    let msg = 'Could not send the reset email. Please try again.';
+    let code = err?.code || 'unknown';
+    if (code === 'auth/user-not-found') {
+      // Projects without enumeration protection land here — keep it honest.
+      msg = 'No account uses this email address. Check the spelling, or create an account.';
+    } else if (code === 'auth/too-many-requests') {
+      msg = 'Too many reset emails requested. Please wait a few minutes and try again.';
+    } else if (code === 'auth/invalid-email') {
+      msg = 'Please enter a valid email address.';
+    } else if (code === 'auth/network-request-failed') {
+      msg = 'Network problem — check your internet connection and try again.';
+    } else if (code === 'auth/operation-not-allowed' || code === 'auth/configuration-not-found') {
+      msg = 'Password reset is not switched on for this project yet. The admin must enable Email/Password sign-in in the Firebase console.';
     }
     showToast(msg, 'error');
-    return false;
+    return { ok: false, code, message: msg };
   }
 }
 

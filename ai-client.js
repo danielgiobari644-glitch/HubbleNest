@@ -191,13 +191,19 @@ function classifyModelFailure(status, apiMessage, reason) {
   if (status === 429 || why === 'RESOURCE_EXHAUSTED' || /quota/i.test(msg)) {
     return {
       kind: 'quota',
-      message: 'The AI is at its request quota right now. Please try again in a little while.'
+      message: 'The AI is at its request quota right now. HubbleNest automatically retried every model in the fallback chain — please try again in a little while.'
+    };
+  }
+  if (status === 500 || why === 'INTERNAL') {
+    return {
+      kind: 'server',
+      message: 'The AI service hit an internal error. HubbleNest automatically retried the other models — please try again.'
     };
   }
   if (status === 503 || why === 'UNAVAILABLE' || /overloaded|unavailable/i.test(msg)) {
     return {
       kind: 'overloaded',
-      message: 'The AI is overloaded at the moment. Give it a minute and try again.'
+      message: 'The AI is overloaded at the moment (Google-side demand spike). HubbleNest automatically retried every model in the fallback chain — give it a minute and try again.'
     };
   }
   if (status === 400 && /unknown name|invalid json payload|invalid value/i.test(msg)) {
@@ -224,7 +230,18 @@ export function resetAiHealth() { lastAiFailure = null; lastAiSuccess = null; }
    Low-level model call (implementation detail — never surfaced raw in UI).
    ---------------------------------------------------------------------- */
 
-const MODEL_FALLBACK_CHAIN = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
+const MODEL_FALLBACK_CHAIN = [
+  'gemini-2.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite'
+];
+
+/** Transient service-side failures worth retrying on ANOTHER model. */
+const RETRYABLE_KINDS = new Set(['overloaded', 'quota', 'server']);
+
+function sleepMs(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 /** gemini-2.5+ accept a thinkingConfig switch; older models reject it. */
 function isThinkingAwareModel(model) {
@@ -302,7 +319,7 @@ export async function callGenerateContent(cfg, body, opts = {}) {
   const chain = [configuredModel];
   if (allowFallback) {
     for (const m of MODEL_FALLBACK_CHAIN) {
-      if (m !== configuredModel && chain.length < 3) chain.push(m);
+      if (m !== configuredModel && chain.length < 5) chain.push(m);
     }
   }
 
@@ -335,6 +352,15 @@ export async function callGenerateContent(cfg, body, opts = {}) {
       const cls = classifyModelFailure(res.status, apiMessage, reason);
       lastClassified = { ...cls, status: res.status, model };
 
+      // v30: transient pressure (overloaded / quota / 500) no longer kills the
+      // request — after a short backoff the NEXT model in the chain is tried
+      // for real, so one busy Google model can never take the AI down.
+      if (RETRYABLE_KINDS.has(cls.kind) && i < chain.length - 1) {
+        const wait = Math.min(2200, 650 * (i + 1));
+        console.warn(`[HubbleNest] AI "${model}" is ${cls.kind} (${res.status}) — retrying with "${chain[i + 1]}" in ${wait}ms.`);
+        await sleepMs(wait);
+        break; // next model in chain
+      }
       // A model name that does not exist → transparently try the next one.
       if (cls.kind === 'model-missing' && i < chain.length - 1) {
         console.warn(`[HubbleNest] AI model "${model}" not available (${res.status}) — retrying with "${chain[i + 1]}".`);
@@ -354,6 +380,15 @@ export async function callGenerateContent(cfg, body, opts = {}) {
       err.apiMessage = apiMessage;
       throw err;
     }
+  }
+
+  // The whole chain failed with transient pressure — report it honestly.
+  if (lastClassified && RETRYABLE_KINDS.has(lastClassified.kind)) {
+    lastAiFailure = { at: Date.now(), kind: lastClassified.kind, status: lastClassified.status, model: lastClassified.model, message: `all ${chain.length} fallback models ${lastClassified.kind}` };
+    const err = new AiUserError(lastClassified.message);
+    err.kind = lastClassified.kind;
+    err.httpStatus = lastClassified.status;
+    throw err;
   }
 
   // The whole chain was model-missing.

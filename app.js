@@ -139,6 +139,16 @@ import {
 // vertical multi-line layout; no Markdown symbols are ever shown raw.
 import { renderRichText, richTextPreview } from './format.js';
 
+// Real-time presence — genuine Firestore-backed online/offline status
+// (heartbeat writes + live snapshot streaming + staleness window).
+import {
+  initPresence,
+  stopPresence,
+  watchUserPresence,
+  computePresence,
+  presenceLabel
+} from './presence.js';
+
 import {
   uploadProfilePhoto,
   updateUserProfile
@@ -384,6 +394,8 @@ const state = {
   conversations: [],
   activeConversation: null,
   activeDirectPeer: null,
+  peerPresence: {},          // peer uid → live presence state (real Firestore)
+  pmSearchQuery: '',         // conversation search filter
   directMessages: [],
   contacts: [],
   contactsUnsub: null,
@@ -750,6 +762,10 @@ onAuthStateChanged(auth, async (user) => {
 
     state.isAdmin = isPlatformAdmin();
 
+    // Real-time presence — this device now truthfully reports online/offline
+    // (heartbeat writes; hidden tab and page close flip it offline at once).
+    initPresence(state.userProfile);
+
     // BAN / SUSPENSION GATE — a moderated account never reaches the app.
     const ban = profileBanState(state.userProfile);
     if (ban.active && !state.isAdmin) {
@@ -773,6 +789,8 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     state.currentUser = null;
     state.userProfile = null;
+    stopPresence(); // report this device offline for real, stop all timers
+    stopPeerPresenceWatchers();
     // Tear down realtime subscriptions so a future sign-in starts clean.
     stopCommunityFeed();
     stopArcade();
@@ -1198,6 +1216,178 @@ export function showSignupCard() {
   if (login) login.style.display = 'none';
   if (signup) signup.style.display = 'block';
   resetSignupSteps();
+}
+
+/* ---- v30 designed forgot-password flow ---------------------------------- */
+
+let forgotResendTimer = null;
+
+function resetForgotCardToForm() {
+  const form = document.getElementById('forgot-form');
+  const success = document.getElementById('forgot-success');
+  const errEl = document.getElementById('forgot-inline-error');
+  const btn = document.getElementById('forgot-submit-btn');
+  if (form) form.style.display = 'block';
+  if (success) success.style.display = 'none';
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send Reset Link'; }
+}
+
+export function showForgotCard() {
+  const entry = document.getElementById('card-auth-entry');
+  const login = document.getElementById('card-login');
+  const signup = document.getElementById('card-signup');
+  const forgot = document.getElementById('card-forgot');
+  if (entry) entry.style.display = 'none';
+  if (login) login.style.display = 'none';
+  if (signup) signup.style.display = 'none';
+  if (forgot) forgot.style.display = 'block';
+  resetForgotCardToForm();
+  // Pre-fill with the email the member was just trying to sign in with.
+  const loginEmail = document.getElementById('login-email')?.value?.trim();
+  const forgotEmail = document.getElementById('forgot-email');
+  if (loginEmail && forgotEmail && !forgotEmail.value) forgotEmail.value = loginEmail;
+  setTimeout(() => forgotEmail?.focus(), 60);
+}
+
+export function openForgotPasswordCard() {
+  // The auth container might not be visible yet (e.g. the member clicked
+  // "Forgot?" from the login card — it already is; from elsewhere, open it).
+  const authContainer = document.getElementById('auth-container');
+  const appContainer = document.getElementById('app-container');
+  if (authContainer && authContainer.style.display === 'none') {
+    if (appContainer) appContainer.style.display = 'none';
+    authContainer.style.display = 'flex';
+  }
+  showAuthView('login');
+  showForgotCard();
+}
+
+async function submitForgotPassword() {
+  const emailEl = document.getElementById('forgot-email');
+  const errEl = document.getElementById('forgot-inline-error');
+  const btn = document.getElementById('forgot-submit-btn');
+  const email = emailEl ? emailEl.value.trim() : '';
+
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  const result = await resetPassword(email);
+  if (result.ok) {
+    const form = document.getElementById('forgot-form');
+    const success = document.getElementById('forgot-success');
+    const sentEl = document.getElementById('forgot-sent-email');
+    if (form) form.style.display = 'none';
+    if (success) success.style.display = 'block';
+    if (sentEl) sentEl.textContent = email;
+    startForgotResendCooldown();
+  } else if (errEl) {
+    errEl.textContent = result.message || 'Could not send the reset email. Please try again.';
+    errEl.style.display = 'block';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send Reset Link'; }
+}
+
+function startForgotResendCooldown() {
+  const btn = document.getElementById('forgot-resend-btn');
+  if (!btn) return;
+  if (forgotResendTimer) clearInterval(forgotResendTimer);
+  let secs = 45;
+  btn.disabled = true;
+  const tick = () => {
+    if (secs <= 0) {
+      btn.disabled = false;
+      btn.textContent = 'Resend email';
+      clearInterval(forgotResendTimer);
+      forgotResendTimer = null;
+      return;
+    }
+    btn.textContent = `Resend available in ${secs}s`;
+    secs -= 1;
+  };
+  tick();
+  forgotResendTimer = setInterval(tick, 1000);
+}
+
+export async function resendForgotPassword() {
+  const email = document.getElementById('forgot-email')?.value?.trim() ||
+                document.getElementById('forgot-sent-email')?.textContent || '';
+  const result = await resetPassword(email);
+  if (result.ok) startForgotResendCooldown();
+}
+
+/* ---- v30 password reset EMAIL — the designed template --------------------
+   Firebase sends reset mail from its own servers; the wording/design is a
+   one-time Firebase Console setting. The admin panel card + these copy
+   buttons make that setup a paste job. Uses Firebase's %LINK% and %EMAIL%
+   macros so the reset flow keeps working exactly as before.               */
+
+const RESET_EMAIL_SUBJECT = 'Reset Your Password for HubbleNest';
+
+const RESET_EMAIL_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reset Your Password for HubbleNest</title></head>
+<body style="margin:0;padding:0;background-color:#060b20;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#060b20;padding:32px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#0d142e;border:1px solid #26345f;border-radius:18px;overflow:hidden;">
+  <tr><td style="background-color:#2563eb;background-image:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%);padding:28px 32px;text-align:center;">
+    <img src="https://danielgiobari644-glitch.github.io/HubbleNest/logo.svg" width="46" height="46" alt="HubbleNest" style="display:inline-block;border-radius:10px;">
+    <div style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:.5px;margin-top:10px;">HubbleNest</div>
+    <div style="color:#c7d4ff;font-size:13px;margin-top:4px;">Private communities, real connections</div>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    <h1 style="margin:0 0 14px;color:#ffffff;font-size:20px;">Reset Your Password for HubbleNest</h1>
+    <p style="margin:0 0 16px;color:#b6c2e2;font-size:14px;line-height:1.6;">Hi %EMAIL%,</p>
+    <p style="margin:0 0 22px;color:#b6c2e2;font-size:14px;line-height:1.6;">We received a request to reset the password for your HubbleNest account. Tap the button below to choose a new one. This link is valid for a limited time and can be used only once.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 24px;">
+      <tr><td style="background-color:#2563eb;background-image:linear-gradient(100deg,#2563eb,#7c3aed);border-radius:999px;">
+        <a href="%LINK%" style="display:inline-block;padding:14px 34px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:999px;">Reset Password</a>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 10px;color:#8ea0c8;font-size:13px;line-height:1.6;">Button not working? Copy and paste this link into your browser:</p>
+    <p style="margin:0 0 22px;"><a href="%LINK%" style="color:#7cb0ff;font-size:13px;word-break:break-all;">%LINK%</a></p>
+    <p style="margin:0;color:#8ea0c8;font-size:12px;line-height:1.6;">Didn't request this? You can safely ignore this email — your password stays unchanged.</p>
+  </td></tr>
+  <tr><td style="padding:18px 32px 26px;border-top:1px solid #26345f;text-align:center;">
+    <div style="color:#64749f;font-size:11px;line-height:1.6;">You're receiving this because a password reset was requested for %EMAIL% on HubbleNest.<br>&copy; HubbleNest — hatching private communities</div>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function copyResetEmailSubject() {
+  const ok = await copyTextToClipboard(RESET_EMAIL_SUBJECT);
+  showToast(ok ? 'Subject copied — paste it into Firebase Console → Authentication → Templates.' : 'Copy failed — the subject is: ' + RESET_EMAIL_SUBJECT, ok ? 'success' : 'info', 5000);
+}
+
+export async function copyResetEmailTemplate() {
+  const ok = await copyTextToClipboard(RESET_EMAIL_HTML);
+  showToast(ok ? 'Designed HTML template copied — paste it into the Password reset template body.' : 'Copy failed — use the README template instead.', ok ? 'success' : 'error', 5000);
 }
 
 /* ==========================================================================
@@ -3423,6 +3613,11 @@ export async function openDirectMessagesView() {
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('mob-nav-direct')?.classList.add('active');
 
+  // A fresh visit shows the conversation list (mobile full-screen chat resets)
+  setMobileChatOpen(false);
+  bindOwnPresenceEvents();
+  renderMyPresencePill();
+
   // Render pending requests box
   renderDirectRequests();
 
@@ -3433,9 +3628,157 @@ export async function openDirectMessagesView() {
   state.conversationsUnsub = subscribeToUserConversations(state.currentUser.uid, (convs) => {
     state.conversations = convs;
     renderConversationsList();
+    syncPeerPresenceWatchers();
     setFeedConnections(computeConnectionSet());
   });
 }
+
+/* ---- v30 real-time presence wiring (Private Messages view) --------------
+   Every conversation peer gets ONE shared live Firestore listener; flips
+   stream into the sidebar dots and the chat header the moment Firebase
+   pushes them. No simulation: a member is online only while their own
+   devices genuinely report fresh heartbeats (see presence.js).            */
+
+const pmPresenceUnsubs = new Map();   // peer uid → unsubscribe
+
+function syncPeerPresenceWatchers() {
+  const me = state.currentUser?.uid;
+  if (!me) return;
+  const uids = new Set(
+    (state.conversations || [])
+      .map(c => (c.participants || []).find(p => p !== me))
+      .filter(Boolean)
+  );
+  for (const uid of uids) {
+    if (!pmPresenceUnsubs.has(uid)) {
+      pmPresenceUnsubs.set(uid, watchUserPresence(uid, (pres) => {
+        state.peerPresence[uid] = pres;
+        updatePeerPresenceUI(uid, pres);
+      }));
+    }
+  }
+  for (const [uid, unsub] of [...pmPresenceUnsubs]) {
+    if (!uids.has(uid)) { try { unsub(); } catch (e) { /* ignore */ } pmPresenceUnsubs.delete(uid); }
+  }
+}
+
+function stopPeerPresenceWatchers() {
+  for (const unsub of pmPresenceUnsubs.values()) { try { unsub(); } catch (e) { /* ignore */ } }
+  pmPresenceUnsubs.clear();
+  state.peerPresence = {};
+}
+
+function updatePeerPresenceUI(uid, pres) {
+  // Sidebar row dot(s) for this peer
+  document.querySelectorAll(`[data-pm-peer="${CSS.escape(uid)}"] .pm-presence-dot`).forEach(dot => {
+    dot.classList.toggle('pm-offline', !pres.online);
+    dot.title = presenceLabel(pres);
+  });
+  // Active chat header
+  if (state.activeDirectPeer?.uid === uid) renderChatHeaderPresence(pres);
+}
+
+function renderChatHeaderPresence(pres) {
+  const labelEl = document.getElementById('direct-chat-peer-presence');
+  const dotEl = document.getElementById('direct-chat-peer-dot');
+  const label = presenceLabel(pres);
+  if (labelEl) {
+    labelEl.textContent = label;
+    labelEl.classList.toggle('pm-online', !!pres.online);
+    labelEl.classList.toggle('pm-lastseen', !pres.online && label !== 'Offline');
+  }
+  if (dotEl) dotEl.classList.toggle('pm-offline', !pres.online);
+}
+
+/** The member's own connection status pill (sidebar footer). */
+function renderMyPresencePill() {
+  const pill = document.getElementById('pm-my-presence');
+  const labelEl = document.getElementById('pm-my-presence-label');
+  if (!pill || !labelEl) return;
+  const online = !!navigator.onLine && document.visibilityState === 'visible';
+  pill.classList.toggle('pm-offline', !online);
+  labelEl.textContent = online ? 'Online' : 'Offline';
+}
+
+let pmOwnPresenceBound = false;
+function bindOwnPresenceEvents() {
+  if (pmOwnPresenceBound) return;
+  pmOwnPresenceBound = true;
+  const update = () => renderMyPresencePill();
+  document.addEventListener('visibilitychange', update);
+  window.addEventListener('online', update);
+  window.addEventListener('offline', update);
+  // While a chat is open, a window focus counts as reading it.
+  window.addEventListener('focus', () => {
+    if (state.currentView === 'direct' && state.activeConversation) {
+      markConversationRead(state.activeConversation.id);
+    }
+  });
+}
+
+/* ---- Unread tracking (real: lastMessage vs memberReadAt, server clocks) */
+
+function isConversationUnread(conv) {
+  const last = conv.lastMessage;
+  if (!last || !state.currentUser || last.senderId === state.currentUser.uid) return false;
+  const lastTs = conv.updatedAt?.toMillis?.() || 0;
+  const readTs = conv.memberReadAt?.[state.currentUser.uid]?.toMillis?.() || 0;
+  return lastTs > readTs;
+}
+
+async function markConversationRead(convId) {
+  if (!state.currentUser || !convId) return;
+  try {
+    await updateDoc(doc(db, 'conversations', convId), {
+      [`memberReadAt.${state.currentUser.uid}`]: serverTimestamp()
+    });
+  } catch (e) { /* rules pending or offline — the dot stays truthful */ }
+}
+
+/* ---- Mobile full-screen chat navigation -------------------------------- */
+
+function setMobileChatOpen(open) {
+  const shell = document.querySelector('#view-direct-messages .pm-shell');
+  if (shell) shell.classList.toggle('pm-chat-open', !!open);
+  const box = document.getElementById('direct-chat-active');
+  const empty = document.getElementById('direct-chat-empty');
+  if (!open) {
+    if (box) box.style.display = 'none';
+    if (empty) empty.style.display = 'flex';
+  }
+}
+
+/** Open the profile card of the currently open private-chat peer. */
+export function openActivePeerCard() {
+  if (state.activeDirectPeer?.uid) openUserCardModal(state.activeDirectPeer.uid);
+}
+
+export function closeDirectChatMobile() {
+  state.activeDirectPeer = null;
+  state.activeConversation = null;
+  state.directMessages = [];
+  setMobileChatOpen(false);
+  renderConversationsList();
+}
+
+/* ---- Conversation search (real filter over real conversations) --------- */
+
+export function handleDirectConvSearch(value) {
+  state.pmSearchQuery = String(value || '');
+  renderConversationsList();
+}
+
+/* ---- Conversation card helpers ----------------------------------------- */
+
+function pmInitialsOf(name) {
+  return String(name || 'M').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || 'M';
+}
+
+function pmHueFor(seed) {
+  return Array.from(String(seed || '')).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+}
+
+const PM_LOCK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 
 function renderDirectRequests() {
   const container = document.getElementById('direct-requests-container');
@@ -3482,32 +3825,58 @@ function renderConversationsList() {
   const container = document.getElementById('direct-conv-list');
   if (!container) return;
 
-  if (state.conversations.length === 0) {
+  if (!state.conversations.length) {
     container.innerHTML = `
-      <div style="padding: 24px 12px; text-align: center; color: var(--text-muted); font-size: 0.85rem; line-height: 1.5;">
+      <div class="pm-conv-empty">
         No conversations yet.<br>Connect with members in the People directory to start chatting.
-      </div>
-    `;
+      </div>`;
     return;
   }
 
-  container.innerHTML = state.conversations.map(conv => {
-    const peerUid = conv.participants.find(p => p !== state.currentUser.uid);
+  const q = String(state.pmSearchQuery || '').trim().toLowerCase();
+  const convs = q
+    ? state.conversations.filter((c) => {
+        const peerUid = (c.participants || []).find((p) => p !== state.currentUser.uid);
+        const peer = c.participantData?.[peerUid] || {};
+        return String(peer.displayName || '').toLowerCase().includes(q) ||
+               String(peer.username || '').toLowerCase().includes(q);
+      })
+    : state.conversations;
+
+  if (!convs.length) {
+    container.innerHTML = `<div class="pm-conv-empty">No conversations match “${escapeHtml(q)}”.</div>`;
+    return;
+  }
+
+  container.innerHTML = convs.map((conv) => {
+    const peerUid = (conv.participants || []).find((p) => p !== state.currentUser.uid);
     const peerData = conv.participantData?.[peerUid] || { displayName: 'Member' };
     const isActive = state.activeConversation?.id === conv.id;
+    const pres = state.peerPresence[peerUid] || { online: false, known: false, lastActive: null };
+    const ts = conv.updatedAt?.seconds
+      ? formatTimeAgo(new Date(conv.updatedAt.seconds * 1000))
+      : '';
+    const unread = isConversationUnread(conv);
+    const hue = pmHueFor(peerUid || peerData.displayName);
+    const avatarHtml = peerData.photoURL
+      ? `<img class="pm-conv-avatar-img" src="${escapeHtml(getAvatarUrl(peerData.photoURL, peerData.displayName))}" alt="${escapeHtml(peerData.displayName || 'Member')}" loading="lazy" decoding="async" />`
+      : `<span class="pm-conv-avatar-initials" style="background:linear-gradient(135deg,hsl(${hue} 62% 30%),hsl(${(hue + 46) % 360} 70% 18%));">${escapeHtml(pmInitialsOf(peerData.displayName))}</span>`;
 
     return `
-      <div class="nav-link ${isActive ? 'active' : ''}" style="padding: 10px 12px; border-radius: var(--radius-md);" onclick="window.HubbleNest.selectConversation('${conv.id}', '${peerUid}')">
-        <div class="msg-avatar" style="width: 36px; height: 36px; flex-shrink: 0;">
-          <img src="${getAvatarUrl(peerData.photoURL, peerData.displayName)}" class="avatar-img" alt="${escapeHtml(peerData.displayName)}" decoding="async"/>
+      <div class="pm-conv-item ${isActive ? 'active' : ''}" data-pm-peer="${escapeHtml(peerUid || '')}" role="button" tabindex="0" aria-label="Conversation with ${escapeHtml(peerData.displayName || 'Member')}"
+        onclick="window.HubbleNest.selectConversation('${conv.id}', '${peerUid}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.HubbleNest.selectConversation('${conv.id}', '${peerUid}');}">
+        <div class="pm-conv-avatar">
+          ${avatarHtml}
+          <span class="pm-presence-dot ${pres.online ? '' : 'pm-offline'}" title="${escapeHtml(presenceLabel(pres))}"></span>
         </div>
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            ${escapeHtml(peerData.displayName)}
-          </div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            ${conv.lastMessage ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Private message' : 'Protected conversation'}
-          </div>
+        <div class="pm-conv-body">
+          <span class="pm-conv-name">${escapeHtml(peerData.displayName || 'Member')}</span>
+          <span class="pm-conv-preview${pres.online ? ' pm-preview-online' : ''}">${PM_LOCK_SVG}<span>Private message</span></span>
+        </div>
+        <div class="pm-conv-side">
+          ${ts ? `<span class="pm-conv-time">${escapeHtml(ts)}</span>` : ''}
+          ${unread ? '<span class="pm-conv-unread" title="Unread messages"></span>' : ''}
         </div>
       </div>
     `;
@@ -3519,6 +3888,7 @@ export async function selectConversation(convId, peerUid) {
   if (!peerSnap.exists()) return;
 
   const peerData = peerSnap.data();
+  peerData.uid = peerUid; // the doc id — used by presence, cards and actions
   state.activeDirectPeer = peerData;
   state.activeConversation = { id: convId };
   state.directMessages = [];
@@ -3541,6 +3911,15 @@ export async function selectConversation(convId, peerUid) {
   hideDirectChatError();
   if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
   if (activeChatBox) activeChatBox.style.display = 'flex';
+
+  // Live presence for this peer (chat header + sidebar dot), then truthfully
+  // mark the conversation as read on this device.
+  syncPeerPresenceWatchers();
+  renderChatHeaderPresence(state.peerPresence[peerUid] || { online: false, known: false, lastActive: null });
+  markConversationRead(convId);
+
+  // Mobile: the conversation becomes the full-panel view with a back button.
+  setMobileChatOpen(true);
 
   renderConversationsList();
   showDirectMessagesSkeleton();
@@ -3818,6 +4197,10 @@ function renderDirectMessages() {
   container.innerHTML = html;
   container.scrollTop = container.scrollHeight;
   enhanceDocumentDelivery(container);
+  // A message seen while the chat is open and the tab visible = read.
+  if (document.visibilityState === 'visible' && state.activeConversation) {
+    markConversationRead(state.activeConversation.id);
+  }
 }
 
 function formatDayLabel(date) {
@@ -5223,10 +5606,19 @@ Object.assign(window.HubbleNest, {
       // Error already surfaced to the user via toast; avoid unhandled rejection noise.
     }
   },
-  resetPassword: () => {
-    const e = prompt('Enter your account email for password reset:');
-    if (e) resetPassword(e);
+  resetPassword: async (email) => {
+    // Kept for API compatibility — the designed flow lives in
+    // openForgotPasswordCard / submitForgotPassword (v30).
+    const target = email || window.prompt('Enter your account email for password reset:');
+    if (!target) return { ok: false, code: 'cancelled', message: 'Cancelled' };
+    return resetPassword(target);
   },
+  openForgotPasswordCard,
+  showForgotCard,
+  submitForgotPassword,
+  resendForgotPassword,
+  copyResetEmailSubject,
+  copyResetEmailTemplate,
   logoutUser: async () => {
     // Prune THIS account's push tokens on sign-out so background pushes no
     // longer reach a browser the member has logged out of.
@@ -5266,6 +5658,9 @@ Object.assign(window.HubbleNest, {
 
   // Direct Messages
   selectConversation,
+  handleDirectConvSearch,
+  closeDirectChatMobile,
+  openActivePeerCard,
   handleSendDirectMessage,
   handleDirectComposerKey,
   retryActiveDirectChat,

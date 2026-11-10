@@ -74,10 +74,70 @@ export function normalizeGamePath(p) {
 export function buildSrcDoc(html, css, js) {
   // Neutralise script-closing sequences so member code can't break the wrapper.
   const safe = (s) => String(s || '').replace(/<\/script/gi, '<\\/script');
-  return `<!DOCTYPE html><html><head>${arcadeBridgeTag()}<meta charset="utf-8">
+  const hints = detectScoreSignals(String(js || ''), String(html || ''));
+  return `<!DOCTYPE html><html><head>${arcadeBridgeTag()}${scoreHintsTag(hints)}<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${safe(css)}</style></head><body>${safe(html)}
 <script>${safe(js)}<\/script></body></html>`;
+}
+
+/* ========================================================================
+   v30 AUTO SCORE EXTRACTION — "the app should study the code".
+
+   Most community games never call HN.postScore(), so their scores never
+   reached the leaderboard. The builder now statically STUDIES every game's
+   own source before it runs: it finds the score variables the code really
+   declares and mutates (score / points / state.score / game.score …) and
+   embeds those findings as __HN_SCORE_HINTS. Inside the sandbox, the
+   bridge's scout polls exactly those identifiers (top-level var/let/const
+   AND object paths) plus the game's own DOM score elements, and reports
+   the first genuinely readable number via the existing hn-score bridge —
+   feeding the real per-member best scores and leaderboards. Nothing is
+   invented: when a score cannot be read, no score is reported.
+   ======================================================================== */
+
+const SCORE_IDENT_NAMES = [
+  'score', 'points', 'pts', 'scoreValue', 'gameScore', 'playerScore',
+  'currentScore', 'totalScore', 'myScore', 'runScore'
+];
+
+const MAX_SCAN_CHARS = 400000; // don't scan megabyte uploads — cap and move on
+
+/** Validate a candidate identifier / dotted path before it is ever evaluated. */
+function isSafeScorePath(p) {
+  return /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(p) && p.length <= 80;
+}
+
+/**
+ * Static analysis of a game's source → the score paths worth polling.
+ * @param {string} js   the game's JavaScript
+ * @param {string} html the game's HTML (inline scripts included)
+ */
+export function detectScoreSignals(js, html) {
+  const code = `${String(js || '').slice(0, MAX_SCAN_CHARS)}\n${String(html || '').slice(0, MAX_SCAN_CHARS)}`;
+  const found = new Set();
+
+  for (const name of SCORE_IDENT_NAMES) {
+    // Declaration (var/let/const score) or a real mutation (score++, score+=, score = …).
+    const re = new RegExp(
+      `(?:var|let|const)\\s+${name}\\b|(?:^|[^\\w$.])${name}\\s*(?:\\+\\+|--|\\+=|-=|[+*:.-]?=[^=])`,
+      'm'
+    );
+    if (re.test(code)) found.add(name);
+  }
+
+  // Common state objects: state.score / game.score / player.points …
+  const pathMatches = code.match(/\b(?:state|game|G|S|player|data|stats|hud)\.(?:score|points|pts)\b/g) || [];
+  pathMatches.slice(0, 4).forEach((p) => found.add(p));
+
+  const paths = [...found].filter(isSafeScorePath).slice(0, 6);
+  return { idents: paths };
+}
+
+/** The hints as a <script> tag the in-sandbox scout reads. */
+function scoreHintsTag(hints) {
+  const json = JSON.stringify(hints || { idents: [] }).replace(/</g, '\\u003c');
+  return `<script>window.__HN_SCORE_HINTS=${json};<\/script>`;
 }
 
 /* ========================================================================
@@ -140,6 +200,56 @@ window.addEventListener('message',function(e){
   }else if(d.type==='hn-key'){key(String(d.key||''),!!d.down);}
 });
 try{window.addEventListener('error',function(e){post({type:'hn-err',message:String((e&&e.message)||'error').slice(0,220)});});}catch(e){}
+/* ---- v30 auto score scout --------------------------------------------
+   The builder statically studied the game's code and embedded the score
+   identifiers it really declares/mutates in __HN_SCORE_HINTS. The scout
+   polls those paths plus the game's own DOM score elements and reports the
+   first genuinely readable number over the SAME bridge as manual calls.
+   Games that call HN.postScore themselves win: the scout steps aside.     */
+var scoutLast=null;
+function scoutReadPath(p){
+  try{
+    var fn=new Function('return ('+p+');');
+    var v=fn();
+    if(typeof v==='number'&&isFinite(v))return v;
+    if(typeof v==='string'&&v!==''&&isFinite(Number(v)))return Number(v);
+  }catch(e){}
+  return null;
+}
+function scoutReadDom(){
+  try{
+    var nodes=document.querySelectorAll('[data-score],[id*="score" i],[class*="score" i]');
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i];
+      var marker=(el.id||'')+' '+(el.className&&el.className.baseVal!==undefined?'':el.className||'');
+      if(/best|high|hiscore|hiscor|top/i.test(marker))continue;
+      var t=(el.textContent||'').match(/-?\d[\d,]*/);
+      if(t){var n=Number(t[0].replace(/,/g,''));if(isFinite(n))return n;}
+    }
+  }catch(e){}
+  return null;
+}
+function scoutTick(){
+  if(PAUSED)return;
+  if(window.__HN_MANUAL_SCORE)return; // the game reports its own scores
+  var v=null;
+  var hints=(window.__HN_SCORE_HINTS&&window.__HN_SCORE_HINTS.idents)||[];
+  for(var i=0;i<hints.length;i++){v=scoutReadPath(hints[i]);if(v!==null)break;}
+  if(v===null)v=scoutReadDom();
+  if(v!==null&&v!==scoutLast){scoutLast=v;post({type:'hn-score',score:v,auto:true});}
+}
+try{
+  var scoutStart=function(){
+    scoutTick();
+    _setInterval(scoutTick,500);
+  };
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',function(){setTimeout(scoutStart,500);});
+  }else{
+    setTimeout(scoutStart,500);
+  }
+}catch(e){}
+/* -------------------------------------------------------------------- */
 try{
   var AC=window.AudioContext||window.webkitAudioContext;
   if(AC){function WrappedAC(){var c=new AC();audioCtxs.push(c);if(MUTED){try{c.suspend();}catch(e){}}return c;}
@@ -152,9 +262,9 @@ try{new MutationObserver(function(){
   mediaAll().forEach(function(el){try{if(!el.paused){el.pause();el.muted=true;}}catch(e){}});
 }).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
 window.HN={
-  postScore:function(n){post({type:'hn-score',score:Number(n)||0});},
+  postScore:function(n){window.__HN_MANUAL_SCORE=true;post({type:'hn-score',score:Number(n)||0});},
   hud:function(o){if(o&&typeof o==='object')post({type:'hn-hud',hud:o});},
-  gameOver:function(n){post({type:'hn-over',score:Number(n)||0});},
+  gameOver:function(n){window.__HN_MANUAL_SCORE=true;post({type:'hn-over',score:Number(n)||0});},
   setControls:function(c){var k={};if(c&&c.left)k.left=1;if(c&&c.right)k.right=1;if(c&&c.up)k.up=1;if(c&&c.down)k.down=1;if(c&&c.jump)k.jump=1;if(c&&c.action)k.action=1;post({type:'hn-controls',controls:k});},
   progress:function(p){post({type:'hn-progress',pct:Number(p)||0});}
 };
@@ -165,15 +275,16 @@ function arcadeBridgeTag() {
   return `<script>${BRIDGE_BODY}<\/script>`;
 }
 
-/** Inject the bridge into a full HTML document (multi-file projects). */
-function injectBridge(html) {
+/** Inject the bridge (and the score hints) into a full HTML document. */
+function injectBridge(html, extraHeadTag = '') {
+  const headTags = `${arcadeBridgeTag()}${extraHeadTag}`;
   if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, (m, attrs) => `<head${attrs}>${arcadeBridgeTag()}`);
+    return html.replace(/<head([^>]*)>/i, (m, attrs) => `<head${attrs}>${headTags}`);
   }
   if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html([^>]*)>/i, (m, attrs) => `<html${attrs}><head>${arcadeBridgeTag()}</head>`);
+    return html.replace(/<html([^>]*)>/i, (m, attrs) => `<html${attrs}><head>${headTags}</head>`);
   }
-  return `${arcadeBridgeTag()}${html}`;
+  return `${headTags}${html}`;
 }
 
 /** Resolve a relative reference against the entry file's directory. */
@@ -246,8 +357,20 @@ export function buildSrcDocFromFiles(files, entry) {
   if (!/<html[\s>]/i.test(html)) {
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${html}</body></html>`;
   }
+
+  // v30: study the WHOLE project for score signals — every script file plus
+  // the entry's inline scripts — so multi-file games get auto-extraction too.
+  const codeParts = [];
+  for (const [path, content] of Object.entries(files)) {
+    if (/\.(js|mjs|cjs|ts)$/i.test(path) && path !== entry) codeParts.push(String(content || ''));
+  }
+  for (const m of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+    codeParts.push(m[1]);
+  }
+  const hints = detectScoreSignals(codeParts.join('\n'), '');
+
   // Bridge goes in AFTER member code was neutralised so our own script
   // stays intact — it must run before any game code (it wraps rAF/timers).
-  return injectBridge(neutralizeInlineScripts(html));
+  return injectBridge(neutralizeInlineScripts(html), scoreHintsTag(hints));
 }
 

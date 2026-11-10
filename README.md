@@ -385,12 +385,39 @@ otherwise show the placeholder — once the device keys are known to have
 drifted, further legacy attempts are skipped instead of retried per message.
 New messages are always readable for both participants.
 
-**Login says "Incorrect email or password" (auth/invalid-credential):**
-that is Firebase's exact answer for a wrong email OR wrong password —
-the app now shows it inline on the sign-in card (and as a toast) instead of
-leaving an uncaught promise error in the console. Double-check the address,
-or use **Sign In with Google** if the account was created that way; the
-"Forgot?" link sends a reset email.
+**Login says "That email and password don't match an account"
+(auth/invalid-credential):** that is Firebase's exact answer for a wrong
+email OR wrong password — the app shows it inline on the sign-in card so
+the failure is visible exactly where you are typing. Double-check the
+address, or use **Sign In with Google** if the account was created that
+way. The **Forgot?** link opens a designed reset flow (enter email →
+send → in-app confirmation with steps and a resend cooldown) instead of
+the old browser prompt.
+
+**The reset email says "Project…" or lands in spam:** the wording and
+design of Firebase's reset email are a ONE-TIME Firebase Console setting
+(no code can change them — Firebase sends the mail from its own servers).
+Set it once and every reset email says **“Reset Your Password for
+HubbleNest”** with a fully designed HubbleNest body:
+
+1. Firebase Console → ⚙ **Project settings** → rename the project to
+   **HubbleNest** (kills every default “Project …” mention).
+2. Firebase Console → **Authentication → Templates → Password reset** →
+   edit. Subject: `Reset Your Password for HubbleNest`.
+3. Body: paste the designed HTML template — copy it from the in-app
+   admin panel (**Profile & Settings → Password reset email — admin
+   one-time setup → Copy designed HTML template**) or from the
+   `reset-password-email.html` file shipped flat inside this zip. The template keeps Firebase's
+   `%LINK%` and `%EMAIL%` macros, uses table layout + inline styles
+   (email-client safe), and is branded HubbleNest.
+4. Deliverability: Firebase Auth mail is sent from Google's authenticated
+   infrastructure (SPF/DKIM aligned). With real branding and a clear
+   subject it lands in the inbox — if a member still finds it in spam
+   once, adding the sender to contacts fixes it permanently.
+
+A copy of the template ships as **`reset-password-email.html`** (flat,
+open it in any browser to preview) inside this zip so it can be pasted
+anytime.
 
 **Landing page ("portfolio") visibility:** only **first-time visitors** see
 the marketing landing page. As soon as a device has signed in once, future
@@ -398,6 +425,89 @@ visits boot through a branded splash straight into the app — or into the
 sign-in view if the session expired — so returning members never see the
 portfolio again (they can still reach it anytime via the account menu →
 "Explore Landing Page").
+
+## v30 — Private Messages redesign & real-time presence
+
+The **Private Messages** tab is fully redesigned to the neon reference
+layout — deep midnight navy, glass panels, cyan/violet gradient header
+("Private **Messages**"), the Conversations sidebar with search, the
+glowing "Select a Conversation" empty state and gradient Find People /
+Browse People Directory buttons. Everything underneath is the SAME real
+messaging system: E2E-encrypted conversations, requests, attachments,
+replies, unread handling, the people directory — nothing was replaced or
+faked. Mobile opens the chosen chat as a full-panel view with a back
+button; desktop keeps the two-panel layout.
+
+**Real online/offline presence (no simulation, no "always green"):**
+
+- Every signed-in device truthfully reports its state: an immediate
+  online write on connect, a heartbeat write to `users/{uid}.presence`
+  every 60s, an instant offline write when the tab is hidden (mobile lock
+  included) and on page close.
+- Readers subscribe with Firestore `onSnapshot` — status flips stream in
+  live into the sidebar dots, the chat header ("Online" / "Last seen Xm
+  ago" / "Offline") and the sidebar's own-status pill.
+- A member counts as online only while their last beat is fresher than
+  165s (2.75 × heartbeat): a crashed browser, a dead network or a closed
+  laptop ALWAYS decays to offline on its own — nobody can be stuck online
+  indefinitely, and a profile that never beat reads as offline, never
+  guessed online.
+- Optional upgrade for INSTANT onDisconnect detection: enable Firebase
+  **Realtime Database** on the project (currently not provisioned —
+  verified 404 on both `hubblenest-default-rtdb` and `hubblenest`
+  instances) and presence can be migrated to RTDB's `.info/connected` +
+  `onDisconnect`; the Firestore pattern above is already fully functional
+  without any console change.
+
+**Unread dots are real too:** opening a chat (or receiving a message while
+the chat is open and the tab visible) writes `memberReadAt.{uid}` (server
+timestamp) to the conversation; the glowing dot shows exactly when the
+last message is newer than your last read.
+
+## v30 — Arcade: fast loads, real fullscreen, auto-extracted scores
+
+- **Games load fast.** Every game's full source code used to sit inside its
+  main document — so the Arcade's realtime list downloaded the complete
+  source of up to 60 games on every visit, and Firestore re-delivered the
+  entire collection's code to every open client every time anyone played or
+  liked a game. v30 splits the source out: game code now lives in
+  `games/{id}/code/main`, the browse list carries display fields only, and
+  the code is fetched once when a game is opened for play or editing (with
+  an instant in-frame "Loading game…" state and instant re-opens after
+  that). Games published before v30 keep working through a legacy fallback,
+  and an author opening one of their own legacy games compacts its storage
+  automatically (code moved into the code doc, heavy fields stripped).
+  **One-time step:** publish the updated `firestore.rules` (it adds the
+  `games/{id}/code` stanza) — until then new games still save and old games
+  still play, but freshly saved code docs cannot be re-read.
+- **Real fullscreen.** Fullscreen now targets the RUNNING GAME FRAME
+  itself, so the real game fills the screen — not just the app shell.
+  Safari's prefixed API is supported, and on iOS Safari (which ships no
+  element fullscreen API) an immersive fixed-position mode covers the
+  whole viewport with a one-tap Exit button. Leaving the player always
+  ends the fullscreen session.
+- **Best scores are extracted from the game automatically.** When a game
+  is built into the sandbox, the app now STUDIES ITS CODE first: a static
+  analysis finds the score variables the game really declares and mutates
+  (`score`, `points`, `state.score`, `game.score`…). Inside the sandbox a
+  scout polls those exact identifiers plus the game's own DOM score
+  elements and reports the live value through the same trusted bridge as
+  manual calls — feeding personal bests, the progress panel and the
+  leaderboard with no game changes required. Games that call
+  `HN.postScore()` themselves always win; when nothing can be read, no
+  score is invented.
+- **"Recently Added" and "From the Community" rows removed** from the
+  Arcade home (the Games list still sorts by newest on demand).
+
+## v30 — AI reliability: 503 no longer stops the answer
+
+Gemini's `503 overloaded` (and 429 quota / 500 internal) used to abort the
+request. The fallback chain is now five real Gemini models
+(`gemini-2.5-flash → gemini-flash-latest → gemini-2.5-flash-lite →
+gemini-2.0-flash → gemini-2.0-flash-lite`) and transient failures retry
+the NEXT model after a short backoff, so one busy Google model can never
+take bots, Get Help or AI game creation down. If every model is busy the
+exact reason is reported honestly.
 
 ## What's Inside
 

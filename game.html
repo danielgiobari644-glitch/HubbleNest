@@ -59,7 +59,18 @@
       if (!/^[A-Za-z0-9_-]{1,60}$/.test(id)) throw new Error('bad-id');
       const snap = await getDoc(doc(db, 'games', id));
       if (!snap.exists() || snap.data().isPublic !== true) throw new Error('missing');
-      const g = snap.data();
+      // v30: game source lives in games/{id}/code/main — merge it in; legacy
+      // games published before the split still carry top-level fields.
+      let g = snap.data();
+      if (g.kind !== 'link' && g.html === undefined && g.files === undefined) {
+        try {
+          const codeSnap = await getDoc(doc(db, 'games', id, 'code', 'main'));
+          if (codeSnap.exists()) {
+            const c = codeSnap.data();
+            g = { ...g, html: c.html || '', css: c.css || '', js: c.js || '', files: c.files || undefined };
+          }
+        } catch (e) { /* fall back to whatever the main doc carries */ }
+      }
       document.title = `${g.title || 'Game'} — HubbleNest Arcade`;
       document.getElementById('game-meta').innerHTML = `
         <span>by <b>${escapeHtml(g.authorName || 'Member')}</b></span>

@@ -24,10 +24,13 @@ import {
   auth,
   collection,
   doc,
+  getDoc,
+  getDocs,
   addDoc,
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   query,
   orderBy,
   limit,
@@ -60,6 +63,14 @@ import { getLastAiFailure } from './ai-client.js';
 
 let gamesUnsubscribe = null;
 let gamesCache = [];
+// v30 load-speed core: game SOURCE CODE lives in games/{id}/code/main so the
+// Arcade's realtime browse list never carries every game's code (it used to
+// re-download the whole collection's source on every play/like). Code is
+// fetched once on demand (play/edit) and cached here; legacy games still
+// storing code in the main doc are read through the fallback and migrated
+// automatically when their own author opens them.
+const fullGameCache = new Map(); // gameId → complete code data
+const legacyMigrating = new Set();
 let arcadeFilter = 'all'; // 'all' | 'mine'
 let arcadeSearchTerm = '';   // topbar search (title / creator / category)
 let arcadeCategory = '';     // '' = all categories
@@ -215,9 +226,22 @@ export function startArcade() {
     return;
   }
 
-  const q = query(collection(db, 'games'), orderBy('createdAt', 'desc'), limit(60));
+  const q = query(
+    collection(db, 'games'),
+    orderBy('createdAt', 'desc'),
+    limit(60)
+  );
   gamesUnsubscribe = onSnapshot(q, (snap) => {
     gamesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Re-attach any previously fetched full documents so opening a running
+    // game, restarting it or editing it never loses the code because a
+    // display-field snapshot (plays/likes) fired meanwhile.
+    if (fullGameCache.size) {
+      gamesCache = gamesCache.map((g) => {
+        const full = fullGameCache.get(g.id);
+        return full ? { ...full, ...g, _fullDoc: true } : g;
+      });
+    }
     // ALWAYS re-render on every snapshot — the old code only re-rendered in
     // 'mine' filter mode, so games published by other members never appeared
     // until the user left and reopened the Arcade (the "needs a refresh" bug).
@@ -401,7 +425,7 @@ export function renderArcadeGrid() {
    Editor
    ======================================================================== */
 
-export function openGameEditor(gameId, opts = {}) {
+export async function openGameEditor(gameId, opts = {}) {
   const { browse, editor, player } = els();
   if (!browse || !editor) return;
 
@@ -412,7 +436,9 @@ export function openGameEditor(gameId, opts = {}) {
   editingGameId = gameId;
   window.HubbleNest?.onArcadeEditorOpen?.();
 
-  const game = gameId ? gamesCache.find(g => g.id === gameId) : null;
+  // The browse cache is field-masked (no code) — fetch the full document
+  // before filling the editor tabs (instant for already-fetched games).
+  const game = gameId ? await ensureFullGame(gameId) : null;
 
   const titleInput = document.getElementById('game-title-input');
   const descInput = document.getElementById('game-desc-input');
@@ -1058,13 +1084,21 @@ export async function saveCurrentGame() {
 
   const existing = editingGameId ? gamesCache.find(g => g.id === editingGameId) : null;
 
+  // v30 split: the game's SOURCE CODE goes to games/{id}/code/main, so the
+  // realtime browse list only carries display fields (the old layout kept
+  // every game's full source inside its main doc, and Firestore re-delivered
+  // the entire collection's code on every play/like — the cause of slow
+  // Arcade loads). entryPath/fileCount/languages stay on the main doc: the
+  // list and detail views need them for routing and honest runnability.
+  const codePayload = {
+    html, css, js,
+    files: hasFiles ? editorFiles : null
+  };
   const payload = {
     title: title.slice(0, 80),
     description: description.slice(0, 300),
     category: (document.getElementById('game-category-select')?.value || '').slice(0, 40),
     isPublic: !!document.getElementById('game-public-input')?.checked,
-    html, css, js,
-    files: hasFiles ? editorFiles : null,
     entryPath: hasFiles ? entry : null,
     fileCount: hasFiles ? Object.keys(editorFiles).length : 0,
     languages: hasFiles ? detectLanguages(editorFiles) : [],
@@ -1087,16 +1121,27 @@ export async function saveCurrentGame() {
   try {
     let gameId = editingGameId;
     if (existing) {
-      await updateDoc(doc(db, 'games', existing.id), payload);
+      // Update + migrate: strip the legacy top-level code fields so this
+      // game stops weighing the browse snapshot down from now on.
+      await updateDoc(doc(db, 'games', existing.id), {
+        ...payload,
+        html: deleteField(),
+        css: deleteField(),
+        js: deleteField(),
+        files: deleteField()
+      });
+      await setDoc(doc(db, 'games', existing.id, 'code', 'main'), codePayload);
     } else {
       payload.plays = 0;
       payload.likedBy = [];
       payload.createdAt = serverTimestamp();
       const ref = doc(collection(db, 'games'));
       await setDoc(ref, payload);
+      await setDoc(doc(db, 'games', ref.id, 'code', 'main'), codePayload);
       gameId = ref.id;
     }
     try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
+    fullGameCache.delete(gameId); // the code changed — re-fetch on next open
     showToast(existing ? 'Game updated ✓' : 'Published to the Arcade ✓', 'success');
     if (statusEl) { statusEl.textContent = ''; }
     closeGameEditor();
@@ -1123,6 +1168,9 @@ export async function gameDelete(gameId) {
   if (!game || game.authorId !== myUid()) return;
   if (!window.confirm(`Delete "${game.title}" permanently? Play counts and likes are lost too.`)) return;
   try {
+    // v30: the source code lives in a subcollection doc — Firestore deletes
+    // do NOT cascade, so remove it explicitly (legacy games have none).
+    try { await deleteDoc(doc(db, 'games', gameId, 'code', 'main')); } catch (e) { /* no code doc — legacy layout */ }
     await deleteDoc(doc(db, 'games', gameId));
     showToast('Game deleted.', 'info');
     // If its detail page is open, return to the games list (nothing to show).
@@ -1140,8 +1188,92 @@ export async function gameDelete(gameId) {
    Player
    ======================================================================== */
 
-export function openGamePlayer(gameId) {
-  const game = gamesCache.find(g => g.id === gameId);
+/**
+ * v30 load-speed core: the browse list no longer carries game code (new and
+ * re-saved games keep their source in games/{id}/code/main — see
+ * saveCurrentGame), so before actually RUNNING or EDITING a game its code is
+ * fetched once from the code doc, with a legacy fallback to top-level fields
+ * for games published before v30. Restart/re-open are instant afterwards.
+ */
+async function ensureFullGame(gameId) {
+  const cached = gamesCache.find(g => g.id === gameId);
+  if (!cached) return null;
+  if (cached._fullDoc || (cached.kind === 'link' && cached.linkUrl)) return cached;
+
+  let full = null;
+  let legacyLayout = false;
+  try {
+    const codeSnap = await getDoc(doc(db, 'games', gameId, 'code', 'main'));
+    if (codeSnap.exists()) {
+      full = { ...cached, ...codeSnap.data() };
+    }
+  } catch (err) {
+    console.warn('Game code doc read failed:', err?.code || err);
+  }
+  if (!full) {
+    try {
+      const snap = await getDoc(doc(db, 'games', gameId));
+      if (snap.exists()) {
+        full = { ...cached, ...snap.data() };
+        // A legacy game keeps its code in the main document.
+        if (full.html !== undefined || full.js !== undefined || full.files !== undefined) legacyLayout = true;
+      }
+    } catch (err) {
+      console.warn('Full game fetch failed:', err?.code || err);
+    }
+  }
+  if (!full) return cached; // unreachable doc — play exactly what we have
+  fullGameCache.set(gameId, full);
+  const merged = { ...full, _fullDoc: true };
+  gamesCache = gamesCache.map(g => (g.id === gameId ? merged : g));
+  // Own legacy game opened → compact its storage once (author-only write).
+  if (legacyLayout && cached.authorId && cached.authorId === auth.currentUser?.uid) {
+    migrateLegacyGameCode(gameId, full);
+  }
+  return merged;
+}
+
+/**
+ * Legacy migration: move top-level html/css/js into the code doc and strip
+ * the heavy fields from the main doc, so the browse snapshot gets lighter
+ * every time an author opens one of their own games.
+ */
+async function migrateLegacyGameCode(gameId, full) {
+  if (legacyMigrating.has(gameId)) return;
+  legacyMigrating.add(gameId);
+  try {
+    await setDoc(doc(db, 'games', gameId, 'code', 'main'), {
+      html: full.html || '',
+      css: full.css || '',
+      js: full.js || '',
+      files: full.files || null
+    });
+    await updateDoc(doc(db, 'games', gameId), {
+      html: deleteField(),
+      css: deleteField(),
+      js: deleteField(),
+      files: deleteField()
+    });
+    console.info('[HubbleNest] Game storage compacted (code moved to the code doc):', gameId);
+  } catch (err) {
+    // Rules pending or offline — the game stays fully playable either way.
+    console.warn('Code compaction skipped:', err?.code || err);
+  } finally {
+    legacyMigrating.delete(gameId);
+  }
+}
+
+/** In-frame placeholder while the real game document streams in. */
+function playerLoadingDoc() {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+    'html,body{height:100%;margin:0;background:#0b1024;display:flex;align-items:center;justify-content:center}' +
+    'div{font-family:system-ui,-apple-system,sans-serif;font-size:14px;letter-spacing:.03em;color:#8ea0c8;text-align:center}' +
+    '@keyframes hn-p{0%{opacity:.35}50%{opacity:1}100%{opacity:.35}}span{animation:hn-p 1.15s ease-in-out infinite}' +
+    '</style></head><body><div><span>Loading game\u2026</span></div></body></html>';
+}
+
+export async function openGamePlayer(gameId) {
+  let game = gamesCache.find(g => g.id === gameId);
   if (!game) { showToast('That game is no longer available.', 'error'); return; }
 
   const { browse, editor, player } = els();
@@ -1185,15 +1317,28 @@ export function openGamePlayer(gameId) {
       frame.setAttribute('sandbox', CODE_SANDBOX);
       frame.removeAttribute('allow');
       frame.setAttribute('allowfullscreen', 'true');
-      if (game.entryPath && game.files) {
-        frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
-      } else if (game.files && !game.entryPath) {
+      // The player shows instantly with a loading frame while the real
+      // document (one single-doc read) streams in — no blank wait.
+      frame.srcdoc = playerLoadingDoc();
+      const full = await ensureFullGame(gameId);
+      if (playerGameId !== gameId) return; // the member left before it arrived
+      if (full.entryPath && full.files) {
+        frame.srcdoc = buildSrcDocFromFiles(full.files, full.entryPath);
+      } else if (full.files && !full.entryPath) {
         // SOURCE PROJECT (no HTML entry): honest state — show the file tree and
         // say plainly that the browser cannot execute these languages.
         frame.remove();
-        renderSourceProjectPanel(game);
+        renderSourceProjectPanel(full);
+      } else if (!full.html && !full.js) {
+        // Code could not be loaded at all (rules pending / connection): say so
+        // honestly instead of showing a silent blank frame.
+        frame.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+          'html,body{height:100%;margin:0;background:#0b1024;display:flex;align-items:center;justify-content:center}' +
+          'div{font-family:system-ui,sans-serif;color:#8ea0c8;font-size:14px;text-align:center;max-width:420px;line-height:1.6}' +
+          '</style></head><body><div><b style="color:#dbe4ff">This game\u2019s code could not be loaded.</b><br>' +
+          'Check your connection, then reopen the game. If it keeps failing, the project admin must publish the latest firestore.rules.</div></body></html>';
       } else {
-        frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+        frame.srcdoc = buildSrcDoc(full.html, full.css, full.js);
       }
     }
   }
@@ -1226,8 +1371,15 @@ export function restartCurrentGame() {
     frame.srcdoc = buildSrcDocFromFiles(game.files, game.entryPath);
   } else if (game.files && !game.entryPath) {
     return; // source-only project — nothing to restart
-  } else {
+  } else if (game._fullDoc) {
     frame.srcdoc = buildSrcDoc(game.html, game.css, game.js);
+  } else {
+    // Masked cache (no code yet) — fetch it, then restart for real.
+    ensureFullGame(game.id).then((full) => {
+      if (playerGameId === game.id && full && !full.entryPath && !(full.files && !full.entryPath)) {
+        frame.srcdoc = buildSrcDoc(full.html, full.css, full.js);
+      }
+    });
   }
   window.HubbleNest?.onGameplayRestarted?.();
 }
@@ -1276,6 +1428,12 @@ function renderSourceProjectPanel(game) {
 
 export function closeGamePlayer() {
   const { browse, player } = els();
+  // Leaving the player ALWAYS ends any fullscreen/immersive session.
+  clearImmersiveFallback();
+  try {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } catch (e) { /* ignore */ }
   // End the play session and tear down gameplay panels FIRST (score submits
   // happen inside this hook — the frame is still alive here).
   window.HubbleNest?.onGameplayClose?.();
@@ -1294,14 +1452,72 @@ export function closeGamePlayer() {
   if (browse) browse.style.display = 'block';
 }
 
-/** Fullscreen the game frame — a real fullscreen session on the wrapper. */
+/* ---- v30 REAL fullscreen — the running game itself, not the app shell -- */
+
+let fsExitBtn = null;
+
+function clearImmersiveFallback() {
+  const wrap = document.querySelector('.game-player-frame-wrap');
+  if (wrap) wrap.classList.remove('hn-viewport-full');
+  document.body.classList.remove('hn-frame-immersive');
+  if (fsExitBtn) { fsExitBtn.remove(); fsExitBtn = null; }
+}
+
+/** iOS Safari ships no element fullscreen API — immersive fallback instead. */
+function enterImmersiveFallback(wrap) {
+  wrap.classList.add('hn-viewport-full');
+  document.body.classList.add('hn-frame-immersive');
+  if (!fsExitBtn) {
+    fsExitBtn = document.createElement('button');
+    fsExitBtn.type = 'button';
+    fsExitBtn.className = 'hn-fs-exit';
+    fsExitBtn.setAttribute('aria-label', 'Exit fullscreen');
+    fsExitBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg><span>Exit</span>';
+    fsExitBtn.addEventListener('click', clearImmersiveFallback);
+    wrap.appendChild(fsExitBtn);
+  }
+  showToast('Immersive mode — tap Exit to return.', 'info', 2600);
+}
+
 export function toggleGameFullscreen() {
   const wrap = document.querySelector('.game-player-frame-wrap');
   if (!wrap) return;
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
-  } else {
-    wrap.requestFullscreen?.().catch(() => showToast('Fullscreen was blocked by the browser.', 'warning'));
+  const frame = document.getElementById('player-frame');
+
+  // Immersive fallback active → leave it.
+  if (wrap.classList.contains('hn-viewport-full')) { clearImmersiveFallback(); return; }
+
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fsEl) {
+    try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) { /* ignore */ }
+    return;
+  }
+
+  // Fullscreen the RUNNING GAME FRAME itself (the real game fills the
+  // screen); the wrapper is the fallback when the frame refuses.
+  const frameReq = frame ? (frame.requestFullscreen || frame.webkitRequestFullscreen) : null;
+  const wrapReq = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+  if (!frameReq && !wrapReq) { enterImmersiveFallback(wrap); return; }
+
+  try {
+    if (frameReq) {
+      const p = frameReq.call(frame);
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          if (wrapReq) {
+            const p2 = wrapReq.call(wrap);
+            if (p2 && typeof p2.catch === 'function') p2.catch(() => enterImmersiveFallback(wrap));
+          } else {
+            enterImmersiveFallback(wrap);
+          }
+        });
+      }
+    } else {
+      const p = wrapReq.call(wrap);
+      if (p && typeof p.catch === 'function') p.catch(() => enterImmersiveFallback(wrap));
+    }
+  } catch (e) {
+    enterImmersiveFallback(wrap);
   }
 }
 

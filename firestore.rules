@@ -407,6 +407,17 @@ service cloud.firestore {
       );
       allow delete: if isAdmin() || (isAuthenticated() &&
         fieldStr(resource.data, 'authorId') == request.auth.uid);
+
+      // v30: the game's SOURCE CODE lives here (games/{id}/code/main) so the
+      // Arcade's realtime browse list stays light. Same visibility as the
+      // parent game; only the author writes it (creation/migration/edits).
+      match /code/{codeDocId} {
+        allow get, list: if isAuthenticated() ||
+          (get(/databases/$(database)/documents/games/$(gameId)).data.get('isPublic', false) == true);
+        allow create, update, delete: if isAuthenticated() &&
+          !isBannedNow() &&
+          get(/databases/$(database)/documents/games/$(gameId)).data.get('authorId', '') == request.auth.uid;
+      }
     }
 
     // ======================================================================

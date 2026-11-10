@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=29) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=30) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=29" />
+  <link rel="modulepreload" href="./app.js?v=30" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=29" />
+  <link rel="stylesheet" href="./style.css?v=30" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -756,7 +756,7 @@
           <div class="form-group">
             <div class="form-label-row">
               <label class="form-label" for="login-password">Password</label>
-              <button type="button" class="btn-ghost form-inline-link" onclick="window.HubbleNest.resetPassword()">Forgot?</button>
+              <button type="button" class="btn-ghost form-inline-link" onclick="window.HubbleNest.openForgotPasswordCard()">Forgot?</button>
             </div>
             <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password" />
           </div>
@@ -778,6 +778,50 @@
         <div class="auth-switch">
           Don't have an account?
           <button type="button" class="btn-ghost form-inline-link accent" onclick="window.HubbleNest.showSignupCard()">Get Started</button>
+        </div>
+      </div>
+
+      <!-- Forgot Password Card (v30 — designed reset flow, replaces the old prompt) -->
+      <div class="auth-card" id="card-forgot" style="display: none;">
+        <button type="button" class="back-home-btn" onclick="window.HubbleNest.showLoginCard()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          <span>Back to sign in</span>
+        </button>
+        <div class="auth-header">
+          <div class="forgot-glyph" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h2 class="auth-title">Reset your password</h2>
+          <p class="auth-subtitle">Enter the email on your HubbleNest account and we'll send you a reset link.</p>
+        </div>
+
+        <form id="forgot-form" onsubmit="event.preventDefault(); window.HubbleNest.submitForgotPassword();">
+          <div class="form-group">
+            <label class="form-label" for="forgot-email">Email Address</label>
+            <input type="email" id="forgot-email" class="form-input" placeholder="you@domain.com" required autocomplete="email" />
+          </div>
+          <div class="login-inline-error" id="forgot-inline-error" role="alert" style="display: none;"></div>
+          <button type="submit" id="forgot-submit-btn" class="btn btn-primary btn-full form-submit">Send Reset Link</button>
+        </form>
+
+        <div id="forgot-success" style="display: none;">
+          <div class="forgot-success-card">
+            <div class="forgot-success-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/><path d="m9 12 2 2 4-4"/></svg>
+            </div>
+            <h3 class="forgot-success-title">Check your inbox</h3>
+            <p class="forgot-success-text">We sent a password reset link to <b id="forgot-sent-email"></b>.</p>
+            <ol class="forgot-success-steps">
+              <li>Open the email — its subject is <b>“Reset Your Password for HubbleNest”</b>.</li>
+              <li>Tap <b>Reset Password</b> and choose a new password.</li>
+              <li>Come back and sign in with your new password.</li>
+            </ol>
+            <p class="forgot-success-hint">Don't see it? Check your spam or promotions folder once — then add HubbleNest to your contacts so every future email lands in your inbox.</p>
+            <div class="forgot-success-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="forgot-resend-btn" onclick="window.HubbleNest.resendForgotPassword()">Resend email</button>
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.HubbleNest.showLoginCard()">Back to sign in</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1633,21 +1677,56 @@
           </div>
         </div>
 
-        <!-- VIEW: PRIVATE DIRECT MESSAGES -->
+        <!-- VIEW: PRIVATE DIRECT MESSAGES — v30 "Neon Private Messages" redesign -->
         <div class="view-section" id="view-direct-messages">
-          <div class="dash-header">
-            <div class="dash-section-titles">
-              <h1 class="dash-title">Private Messages</h1>
-              <p class="dash-subtitle">Private, protected conversations with people you belong with.</p>
+          <div class="pm-shell">
+            <div class="pm-ambient" aria-hidden="true">
+              <span class="pm-glow pm-glow-cyan"></span>
+              <span class="pm-glow pm-glow-violet"></span>
+              <span class="pm-wave pm-wave-left"></span>
+              <span class="pm-wave pm-wave-right"></span>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="window.HubbleNest.openPeopleView()">
-              Find People
-            </button>
-          </div>
 
-          <div class="dm-layout">
+            <header class="pm-header">
+              <div class="pm-header-brand">
+                <span class="pm-header-logo" aria-hidden="true">
+                  <svg width="34" height="34" viewBox="0 0 48 48" fill="none">
+                    <defs>
+                      <linearGradient id="pmLogoBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+                      <linearGradient id="pmLogoViolet" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+                    </defs>
+                    <path d="M6 10.5A6.5 6.5 0 0 1 12.5 4h15A6.5 6.5 0 0 1 34 10.5v7A6.5 6.5 0 0 1 27.5 24H16l-7.6 6.2c-1 .8-2.4.1-2.4-1.1z" fill="url(#pmLogoBlue)"/>
+                    <circle cx="16" cy="14" r="2.1" fill="#e2e8ff"/><circle cx="21.5" cy="14" r="2.1" fill="#e2e8ff"/><circle cx="27" cy="14" r="2.1" fill="#e2e8ff"/>
+                    <path d="M22 26.5A6.5 6.5 0 0 1 28.5 20h7A6.5 6.5 0 0 1 42 26.5v5A6.5 6.5 0 0 1 35.5 38h-6l-6.2 5.1c-1 .8-2.3 0-2.3-1.2z" fill="url(#pmLogoViolet)"/>
+                    <circle cx="29" cy="29" r="1.8" fill="#f1e8ff"/><circle cx="33.5" cy="29" r="1.8" fill="#f1e8ff"/>
+                  </svg>
+                </span>
+                <span class="pm-header-divider" aria-hidden="true"></span>
+                <div class="pm-header-titles">
+                  <h1 class="pm-title">Private <span class="pm-title-accent">Messages</span></h1>
+                  <p class="pm-subtitle">Chat privately and stay connected with people you trust.</p>
+                </div>
+              </div>
+              <button type="button" class="pm-btn-gradient pm-btn-lg" onclick="window.HubbleNest.openPeopleView()">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8" r="3.4"/><path d="M3.5 19.5c.6-3 3-4.7 6-4.7s5.4 1.7 6 4.7"/><circle cx="17.5" cy="15.5" r="2.6"/><path d="m21.5 19.5-1.9-1.9"/></svg>
+                <span>Find People</span>
+              </button>
+            </header>
+
+            <div class="pm-layout">
             <!-- Conversations Sidebar -->
-            <div class="dm-sidebar">
+            <aside class="pm-sidebar">
+              <div class="pm-side-head">
+                <span class="pm-side-glyph" aria-hidden="true">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                </span>
+                <h2 class="pm-side-title">Conversations</h2>
+                <label class="pm-search" for="pm-conversation-search">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input type="text" id="pm-conversation-search" autocomplete="off" placeholder="Search messages..." oninput="window.HubbleNest.handleDirectConvSearch(this.value)" />
+                </label>
+              </div>
+
               <!-- Incoming Chat Requests Box -->
               <div id="direct-requests-container" class="direct-requests-box" style="display: none;">
                 <div class="direct-requests-header">
@@ -1657,24 +1736,33 @@
                 <div id="direct-requests-list"></div>
               </div>
 
-              <div class="dm-sidebar-label">Conversations</div>
-
-              <div id="direct-conv-list" class="dm-conv-list">
-                <div class="dropdown-empty">Loading conversations...</div>
+              <div id="direct-conv-list" class="pm-conv-list">
+                <div class="pm-conv-loading">Loading conversations...</div>
               </div>
-            </div>
+
+              <div class="pm-side-foot">
+                <span class="pm-presence-pill" id="pm-my-presence">
+                  <span class="pm-presence-dot" aria-hidden="true"></span>
+                  <span id="pm-my-presence-label">Connecting…</span>
+                </span>
+              </div>
+            </aside>
 
             <!-- Active Chat Box -->
-            <div class="dm-chat-col">
-              <div class="chat-container" id="direct-chat-active" style="display: none;">
-                <div class="dm-chat-header">
-                  <div class="dm-chat-peer" onclick="if(state.activeDirectPeer) window.HubbleNest.openUserCardModal(state.activeDirectPeer.uid)">
-                    <span class="msg-avatar dm-peer-avatar">
+            <div class="pm-main">
+              <div class="chat-container pm-chat" id="direct-chat-active" style="display: none;">
+                <div class="pm-chat-head">
+                  <button type="button" class="pm-chat-back" id="pm-chat-back" onclick="window.HubbleNest.closeDirectChatMobile()" aria-label="Back to conversations">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  </button>
+                  <div class="dm-chat-peer" onclick="window.HubbleNest.openActivePeerCard()" title="View profile">
+                    <span class="msg-avatar dm-peer-avatar pm-peer-avatar-wrap">
                       <img id="direct-chat-peer-avatar" src="" class="avatar-img" alt="Peer" />
+                      <span class="pm-presence-dot pm-presence-dot-lg" id="direct-chat-peer-dot" aria-hidden="true"></span>
                     </span>
                     <span class="dm-peer-meta">
                       <h3 id="direct-chat-peer-name">Member</h3>
-                      <span id="direct-chat-peer-handle">@member</span>
+                      <span class="pm-peer-sub"><span id="direct-chat-peer-handle">@member</span><span class="pm-peer-sep">·</span><span class="pm-peer-status" id="direct-chat-peer-presence">Offline</span></span>
                     </span>
                   </div>
                   <span class="dm-chat-secure">
@@ -1740,17 +1828,40 @@
                 </div>
               </div>
 
-              <div id="direct-chat-empty" class="empty-state">
-                <div class="empty-state-icon">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <div id="direct-chat-empty" class="pm-empty">
+                <div class="pm-empty-illustration" aria-hidden="true">
+                  <svg width="240" height="158" viewBox="0 0 240 158" fill="none">
+                    <defs>
+                      <linearGradient id="pmBubBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+                      <linearGradient id="pmBubViolet" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+                      <radialGradient id="pmHalo" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#3b82f6" stop-opacity="0.28"/><stop offset="1" stop-color="#3b82f6" stop-opacity="0"/></radialGradient>
+                    </defs>
+                    <ellipse cx="120" cy="76" rx="86" ry="40" fill="url(#pmHalo)"/>
+                    <ellipse cx="120" cy="76" rx="106" ry="44" stroke="#60a5fa" stroke-opacity="0.34" stroke-width="1.6" stroke-dasharray="2 6"/>
+                    <ellipse cx="120" cy="76" rx="106" ry="44" stroke="#a78bfa" stroke-opacity="0.16" stroke-width="1" transform="rotate(-8 120 76)"/>
+                    <circle cx="62" cy="58" r="2.2" fill="#60a5fa" opacity="0.9"/>
+                    <circle cx="184" cy="96" r="2.6" fill="#a78bfa" opacity="0.9"/>
+                    <circle cx="204" cy="52" r="1.7" fill="#38bdf8" opacity="0.8"/>
+                    <circle cx="36" cy="94" r="1.7" fill="#8b5cf6" opacity="0.7"/>
+                    <circle cx="150" cy="24" r="1.4" fill="#38bdf8" opacity="0.7"/>
+                    <path d="M88 36.5A16.5 16.5 0 0 1 104.5 20h39A16.5 16.5 0 0 1 160 36.5v15A16.5 16.5 0 0 1 143.5 67h-27.8l-16 13c-2.3 1.9-5.7.2-5.7-2.8z" fill="url(#pmBubBlue)"/>
+                    <circle cx="109" cy="44" r="3.6" fill="#e4ecff"/><circle cx="121.5" cy="44" r="3.6" fill="#e4ecff"/><circle cx="134" cy="44" r="3.6" fill="#e4ecff"/>
+                    <path d="M121 79.5A14.5 14.5 0 0 1 135.5 65h26A14.5 14.5 0 0 1 176 79.5v11.5A14.5 14.5 0 0 1 161.5 105.5h-19.3l-12.3 10c-2 1.6-4.9.2-4.9-2.4z" fill="url(#pmBubViolet)"/>
+                    <circle cx="143" cy="85.5" r="2.9" fill="#efe7ff"/><circle cx="152.5" cy="85.5" r="2.9" fill="#efe7ff"/>
+                  </svg>
                 </div>
-                <h3 class="empty-state-title">Select a conversation</h3>
-                <p class="empty-state-desc">Choose a member on the left or connect with people in the directory.</p>
-                <button class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openPeopleView()">Browse People Directory</button>
+                <h2 class="pm-empty-title">Select a <span class="pm-title-accent">Conversation</span></h2>
+                <p class="pm-empty-desc">Choose a member on the left or connect with people in the directory.</p>
+                <button type="button" class="pm-btn-gradient pm-btn-lg" onclick="window.HubbleNest.openPeopleView()">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8" r="3.4"/><path d="M3.5 19.5c.6-3 3-4.7 6-4.7s5.4 1.7 6 4.7"/><circle cx="17.5" cy="15.5" r="2.6"/><path d="m21.5 19.5-1.9-1.9"/></svg>
+                  <span>Browse People Directory</span>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
               </div>
 
               <!-- Friendly failure state for the private chat (fills via app.js) -->
               <div id="direct-chat-error" style="display: none;"></div>
+            </div>
             </div>
           </div>
         </div>
@@ -2476,6 +2587,31 @@
                   Valid models: <b>gemini-2.5-flash</b> (recommended), <b>gemini-2.0-flash</b> or
                   <b>gemini-flash-latest</b>. The Test button sends one real
                   request and reports the exact result — so an invalid, expired, retired or restricted key can never hide behind a generic error.
+                </p>
+              </div>
+
+              <div class="settings-divider admin-config-section" id="admin-email-template" style="display: none;">
+                <h4 class="settings-subtitle">Password reset email — admin one-time setup</h4>
+                <p class="settings-hint">
+                  Firebase sends the reset email from <b>its own</b> servers, so its wording and design are
+                  configured once in the Firebase Console (no code can change it). One minute of setup makes it
+                  say <b>“Reset Your Password for HubbleNest”</b> — never “Project…” — and look fully designed:
+                </p>
+                <ol class="email-template-steps">
+                  <li><b>Name the project “HubbleNest”</b> — Firebase Console → ⚙ Project settings → Project name.</li>
+                  <li><b>Customise the email</b> — Firebase Console → Authentication → Templates → <i>Password reset</i> → edit.</li>
+                  <li>Paste the <b>Subject</b> and the <b>HTML body</b> below (copy buttons), then <b>Save</b>.</li>
+                </ol>
+                <div class="push-config-actions">
+                  <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.copyResetEmailSubject()">Copy subject line</button>
+                  <button type="button" class="btn btn-secondary" onclick="window.HubbleNest.copyResetEmailTemplate()">Copy designed HTML template</button>
+                  <a class="btn btn-primary" style="text-decoration: none;" href="https://console.firebase.google.com/u/0/project/hubblenest/authentication/templates" target="_blank" rel="noopener noreferrer">Open Firebase Console → Templates ↗</a>
+                </div>
+                <p class="settings-hint">
+                  The template uses Firebase's <code>%LINK%</code> and <code>%EMAIL%</code> macros, so the
+                  reset button and personalisation keep working. Firebase Auth mail is sent from Google's
+                  authenticated infrastructure (SPF/DKIM aligned) — with the HubbleNest branding and a clear
+                  subject it reliably lands in the inbox, not spam.
                 </p>
               </div>
 
@@ -3473,7 +3609,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=29"></script>
+  <script type="module" src="./app.js?v=30"></script>
 
 </body>
 </html>
