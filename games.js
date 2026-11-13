@@ -57,6 +57,10 @@ import { buildSrcDocFromFiles, buildSrcDoc, detectLanguages, normalizeGamePath }
 import { generateGameCode, getAiConfig } from './ai-game-builder.js';
 import { getLastAiFailure } from './ai-client.js';
 
+// v31: off-app delivery for game likes + Cloudinary uploads for the separate
+// game LOGO image (distinct field and upload from the cover image).
+import { sendPushToUser } from './notifications.js';
+
 /* ========================================================================
    State
    ======================================================================== */
@@ -80,6 +84,8 @@ let playerGameId = null;
 let previewTimer = null;
 let editorCoverUrl = null;   // Cloudinary URL of the game's cover image (own games can change it anytime)
 let editorCoverBusy = false; // upload in flight — save waits for it
+let editorLogoUrl = null;    // v31: the game's LOGO/icon — a SEPARATE image, its own upload and its own display slot
+let editorLogoBusy = false;  // logo upload in flight — save waits for it
 let editorLinkUrl = '';      // https URL when editing/restoring a LINK game
 
 /* Multi-file game project (path → text content). Any code language: the
@@ -308,6 +314,22 @@ export function setArcadeSort(sort) {
 
 function myUid() { return window.HubbleNest?._state?.currentUser?.uid || null; }
 
+/**
+ * v31 PLATFORM ADMIN GAME MANAGEMENT: the admin (danielgiobari644@gmail.com)
+ * can edit, delete and re-skin ANY game — not just their own. The security
+ * rules enforce the same isAdmin() check server-side, so this flag only
+ * unlocks UI; it grants nothing the rules do not allow.
+ */
+function canManageGame(g) {
+  if (!g) return false;
+  if (g.authorId && g.authorId === myUid()) return true;
+  return window.HubbleNest?._state?.isAdmin === true;
+}
+
+function isPlatformAdminHere() {
+  return window.HubbleNest?._state?.isAdmin === true;
+}
+
 /** Sort helper honouring the games-list sort control. */
 function sortGamesList(list) {
   const t = (g) => (g.updatedAt?.seconds || g.createdAt?.seconds || 0);
@@ -334,6 +356,7 @@ export function arcGameCard(g) {
   const liked = Array.isArray(g.likedBy) && uid && g.likedBy.includes(uid);
   const likes = Array.isArray(g.likedBy) ? g.likedBy.length : (g.likeCount || 0);
   const mine = g.authorId === uid;
+  const manageable = canManageGame(g); // v31: the platform admin manages EVERY game
   const sid = escapeHtml(g.id);
   const ratingCount = Number(g.ratingCount) || 0;
   const ratingAvg = ratingCount > 0 ? (Number(g.ratingSum) || 0) / ratingCount : 0;
@@ -344,10 +367,18 @@ export function arcGameCard(g) {
   const thumbInner = g.coverImage
     ? `<img src="${escapeHtml(g.coverImage)}" class="game-card-cover-img" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()"/>`
     : `<span class="game-thumb-initials">${escapeHtml(initials)}</span>`;
+  // v31 LOGO — a genuinely separate image with its own display slot: a small
+  // rounded badge pinned to the cover's corner. It loads EAGERLY (tiny icon,
+  // instantly visible) while the large cover loads LAZILY — two images,
+  // two elements, two loading strategies.
+  const logoChip = g.logoUrl
+    ? `<img src="${escapeHtml(g.logoUrl)}" class="game-card-logo" alt="${escapeHtml(g.title || 'Game')} logo" loading="eager" decoding="async" onerror="this.remove()"/>`
+    : '';
   return `
     <article class="game-card arc-card" data-game-card="${sid}" onclick="window.HubbleNest.openGameDetail('${sid}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter')window.HubbleNest.openGameDetail('${sid}')">
       <div class="game-card-thumb ${g.coverImage ? 'game-card-thumb-photo' : ''}" ${g.coverImage ? '' : `style="background: linear-gradient(135deg, hsl(${hue} 62% 26%), hsl(${(hue + 46) % 360} 70% 16%));"`}>
         ${thumbInner}
+        ${logoChip}
         ${g.category ? `<span class="arc-card-cat">${escapeHtml(g.category)}</span>` : ''}
         ${g.fileCount > 0 ? `<span class="game-thumb-files" title="Multi-file project">${g.fileCount} files</span>` : ''}
         ${g.kind === 'link' && g.linkUrl ? `<span class="game-thumb-host" title="Plays live from ${escapeHtml(g.linkHost || 'its own site')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>${escapeHtml(g.linkHost || 'link')}</span>` : ''}
@@ -370,9 +401,16 @@ export function arcGameCard(g) {
                     <button type="button" class="btn-ghost" style="color:var(--text-secondary);font-size:.75rem;" onclick="window.HubbleNest.openGameEditor('${sid}')">Edit</button>
                     <button type="button" class="btn-ghost" style="color:var(--status-danger);font-size:.75rem;" onclick="window.HubbleNest.gameDelete('${sid}')">Delete</button>
                   </span>`
+               : (manageable ? `<span class="arc-card-owner arc-card-owner-admin" title="Platform admin tools">
+                    <button type="button" class="btn-ghost" style="color:var(--accent-primary);font-size:.75rem;" onclick="window.HubbleNest.openGameEditor('${sid}')">Admin edit</button>
+                    <button type="button" class="btn-ghost" style="color:var(--status-danger);font-size:.75rem;" onclick="window.HubbleNest.gameDelete('${sid}')">Delete</button>
+                  </span>
+                  <button type="button" class="arc-card-play-btn" onclick="window.HubbleNest.openGamePlayer('${sid}')">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> Play
+                  </button>`
                : `<button type="button" class="arc-card-play-btn" onclick="window.HubbleNest.openGamePlayer('${sid}')">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg> Play
-                  </button>`}
+                  </button>`)}
       </footer>
     </article>`;
 }
@@ -429,6 +467,15 @@ export async function openGameEditor(gameId, opts = {}) {
   const { browse, editor, player } = els();
   if (!browse || !editor) return;
 
+  // v31 DEDICATED CREATE-GAME PAGE: the editor is no longer a hidden panel
+  // inside the Arcade view — it is its own full page (view-create-game),
+  // completely separate from the page where published games are displayed.
+  // The Arcade list keeps its listener running, so the games cache stays
+  // fresh while the editor page is open.
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-create-game')?.classList.add('active-view');
+  window.HubbleNest._state && (window.HubbleNest._state.currentView = 'create-game');
+
   player && (player.style.display = 'none');
   browse.style.display = 'none';
   document.getElementById('arcade-detail') && (document.getElementById('arcade-detail').style.display = 'none');
@@ -449,7 +496,9 @@ export async function openGameEditor(gameId, opts = {}) {
   const editorHeading = document.getElementById('arcade-editor-heading');
 
   if (game) {
-    if (editorHeading) editorHeading.textContent = 'Edit game';
+    if (editorHeading) editorHeading.textContent = 'Game details & code';
+    const dashTitle = document.getElementById('create-game-dash-title');
+    if (dashTitle) dashTitle.innerHTML = 'Edit <span class="dash-title-accent">Game</span>';
     if (titleInput) titleInput.value = game.title || '';
     if (descInput) descInput.value = game.description || '';
     if (htmlTa) htmlTa.value = game.html || '';
@@ -462,13 +511,17 @@ export async function openGameEditor(gameId, opts = {}) {
     editorFiles = (game.files && typeof game.files === 'object') ? { ...game.files } : {};
     editorEntry = game.entryPath || currentEntryCandidate();
     editorCoverUrl = game.coverImage || null;
+    editorLogoUrl = game.logoUrl || null;
     editorLinkUrl = (game.kind === 'link' && game.linkUrl) ? game.linkUrl : '';
     renderGameCoverPreview();
+    renderGameLogoPreview();
   } else {
     editorFiles = {};
     editorEntry = null;
     editorLinkUrl = '';
-    if (editorHeading) editorHeading.textContent = 'Create a game';
+    if (editorHeading) editorHeading.textContent = 'Game details & code';
+    const dashTitleNew = document.getElementById('create-game-dash-title');
+    if (dashTitleNew) dashTitleNew.innerHTML = 'Create a <span class="dash-title-accent">Game</span>';
     // Restore an unsaved local draft if present (real autosave, real restore)
     let draft = null;
     try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { /* ignore */ }
@@ -483,6 +536,7 @@ export async function openGameEditor(gameId, opts = {}) {
       editorFiles = (draft.files && typeof draft.files === 'object') ? { ...draft.files } : {};
       editorEntry = draft.entryPath || currentEntryCandidate();
       editorCoverUrl = draft.coverImage || null;
+      editorLogoUrl = draft.logoUrl || null;
       editorLinkUrl = draft.linkUrl || '';
       if (draft.title || draft.html || draft.linkUrl || Object.keys(editorFiles).length) {
         showToast('Restored your unsaved draft from this device.', 'info');
@@ -496,8 +550,10 @@ export async function openGameEditor(gameId, opts = {}) {
       const catSel = document.getElementById('game-category-select');
       if (catSel) catSel.value = '';
       editorCoverUrl = null;
+      editorLogoUrl = null;
     }
     renderGameCoverPreview();
+    renderGameLogoPreview();
   }
 
   // Link box: existing link games restore their URL (drafts did above).
@@ -523,7 +579,15 @@ export function closeGameEditor() {
   if (browse) browse.style.display = 'block';
   editingGameId = null;
   editorCoverBusy = false;
+  editorLogoBusy = false;
   window.HubbleNest?.onArcadeEditorClose?.();
+  // v31: leave the dedicated Create-Game page and return to the Arcade
+  // (the games list page). The Arcade view and its live listener were kept
+  // alive while the editor page was open, so returning is instant.
+  window.HubbleNest?._state && (window.HubbleNest._state.currentView = 'arcade');
+  document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-view'));
+  document.getElementById('view-arcade')?.classList.add('active-view');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 /* ------------------------------------------------------------------
@@ -582,6 +646,67 @@ export function removeGameCover() {
   renderGameCoverPreview();
   const statusEl = document.getElementById('game-cover-status');
   if (statusEl) statusEl.textContent = 'Cover removed — save to apply.';
+  saveEditorDraft();
+}
+
+/* ------------------------------------------------------------------
+   v31 Game LOGO / icon — a completely SEPARATE image from the cover:
+   its own upload field, its own Cloudinary resource, its own Firestore
+   field (logoUrl) and its own display slot on cards and the detail page.
+   ------------------------------------------------------------------ */
+
+function renderGameLogoPreview() {
+  const wrap = document.getElementById('game-logo-preview');
+  const removeBtn = document.getElementById('game-logo-remove');
+  if (!wrap) return;
+  if (editorLogoUrl) {
+    wrap.innerHTML = `<img src="${escapeHtml(editorLogoUrl)}" alt="Game logo" onerror="this.parentElement.innerHTML='<span class=\"game-logo-placeholder\">🧩</span>'" />`;
+  } else {
+    wrap.innerHTML = `<span class="game-logo-placeholder">🧩</span>`;
+  }
+  if (removeBtn) removeBtn.style.display = editorLogoUrl ? 'inline-flex' : 'none';
+}
+
+/** Pick (or replace) the logo of the game being edited. */
+export async function handleGameLogoUpload(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    showToast('Logos must be an image (PNG, JPG, WebP…).', 'warning');
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    showToast('Logo images are capped at 15 MB.', 'warning');
+    return;
+  }
+  const statusEl = document.getElementById('game-logo-status');
+  const input = document.getElementById('game-logo-input');
+  editorLogoBusy = true;
+  if (statusEl) statusEl.textContent = 'Uploading logo…';
+  try {
+    const res = await uploadToCloudinary(file, (pct) => {
+      if (statusEl) statusEl.textContent = `Uploading logo… ${Math.round(pct)}%`;
+    }, 15);
+    editorLogoUrl = res.url;
+    renderGameLogoPreview();
+    if (statusEl) statusEl.textContent = 'Logo ready ✓ (saved when you publish)';
+    showToast('Logo uploaded — press Publish / Save changes to apply it.', 'success', 3200);
+    saveEditorDraft();
+  } catch (err) {
+    console.warn('Logo upload failed:', err);
+    if (statusEl) statusEl.textContent = '';
+    showToast(err.message || 'Could not upload the logo image.', 'error', 6000);
+  } finally {
+    editorLogoBusy = false;
+    if (input) input.value = '';
+  }
+}
+
+/** Remove the logo of the game being edited. */
+export function removeGameLogo() {
+  editorLogoUrl = null;
+  renderGameLogoPreview();
+  const statusEl = document.getElementById('game-logo-status');
+  if (statusEl) statusEl.textContent = 'Logo removed — save to apply.';
   saveEditorDraft();
 }
 
@@ -712,6 +837,7 @@ function saveEditorDraft() {
       files: editorFiles,
       entryPath: editorEntry,
       coverImage: editorCoverUrl,
+      logoUrl: editorLogoUrl,
       linkUrl: document.getElementById('game-link-input')?.value || '',
       savedAt: Date.now()
     }));
@@ -1072,12 +1198,12 @@ export async function saveCurrentGame() {
   // shared as readable source. The player shows the file tree and explains
   // that the browser cannot execute e.g. Python without a real runtime. 
 
-  // A cover upload still in flight finishes before the save (its URL lands
-  // in the same write; no half-published covers).
-  if (editorCoverBusy) {
-    showToast('Finishing the cover upload…', 'info', 2200);
+  // A cover or logo upload still in flight finishes before the save (its URL
+  // lands in the same write; no half-published images).
+  if (editorCoverBusy || editorLogoBusy) {
+    showToast('Finishing the image upload…', 'info', 2200);
     const waitStart = Date.now();
-    while (editorCoverBusy && Date.now() - waitStart < 20000) {
+    while ((editorCoverBusy || editorLogoBusy) && Date.now() - waitStart < 20000) {
       await new Promise(r => setTimeout(r, 120));
     }
   }
@@ -1109,11 +1235,23 @@ export async function saveCurrentGame() {
     linkUrl: hasLink ? link.url : '',
     linkHost: hasLink ? link.host : '',
     coverImage: editorCoverUrl || null,
-    authorId: uid,
-    authorName: me.displayName || 'Member',
-    authorPhoto: me.photoURL || '',
+    logoUrl: editorLogoUrl || null,
     updatedAt: serverTimestamp()
   };
+  // Authorship: NEW games belong to the publisher. When EDITING, the original
+  // author is preserved exactly — v31 lets the platform admin edit and
+  // re-skin any member's game WITHOUT taking ownership of it. Only the
+  // author themself updates the author display fields.
+  if (existing && existing.authorId !== uid) {
+    if (!isPlatformAdminHere()) {
+      showToast('You can only edit your own games.', 'error');
+      return;
+    }
+  } else {
+    payload.authorId = uid;
+    payload.authorName = me.displayName || 'Member';
+    payload.authorPhoto = me.photoURL || '';
+  }
 
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Publishing…'; }
   if (statusEl) { statusEl.textContent = 'Saving to Firestore…'; }
@@ -1165,14 +1303,21 @@ export async function saveCurrentGame() {
 
 export async function gameDelete(gameId) {
   const game = gamesCache.find(g => g.id === gameId);
-  if (!game || game.authorId !== myUid()) return;
-  if (!window.confirm(`Delete "${game.title}" permanently? Play counts and likes are lost too.`)) return;
+  if (!game) return;
+  const uid = myUid();
+  const mine = game.authorId === uid;
+  // v31: the platform admin can delete ANY game (Firestore rules enforce it).
+  if (!mine && !isPlatformAdminHere()) return;
+  const adminNote = !mine && isPlatformAdminHere()
+    ? `\n\nPlatform admin action — this game belongs to ${game.authorName || 'another member'}.`
+    : '';
+  if (!window.confirm(`Delete "${game.title}" permanently? Play counts and likes are lost too.${adminNote}`)) return;
   try {
     // v30: the source code lives in a subcollection doc — Firestore deletes
     // do NOT cascade, so remove it explicitly (legacy games have none).
     try { await deleteDoc(doc(db, 'games', gameId, 'code', 'main')); } catch (e) { /* no code doc — legacy layout */ }
     await deleteDoc(doc(db, 'games', gameId));
-    showToast('Game deleted.', 'info');
+    showToast(mine ? 'Game deleted.' : 'Game deleted (platform admin).', 'info');
     // If its detail page is open, return to the games list (nothing to show).
     if (window.HubbleNest?._state?.currentView === 'arcade' &&
         document.getElementById('arcade-detail')?.style.display === 'block') {
@@ -1540,6 +1685,12 @@ export async function gameToggleLike(gameId) {
         gameId,
         isRead: false,
         createdAt: serverTimestamp()
+      }).catch(() => {});
+      // v31: also deliver a real background push (works when the app is closed).
+      sendPushToUser(game.authorId, {
+        title: 'Someone likes your game',
+        body: `${window.HubbleNest?._state?.userProfile?.displayName || 'A member'} liked "${game.title}".`,
+        tag: 'game_like'
       }).catch(() => {});
     }
     const fresh = gamesCache.find(g => g.id === gameId);

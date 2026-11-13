@@ -45,6 +45,10 @@ import { uploadToCloudinary, formatBytes } from './cloudinary.js';
 // Universal uploads with the Firestore byte-store fallback (blocked families).
 import { uploadFileAnywhere, isStoredAttachment } from './file-blob.js';
 
+// v31: off-app delivery for post likes/comments — the recipient gets a real
+// background push (app closed) while the in-app banner covers the app-open case.
+import { sendPushToUser } from './notifications.js';
+
 import {
   showToast,
   escapeHtml,
@@ -584,6 +588,12 @@ export async function feedToggleLike(postId) {
         isRead: false,
         createdAt: serverTimestamp()
       }).catch(() => {});
+      // v31: also deliver a real background push (works when the app is closed).
+      sendPushToUser(post.authorId, {
+        title: 'New like on your post',
+        body: `${context.userProfile?.displayName || 'A member'} liked your community post.`,
+        tag: 'feed_like'
+      }).catch(() => {});
     }
   } catch (err) {
     console.error('Like failed:', err);
@@ -681,6 +691,12 @@ export async function feedSubmitComment(postId) {
         postId,
         isRead: false,
         createdAt: serverTimestamp()
+      }).catch(() => {});
+      // v31: also deliver a real background push (works when the app is closed).
+      sendPushToUser(post.authorId, {
+        title: 'New comment on your post',
+        body: `${context.userProfile.displayName || 'A member'} commented: ${text.slice(0, 80)}`,
+        tag: 'feed_comment'
       }).catch(() => {});
     }
   } catch (err) {

@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=30) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=31) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=30" />
+  <link rel="modulepreload" href="./app.js?v=31" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=30" />
+  <link rel="stylesheet" href="./style.css?v=31" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -1979,130 +1979,6 @@
               <!-- Game detail page -->
               <div id="arcade-detail" style="display: none;"></div>
 
-          <!-- Editor -->
-          <div id="arcade-editor" style="display: none;">
-            <div class="page-header-bar">
-              <div class="page-title-group">
-                <button type="button" class="back-link-btn" onclick="window.HubbleNest.closeGameEditor()">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-                  <span>Back to Arcade</span>
-                </button>
-                <h2 id="arcade-editor-heading">Create a game</h2>
-              </div>
-              <div class="page-header-actions">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.insertStarterGame()">Insert starter game</button>
-                <button type="button" class="btn btn-ai btn-sm" id="game-ai-toggle" onclick="window.HubbleNest.toggleAiPanel()" title="Create a game from a text prompt">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z"/></svg>
-                  Create with AI
-                </button>
-                <button type="button" class="btn btn-primary btn-sm" id="game-save-btn" onclick="window.HubbleNest.saveCurrentGame()">Publish to Arcade</button>
-              </div>
-            </div>
-
-            <div class="game-editor-meta">
-              <div class="game-editor-field">
-                <label for="game-title-input">Game title</label>
-                <input type="text" id="game-title-input" maxlength="80" placeholder="Orbit Catch" />
-              </div>
-              <div class="game-editor-field">
-                <label for="game-desc-input">Short description</label>
-                <input type="text" id="game-desc-input" maxlength="300" placeholder="Catch falling stars, dodge the bombs, beat your best score." />
-              </div>
-              <div class="game-editor-field">
-                <label for="game-category-select">Category</label>
-                <select id="game-category-select" class="arc-select">
-                  <option value="">Uncategorised</option>
-                  <option value="Action">Action</option>
-                  <option value="Puzzle">Puzzle</option>
-                  <option value="Racing">Racing</option>
-                  <option value="Adventure">Adventure</option>
-                  <option value="Arcade">Arcade</option>
-                  <option value="Strategy">Strategy</option>
-                </select>
-              </div>
-              <div class="game-editor-field game-editor-cover-field">
-                <label>Game cover image</label>
-                <div class="game-cover-picker">
-                  <input type="file" id="game-cover-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleGameCoverUpload(this.files[0])" />
-                  <div class="game-cover-thumb" id="game-cover-preview">
-                    <span class="game-cover-placeholder">🎨</span>
-                  </div>
-                  <div class="game-cover-actions">
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-cover-input').click()">Upload cover</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="game-cover-remove" onclick="window.HubbleNest.removeGameCover()" style="display: none;">Remove</button>
-                    <span class="game-cover-status" id="game-cover-status"></span>
-                  </div>
-                </div>
-              </div>
-              <div class="game-editor-field game-editor-public-field">
-                <label class="form-check" for="game-public-input">
-                  <input type="checkbox" id="game-public-input" />
-                  <span><b>Public on the web</b> — the game gets a shareable public page with the title, description, author and playable preview (if it has an HTML entry).</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="game-ai-panel" id="game-ai-panel" hidden>
-                <div class="game-ai-head">
-                  <span class="game-ai-spark">✨</span>
-                  <div class="game-ai-head-text">
-                    <b>Create with AI</b>
-                    <span id="game-ai-status-line">Checking your AI setup…</span>
-                  </div>
-                </div>
-                <textarea id="game-ai-prompt" class="game-ai-prompt" rows="2" maxlength="600" placeholder="Describe your game — e.g. &quot;a fast neon snake game where you eat glowing orbs and avoid red mines&quot; or &quot;space shooter with asteroids, purple theme, very fast&quot;"></textarea>
-                <div class="game-ai-actions">
-                  <button type="button" class="btn btn-primary btn-sm" id="game-ai-generate" onclick="window.HubbleNest.generateGameFromPrompt()">⚡ Generate my game</button>
-                  <span class="game-ai-generate-status" id="game-ai-generate-status"></span>
-                </div>
-              </div>
-              <div class="game-editor-layout">
-              <div class="game-editor-code">
-                <div class="feed-tabs game-code-tabs" role="tablist">
-                  <button type="button" class="feed-tab feed-tab-active" id="game-tab-html" onclick="window.HubbleNest.setCodePane('html')">HTML</button>
-                  <button type="button" class="feed-tab" id="game-tab-css" onclick="window.HubbleNest.setCodePane('css')">CSS</button>
-                  <button type="button" class="feed-tab" id="game-tab-js" onclick="window.HubbleNest.setCodePane('js')">JavaScript</button>
-                  <button type="button" class="feed-tab" id="game-tab-files" onclick="window.HubbleNest.setCodePane('files')">Files <span class="game-files-badge" id="game-files-badge"></span></button>
-                  <button type="button" class="feed-tab" id="game-tab-link" onclick="window.HubbleNest.setCodePane('link')" title="Add a game from a playable web URL"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Game link</button>
-                </div>
-                <div id="game-pane-html" class="game-code-pane"><textarea id="game-code-html" class="game-code-textarea" spellcheck="false" placeholder="Your game's HTML body…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
-                <div id="game-pane-css" class="game-code-pane" style="display:none;"><textarea id="game-code-css" class="game-code-textarea" spellcheck="false" placeholder="Your game's styles…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
-                <div id="game-pane-js" class="game-code-pane" style="display:none;"><textarea id="game-code-js" class="game-code-textarea" spellcheck="false" placeholder="Your game's JavaScript…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
-                <div id="game-pane-files" class="game-code-pane" style="display:none;">
-                  <div class="game-files-upload-row">
-                    <input type="file" id="game-files-input" multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
-                    <input type="file" id="game-folder-input" webkitdirectory directory multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
-                    <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('game-files-input').click()">Upload files</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-folder-input').click()">Upload a whole folder</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="game-ai-scaffold" onclick="window.HubbleNest.scaffoldProjectWithAi()" title="Generate a playable browser game from your uploaded project">✨ Make it playable with AI</button>
-                    <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameFiles()">Clear all</button>
-                  </div>
-                  <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
-                  <div class="game-files-list" id="game-files-list"></div>
-                </div>
-                <div id="game-pane-link" class="game-code-pane" style="display:none;">
-                  <div class="game-link-pane">
-                    <label class="game-link-label" for="game-link-input">Playable game URL</label>
-                    <div class="game-link-row">
-                      <input type="url" id="game-link-input" class="game-link-input" spellcheck="false" autocomplete="off" placeholder="https://your-game.itch.io/neon-drift" oninput="window.HubbleNest.onGameLinkInput()" />
-                      <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameLink()">Clear</button>
-                    </div>
-                    <div class="game-link-status" id="game-link-status"></div>
-                    <div class="game-link-hint">Paste the direct link to an HTML5 web game and publish — members play it live right here in the app, inside the same protected player. Play counts, likes, ratings, comments and personal-best tracking all work exactly like built-in games. Great sources: itch.io game pages, your own hosted game, any public HTML5 game URL. If a site refuses to be framed, an “Open in new tab” shortcut appears during play. When a link is set it takes priority over the code tabs.</div>
-                  </div>
-                </div>
-                <div class="game-editor-footnote">
-                  Games run in a locked sandbox: no network, no cookies, no access to HubbleNest or other pages. Pressing keys is fine — the sandbox is not. Games added through a link play live from their own site in the same player — they need an https:// URL and a site that allows embedding.
-                  <span id="game-editor-status"></span>
-                </div>
-              </div>
-              <div class="game-editor-preview">
-                <div class="game-preview-label">Live preview — updates as you type</div>
-                <iframe id="game-preview-frame" title="Live game preview" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe>
-              </div>
-            </div>
-          </div>
-
           <!-- Gameplay — the real game runs in the sandboxed frame below -->
           <div id="arcade-player" style="display: none;">
             <div class="arc-play-header">
@@ -2182,6 +2058,160 @@
           </div><!-- /arc-main -->
         </div><!-- /arc-shell -->
         </div><!-- /view-arcade -->
+
+        <!-- VIEW: CREATE GAME (v31 dedicated page — creating games happens
+             on its own page, completely separate from the Arcade pages where
+             published games are displayed) -->
+        <div class="view-section" id="view-create-game">
+          <div class="dash-header create-game-header">
+            <div class="dash-section-titles">
+              <h1 class="dash-title" id="create-game-dash-title">Create a <span class="dash-title-accent">Game</span></h1>
+              <p class="dash-subtitle">Write HTML/CSS/JS, upload a project folder, paste a game link — or let AI build it playable. Publish when it's ready.</p>
+            </div>
+            <div class="dash-actions">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.closeGameEditor()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><path d="m15 18-6-6 6-6"/></svg>
+                Back to Arcade
+              </button>
+            </div>
+          </div>
+
+          <!-- Editor -->
+          <div id="arcade-editor" style="display: none;">
+            <div class="page-header-bar">
+              <div class="page-title-group">
+                <h2 id="arcade-editor-heading">Game details &amp; code</h2>
+              </div>
+              <div class="page-header-actions">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.insertStarterGame()">Insert starter game</button>
+                <button type="button" class="btn btn-ai btn-sm" id="game-ai-toggle" onclick="window.HubbleNest.toggleAiPanel()" title="Create a game from a text prompt">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z"/></svg>
+                  Create with AI
+                </button>
+                <button type="button" class="btn btn-primary btn-sm" id="game-save-btn" onclick="window.HubbleNest.saveCurrentGame()">Publish to Arcade</button>
+              </div>
+            </div>
+
+            <div class="game-editor-meta">
+              <div class="game-editor-field">
+                <label for="game-title-input">Game title</label>
+                <input type="text" id="game-title-input" maxlength="80" placeholder="Orbit Catch" />
+              </div>
+              <div class="game-editor-field">
+                <label for="game-desc-input">Short description</label>
+                <input type="text" id="game-desc-input" maxlength="300" placeholder="Catch falling stars, dodge the bombs, beat your best score." />
+              </div>
+              <div class="game-editor-field">
+                <label for="game-category-select">Category</label>
+                <select id="game-category-select" class="arc-select">
+                  <option value="">Uncategorised</option>
+                  <option value="Action">Action</option>
+                  <option value="Puzzle">Puzzle</option>
+                  <option value="Racing">Racing</option>
+                  <option value="Adventure">Adventure</option>
+                  <option value="Arcade">Arcade</option>
+                  <option value="Strategy">Strategy</option>
+                </select>
+              </div>
+              <div class="game-editor-field game-editor-cover-field">
+                <label>Game cover image</label>
+                <div class="game-cover-picker">
+                  <input type="file" id="game-cover-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleGameCoverUpload(this.files[0])" />
+                  <div class="game-cover-thumb" id="game-cover-preview">
+                    <span class="game-cover-placeholder">🎨</span>
+                  </div>
+                  <div class="game-cover-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-cover-input').click()">Upload cover</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="game-cover-remove" onclick="window.HubbleNest.removeGameCover()" style="display: none;">Remove</button>
+                    <span class="game-cover-status" id="game-cover-status"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="game-editor-field game-editor-logo-field">
+                <label>Game logo / icon <span class="game-editor-label-hint">separate from the cover</span></label>
+                <p class="game-editor-field-hint">A small square badge shown on the game's card and detail page — uploaded and stored independently of the landscape cover image.</p>
+                <div class="game-logo-picker">
+                  <input type="file" id="game-logo-input" accept="image/*" style="display: none;" onchange="window.HubbleNest.handleGameLogoUpload(this.files[0])" />
+                  <div class="game-logo-thumb" id="game-logo-preview">
+                    <span class="game-logo-placeholder">🧩</span>
+                  </div>
+                  <div class="game-cover-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-logo-input').click()">Upload logo</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="game-logo-remove" onclick="window.HubbleNest.removeGameLogo()" style="display: none;">Remove</button>
+                    <span class="game-cover-status" id="game-logo-status"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="game-editor-field game-editor-public-field">
+                <label class="form-check" for="game-public-input">
+                  <input type="checkbox" id="game-public-input" />
+                  <span><b>Public on the web</b> — the game gets a shareable public page with the title, description, author and playable preview (if it has an HTML entry).</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="game-ai-panel" id="game-ai-panel" hidden>
+                <div class="game-ai-head">
+                  <span class="game-ai-spark">✨</span>
+                  <div class="game-ai-head-text">
+                    <b>Create with AI</b>
+                    <span id="game-ai-status-line">Checking your AI setup…</span>
+                  </div>
+                </div>
+                <textarea id="game-ai-prompt" class="game-ai-prompt" rows="2" maxlength="600" placeholder="Describe your game — e.g. &quot;a fast neon snake game where you eat glowing orbs and avoid red mines&quot; or &quot;space shooter with asteroids, purple theme, very fast&quot;"></textarea>
+                <div class="game-ai-actions">
+                  <button type="button" class="btn btn-primary btn-sm" id="game-ai-generate" onclick="window.HubbleNest.generateGameFromPrompt()">⚡ Generate my game</button>
+                  <span class="game-ai-generate-status" id="game-ai-generate-status"></span>
+                </div>
+              </div>
+              <div class="game-editor-layout">
+              <div class="game-editor-code">
+                <div class="feed-tabs game-code-tabs" role="tablist">
+                  <button type="button" class="feed-tab feed-tab-active" id="game-tab-html" onclick="window.HubbleNest.setCodePane('html')">HTML</button>
+                  <button type="button" class="feed-tab" id="game-tab-css" onclick="window.HubbleNest.setCodePane('css')">CSS</button>
+                  <button type="button" class="feed-tab" id="game-tab-js" onclick="window.HubbleNest.setCodePane('js')">JavaScript</button>
+                  <button type="button" class="feed-tab" id="game-tab-files" onclick="window.HubbleNest.setCodePane('files')">Files <span class="game-files-badge" id="game-files-badge"></span></button>
+                  <button type="button" class="feed-tab" id="game-tab-link" onclick="window.HubbleNest.setCodePane('link')" title="Add a game from a playable web URL"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Game link</button>
+                </div>
+                <div id="game-pane-html" class="game-code-pane"><textarea id="game-code-html" class="game-code-textarea" spellcheck="false" placeholder="Your game's HTML body…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
+                <div id="game-pane-css" class="game-code-pane" style="display:none;"><textarea id="game-code-css" class="game-code-textarea" spellcheck="false" placeholder="Your game's styles…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
+                <div id="game-pane-js" class="game-code-pane" style="display:none;"><textarea id="game-code-js" class="game-code-textarea" spellcheck="false" placeholder="Your game's JavaScript…" oninput="window.HubbleNest.scheduleGamePreview()"></textarea></div>
+                <div id="game-pane-files" class="game-code-pane" style="display:none;">
+                  <div class="game-files-upload-row">
+                    <input type="file" id="game-files-input" multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
+                    <input type="file" id="game-folder-input" webkitdirectory directory multiple style="display: none;" onchange="window.HubbleNest.handleGameFilesUpload(this.files)" />
+                    <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('game-files-input').click()">Upload files</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('game-folder-input').click()">Upload a whole folder</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="game-ai-scaffold" onclick="window.HubbleNest.scaffoldProjectWithAi()" title="Generate a playable browser game from your uploaded project">✨ Make it playable with AI</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameFiles()">Clear all</button>
+                  </div>
+                  <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
+                  <div class="game-files-list" id="game-files-list"></div>
+                </div>
+                <div id="game-pane-link" class="game-code-pane" style="display:none;">
+                  <div class="game-link-pane">
+                    <label class="game-link-label" for="game-link-input">Playable game URL</label>
+                    <div class="game-link-row">
+                      <input type="url" id="game-link-input" class="game-link-input" spellcheck="false" autocomplete="off" placeholder="https://your-game.itch.io/neon-drift" oninput="window.HubbleNest.onGameLinkInput()" />
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameLink()">Clear</button>
+                    </div>
+                    <div class="game-link-status" id="game-link-status"></div>
+                    <div class="game-link-hint">Paste the direct link to an HTML5 web game and publish — members play it live right here in the app, inside the same protected player. Play counts, likes, ratings, comments and personal-best tracking all work exactly like built-in games. Great sources: itch.io game pages, your own hosted game, any public HTML5 game URL. If a site refuses to be framed, an “Open in new tab” shortcut appears during play. When a link is set it takes priority over the code tabs.</div>
+                  </div>
+                </div>
+                <div class="game-editor-footnote">
+                  Games run in a locked sandbox: no network, no cookies, no access to HubbleNest or other pages. Pressing keys is fine — the sandbox is not. Games added through a link play live from their own site in the same player — they need an https:// URL and a site that allows embedding.
+                  <span id="game-editor-status"></span>
+                </div>
+              </div>
+              <div class="game-editor-preview">
+                <div class="game-preview-label">Live preview — updates as you type</div>
+                <iframe id="game-preview-frame" title="Live game preview" sandbox="allow-scripts allow-pointer-lock allow-modals"></iframe>
+              </div>
+            </div>
+          </div>
+        </div><!-- /view-create-game -->
+
 
         <!-- VIEW: DIRECT SHARE (file handoff via code or QR) -->
         <div class="view-section" id="view-direct-share">
@@ -3609,7 +3639,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=30"></script>
+  <script type="module" src="./app.js?v=31"></script>
 
 </body>
 </html>

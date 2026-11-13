@@ -412,6 +412,8 @@ function renderGameDetail(gameId, opts = {}) {
 
   const uid = myUid();
   const mine = g.authorId === uid;
+  // v31: the platform admin can manage (edit/delete/re-skin) EVERY game.
+  const manageable = mine || window.HubbleNest?._state?.isAdmin === true;
   const r = ratingOf(g);
   const games = window.HubbleNest?.getGamesCache?.() || [];
   const rank = playRankOf(g, games);
@@ -422,6 +424,11 @@ function renderGameDetail(gameId, opts = {}) {
   const cover = g.coverImage
     ? `<img src="${escapeHtml(g.coverImage)}" alt="${escapeHtml(g.title || 'Game')} cover" loading="lazy" decoding="async" onerror="this.remove()" />`
     : `<span class="arc-cover-initials" style="background:linear-gradient(135deg,hsl(${hue} 62% 26%),hsl(${(hue + 46) % 360} 70% 16%));">${escapeHtml(initials)}</span>`;
+  // v31 LOGO — the game's separate icon, overlaid on the detail cover as its
+  // own distinct element (eager-loaded small image, unlike the lazy cover).
+  const logoBadge = g.logoUrl
+    ? `<img src="${escapeHtml(g.logoUrl)}" class="arc-detail-logo" alt="${escapeHtml(g.title || 'Game')} logo" loading="eager" decoding="async" onerror="this.remove()" />`
+    : '';
 
   const isLink = g.kind === 'link' && !!g.linkUrl;
   // v30: the browse cache is field-masked, so classic games carry no html/js
@@ -437,14 +444,14 @@ function renderGameDetail(gameId, opts = {}) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         <span>Back to Games</span>
       </button>
-      ${mine ? `<span class="arc-detail-owner-actions">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openGameEditor('${escapeHtml(g.id)}')">Edit game</button>
+      ${manageable ? `<span class="arc-detail-owner-actions">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="window.HubbleNest.openGameEditor('${escapeHtml(g.id)}')">${mine ? 'Edit game' : 'Admin edit'}</button>
         <button type="button" class="btn btn-ghost btn-sm" style="color:var(--status-danger);" onclick="window.HubbleNest.gameDelete('${escapeHtml(g.id)}')">Delete</button>
       </span>` : ''}
     </div>
 
     <header class="arc-detail-head">
-      <div class="arc-detail-thumb">${cover}</div>
+      <div class="arc-detail-thumb">${cover}${logoBadge}</div>
       <div class="arc-detail-headtext">
         <h1 class="arc-detail-title">${escapeHtml(g.title || 'Untitled game')}</h1>
         <p class="arc-detail-sub">${escapeHtml(g.description || 'No description yet.')}</p>

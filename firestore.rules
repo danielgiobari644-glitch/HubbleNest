@@ -401,22 +401,28 @@ service cloud.firestore {
       allow create: if isAuthenticated() &&
         fieldStr(request.resource.data, 'authorId') == request.auth.uid &&
         !isBannedNow();
+      // v31: the platform admin can manage EVERY game (edit code, re-skin the
+      // cover/logo, fix metadata). The admin edit path deliberately does NOT
+      // touch the author fields, so ownership is preserved.
       allow update: if isAuthenticated() && (
         fieldStr(resource.data, 'authorId') == request.auth.uid ||
-        touchesOnly(['plays', 'likedBy', 'commentCount', 'ratingSum', 'ratingCount'])
+        touchesOnly(['plays', 'likedBy', 'commentCount', 'ratingSum', 'ratingCount']) ||
+        isAdmin()
       );
       allow delete: if isAdmin() || (isAuthenticated() &&
         fieldStr(resource.data, 'authorId') == request.auth.uid);
 
       // v30: the game's SOURCE CODE lives here (games/{id}/code/main) so the
       // Arcade's realtime browse list stays light. Same visibility as the
-      // parent game; only the author writes it (creation/migration/edits).
+      // parent game; the author writes it (creation/migration/edits) and —
+      // v31 — the platform admin too (admin edit of any game's code).
       match /code/{codeDocId} {
         allow get, list: if isAuthenticated() ||
           (get(/databases/$(database)/documents/games/$(gameId)).data.get('isPublic', false) == true);
         allow create, update, delete: if isAuthenticated() &&
           !isBannedNow() &&
-          get(/databases/$(database)/documents/games/$(gameId)).data.get('authorId', '') == request.auth.uid;
+          (get(/databases/$(database)/documents/games/$(gameId)).data.get('authorId', '') == request.auth.uid ||
+           isAdmin());
       }
     }
 

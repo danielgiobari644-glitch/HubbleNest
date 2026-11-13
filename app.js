@@ -228,7 +228,8 @@ import {
   openModal, 
   closeModal, 
   linkify,
-  handlePermissionError 
+  handlePermissionError,
+  showNotificationBanner 
 } from './utils.js';
 
 // Community feed (real posts + ranking algorithm), Arcade, Direct Share,
@@ -286,6 +287,8 @@ import {
   scaffoldProjectWithAi,
   handleGameCoverUpload,
   removeGameCover,
+  handleGameLogoUpload,
+  removeGameLogo,
   onGameLinkInput,
   clearGameLink,
   openLinkGameExternally
@@ -531,6 +534,34 @@ if ('serviceWorker' in navigator) {
     if (!swReloadArmed || swReloadDone) return;
     swReloadDone = true;
     window.location.reload();
+  });
+
+  // v31 VISIBLE NOTIFICATIONS — push while this tab is FOCUSED: the service
+  // worker forwards the push here instead of raising a system notification
+  // (see service-worker.js push handler). Until now that forward vanished —
+  // nothing visible happened on the app. It now raises the same rich banner
+  // the Firestore listener uses, so a push is ALWAYS visible: banner in-app,
+  // system notification when the app is closed or in the background.
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const msg = event?.data;
+    if (!msg || msg.type !== 'push-received') return;
+    const p = msg.payload || {};
+    const n = p.notification || {};
+    const d = p.data || {};
+    showNotificationBanner({
+      type: d.tag || d.type || '',
+      title: n.title || p.title || 'HubbleNest',
+      body: n.body || p.body || ''
+    }, {
+      onClick: () => {
+        // Same deep-link the system notification would follow.
+        const target = d.url || p.url || './index.html';
+        try {
+          const resolved = new URL(target, window.location.href);
+          if (resolved.href !== window.location.href) window.location.href = resolved.href;
+        } catch (e) { /* malformed target — stay put */ }
+      }
+    });
   });
 }
 
@@ -4479,6 +4510,10 @@ export function handleNotificationClick(notifId, spaceId) {
    ========================================================================== */
 
 function subscribeNotifications() {
+  // v31 VISIBLE NOTIFICATIONS: the first snapshot is the baseline (no banner
+  // storm on load); every notification that ARRIVES afterwards — while the
+  // app is open — raises a rich on-screen banner in addition to the badge.
+  let baselineIds = null;
   subscribeToNotifications(state.currentUser.uid, (notifs, unread) => {
     state.notifications = notifs;
     state.unreadNotifications = unread;
@@ -4497,6 +4532,22 @@ function subscribeNotifications() {
     if (sideBadge) {
       sideBadge.textContent = countText;
       sideBadge.style.display = unread > 0 ? 'inline-flex' : 'none';
+    }
+
+    if (baselineIds === null) {
+      baselineIds = new Set(notifs.map(n => n.id));
+    } else {
+      const myUid = state.currentUser?.uid;
+      for (const n of notifs) {
+        if (baselineIds.has(n.id)) continue;
+        baselineIds.add(n.id);
+        // Real-time arrivals only: unread, not authored by me.
+        if (n.isRead) continue;
+        if (n.senderId && n.senderId === myUid) continue;
+        showNotificationBanner(n, {
+          onClick: () => handleNotificationClick(n.id, n.spaceId || '')
+        });
+      }
     }
 
     renderNotificationsPanel();
@@ -5694,6 +5745,8 @@ Object.assign(window.HubbleNest, {
   gameToggleLike,
   handleGameCoverUpload,
   removeGameCover,
+  handleGameLogoUpload,
+  removeGameLogo,
   onGameLinkInput,
   clearGameLink,
   openLinkGameExternally,

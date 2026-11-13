@@ -748,6 +748,141 @@ h1, h2, h3, h4 {
 .toast-close:hover { color: var(--text-primary); background: var(--bg-hover); }
 
 /* ==========================================================================
+   NOTIFICATION BANNERS — rich, visible notification cards (v31).
+   Desktop: stacked under the top bar on the right. Mobile: full-width.
+   ========================================================================== */
+.notif-banner-container {
+  position: fixed;
+  top: 76px;
+  right: 18px;
+  z-index: 9900;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, calc(100vw - 28px));
+  pointer-events: none;
+}
+
+.notif-banner {
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px 15px;
+  border-radius: 16px;
+  background: var(--bg-glass-card);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-primary);
+  box-shadow: 0 14px 38px rgba(2, 6, 23, 0.55);
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(26px) scale(0.98);
+  transition: opacity 0.26s ease, transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.notif-banner.nb-visible { opacity: 1; transform: translateX(0) scale(1); }
+.notif-banner.nb-leaving { opacity: 0; transform: translateX(30px) scale(0.97); pointer-events: none; }
+.notif-banner:hover { border-color: var(--accent-primary); }
+
+.notif-banner-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+}
+
+.notif-banner.nb-social .notif-banner-icon {
+  background: linear-gradient(135deg, #ec4899, #8b5cf6);
+  box-shadow: 0 4px 14px rgba(236, 72, 153, 0.32);
+}
+.notif-banner.nb-msg .notif-banner-icon {
+  background: linear-gradient(135deg, #06b6d4, #3b82f6);
+  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.32);
+}
+.notif-banner.nb-space .notif-banner-icon {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.32);
+}
+.notif-banner.nb-admin .notif-banner-icon {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
+}
+
+.notif-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notif-banner-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.notif-banner-body {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notif-banner-close {
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.notif-banner-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.notif-banner-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2.5px;
+  width: 100%;
+  transform-origin: left;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  animation: nb-progress linear forwards;
+}
+
+.notif-banner.nb-social .notif-banner-progress { background: linear-gradient(90deg, #ec4899, #8b5cf6); }
+.notif-banner.nb-msg .notif-banner-progress { background: linear-gradient(90deg, #06b6d4, #3b82f6); }
+.notif-banner.nb-admin .notif-banner-progress { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+@keyframes nb-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+@media (max-width: 640px) {
+  .notif-banner-container {
+    top: 66px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+}
+
+/* ==========================================================================
    DROPDOWN MENUS (Topbar)
    ========================================================================== */
 .dropdown-menu {
@@ -6926,6 +7061,94 @@ h1, h2, h3, h4 {
 .game-cover-placeholder { font-size: 1.3rem; opacity: 0.6; }
 .game-cover-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .game-cover-status { font-size: 0.75rem; color: var(--text-muted); }
+
+/* ------------------------------------------------------------------
+   v31 GAME LOGO — the separate icon image (its own field, upload,
+   storage and display slots; never the same file as the cover).
+   ------------------------------------------------------------------ */
+.game-editor-logo-field .game-logo-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.game-logo-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.game-logo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.game-logo-placeholder { font-size: 1.25rem; opacity: 0.6; }
+.game-editor-label-hint {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.game-editor-field-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: -2px 0 8px;
+  line-height: 1.45;
+}
+.create-game-header { margin-bottom: 18px; }
+.dash-title-accent {
+  background: linear-gradient(120deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Logo badge on browse cards — small, rounded, eager-loaded; sits ON TOP of
+   the (lazy) cover so the two images are visibly different elements. */
+.game-card-logo {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 3px 10px rgba(2, 6, 23, 0.5);
+  background: var(--bg-surface-elevated);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Logo badge on the game DETAIL page — app-icon style over the cover. */
+.arc-detail-logo {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.55);
+  background: var(--bg-surface-elevated);
+  z-index: 2;
+}
+
+/* Admin manage chip on cards (platform admin editing another member's game) */
+.arc-card-owner-admin { gap: 6px; }
 
 /* Player frame: one clean, prominent height with bezel + glow */
 .game-player-frame-wrap { position: relative; }

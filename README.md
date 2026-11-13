@@ -426,6 +426,55 @@ sign-in view if the session expired — so returning members never see the
 portfolio again (they can still reach it anytime via the account menu →
 "Explore Landing Page").
 
+## v31 — Visible notifications, bots AI fix, admin game management, separate logo/cover, dedicated Create-Game page
+
+**Notifications are now genuinely visible — on the app AND off it.** A new
+notification (private message, friend request/accept, post like or comment,
+game like, space add/join, announcement, admin message) no longer only
+updates the bell badge: a rich banner card slides in under the top bar with a
+type icon, the title, the body and a gradient progress bar. Tapping it opens
+the related view; the ✕ dismisses it; at most three stack at once. On
+desktop it appears top-right; on phones it is a full-width card. While the
+tab is FOCUSED, a background push is forwarded by the service worker — that
+forward used to vanish silently; it now raises the same banner. When the app
+is closed or in the background, the push still appears as a real system
+notification. Post likes/comments, game likes and space joins also deliver
+real off-app pushes now (messages, requests, announcements and space-added
+already did).
+
+**Bots fixed for real.** The reported failure — `gemini-3.5-flash-lite` +
+400 "Request contains an invalid argument" on every bot message while "Test
+AI configuration" reported success — had two exact causes, both fixed:
+(1) the bot request attached the Gemini 2.5-only `thinkingConfig` switch to
+Gemini 3.x models, which reject it with exactly that 400 — the switch is now
+sent only to 2.5-family models; (2) a non-key 400 was treated as a final
+error, so the fallback model chain was never tried — now ANY failure that is
+not key-wide (invalid/blocked/expired key) transparently falls through to the
+next model in the chain. And the admin "Test AI configuration" probe sends
+the same request shape the bots send, so it can never report success while
+real bot chats fail.
+
+**Admin can manage every game.** The platform admin sees Admin edit / Delete
+on every game card and detail page (including other members' games), can
+open any game in the editor, change its code, its cover, its logo and its
+metadata, and delete any game. Firestore rules enforce the same `isAdmin()`
+check server-side. Crucially, an admin edit never reassigns ownership: the
+original author's name and avatar are preserved exactly.
+
+**Logo and cover are two different images.** Games have a separate
+"Game logo / icon" upload (square badge) next to the landscape cover upload.
+They are stored in different Firestore fields (`logoUrl` vs `coverImage`),
+uploaded as separate Cloudinary resources, and rendered differently: the
+cover is the large lazy-loaded backdrop; the logo is a small eagerly-loaded
+rounded badge pinned to the card's corner and shown app-icon style on the
+detail page.
+
+**Create Game is its own full page.** The editor moved out of the Arcade
+view into a dedicated page ("Create a **Game**" header, Back to Arcade,
+Publish to Arcade) — completely separate from the pages where published
+games are displayed. The Arcade list keeps running live in the background,
+so saving jumps straight to the new game's detail page.
+
 ## v30 — Private Messages redesign & real-time presence
 
 The **Private Messages** tab is fully redesigned to the neon reference

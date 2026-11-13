@@ -55,6 +55,100 @@ export function showToast(message, type = 'info', duration = 3500) {
   });
 }
 
+/* ==========================================================================
+   NOTIFICATION BANNERS — notifications that are genuinely VISIBLE.
+   A new notification no longer only updates the bell badge and the dropdown:
+   a rich banner card slides in (top-right on desktop, full-width on mobile)
+   with a type icon, the title, the body and a live "new" pulse. Tapping the
+   card opens the related view (chat, space, post, game); the ✕ dismisses.
+   Used by the Firestore notifications listener (app open) and by the
+   service worker's push-received bridge (push while the tab is focused).
+   ========================================================================== */
+
+const BANNER_ICONS = {
+  private_message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  chat_request: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/>',
+  chat_request_accepted: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 9 2 2 4-4"/>',
+  feed_like: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+  game_like: '<rect x="2" y="6" width="20" height="12" rx="4"/><path d="M6 12h4M8 10v4"/>',
+  feed_comment: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
+  space_added: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  space_joined: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  announcement: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  admin_message: '<path d="M12 2 4 5v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V5l-8-3z"/><path d="m9 12 2 2 4-4"/>'
+};
+
+function bannerTone(type) {
+  if (type === 'private_message' || type === 'chat_request' || type === 'chat_request_accepted') return 'nb-msg';
+  if (type === 'feed_like' || type === 'game_like' || type === 'feed_comment') return 'nb-social';
+  if (type === 'admin_message') return 'nb-admin';
+  return 'nb-space';
+}
+
+let notifBannerContainer = null;
+
+/**
+ * Show one rich notification banner. Stacks up to 3; older ones dismiss.
+ * @param {{id?: string, type?: string, title?: string, body?: string}} notif
+ * @param {{onClick?: Function, duration?: number}} [opts]
+ */
+export function showNotificationBanner(notif, opts = {}) {
+  if (!notif) return;
+  if (!notifBannerContainer || !notifBannerContainer.isConnected) {
+    notifBannerContainer = document.createElement('div');
+    notifBannerContainer.id = 'notif-banner-container';
+    notifBannerContainer.className = 'notif-banner-container';
+    document.body.appendChild(notifBannerContainer);
+  }
+
+  // Never stack more than 3 live banners — the oldest yields.
+  const live = notifBannerContainer.querySelectorAll('.notif-banner:not(.nb-leaving)');
+  if (live.length >= 3) live[0].remove();
+
+  const type = String(notif.type || '');
+  const icon = BANNER_ICONS[type] || '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>';
+  const tone = bannerTone(type);
+  const duration = opts.duration || 6500;
+
+  const card = document.createElement('div');
+  card.className = `notif-banner ${tone}`;
+  card.setAttribute('role', 'alert');
+  card.innerHTML = `
+    <span class="notif-banner-icon" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+    </span>
+    <span class="notif-banner-text">
+      <b class="notif-banner-title">${escapeHtml(notif.title || 'Notification')}</b>
+      <span class="notif-banner-body">${escapeHtml(notif.body || '')}</span>
+    </span>
+    <button type="button" class="notif-banner-close" aria-label="Dismiss">&times;</button>
+    <span class="notif-banner-progress" aria-hidden="true"></span>
+  `;
+
+  const dismiss = () => {
+    card.classList.add('nb-leaving');
+    setTimeout(() => card.remove(), 260);
+  };
+
+  // Tap the card body (not the ✕) to open the related view.
+  card.addEventListener('click', (ev) => {
+    if (ev.target.closest('.notif-banner-close')) return;
+    dismiss();
+    if (typeof opts.onClick === 'function') {
+      try { opts.onClick(); } catch (e) { /* navigation must never break rendering */ }
+    }
+  });
+  card.querySelector('.notif-banner-close').addEventListener('click', dismiss);
+
+  notifBannerContainer.appendChild(card);
+  requestAnimationFrame(() => {
+    card.classList.add('nb-visible');
+    const bar = card.querySelector('.notif-banner-progress');
+    if (bar) bar.style.animationDuration = `${duration}ms`;
+  });
+  setTimeout(dismiss, duration);
+}
+
 /**
  * Escape raw HTML to prevent XSS
  */

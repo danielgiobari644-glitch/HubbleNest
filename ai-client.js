@@ -206,10 +206,10 @@ function classifyModelFailure(status, apiMessage, reason) {
       message: 'The AI is overloaded at the moment (Google-side demand spike). HubbleNest automatically retried every model in the fallback chain — give it a minute and try again.'
     };
   }
-  if (status === 400 && /unknown name|invalid json payload|invalid value/i.test(msg)) {
+  if (status === 400 && /unknown name|invalid json payload|invalid value|invalid argument/i.test(msg)) {
     return {
       kind: 'bad-request-retryable',
-      message: 'The AI rejected one of the request options — HubbleNest will retry it in a simpler form automatically.'
+      message: 'The AI rejected one of the request options — HubbleNest will retry it in a simpler form and on the fallback models automatically.'
     };
   }
   return {
@@ -243,9 +243,15 @@ const RETRYABLE_KINDS = new Set(['overloaded', 'quota', 'server']);
 
 function sleepMs(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-/** gemini-2.5+ accept a thinkingConfig switch; older models reject it. */
+/**
+ * Only Gemini 2.5 models accept the thinkingConfig { thinkingBudget } switch.
+ * The Gemini 3.x family (gemini-3*, gemini-3.5-*) REJECTS it with
+ * 400 INVALID_ARGUMENT "Request contains an invalid argument" — that exact
+ * error was reported live against a gemini-3.5-flash-lite configuration.
+ * 3.x models manage thinking on their own, so we simply send nothing.
+ */
 function isThinkingAwareModel(model) {
-  return /gemini-(2\.5|3)/i.test(String(model || ''));
+  return /gemini-2\.5/i.test(String(model || ''));
 }
 
 async function rawModelRequest(model, apiKey, body) {
@@ -371,6 +377,16 @@ export async function callGenerateContent(cfg, body, opts = {}) {
         console.warn(`[HubbleNest] AI rejected a request option (${apiMessage.slice(0, 120)}) — retrying with a minimal request shape.`);
         continue;
       }
+      // v31: the request shape or the MODEL ITSELF can be the problem (a 400
+      // "Request contains an invalid argument" from a model family that
+      // rejects an option, e.g. thinkingConfig on Gemini 3.x). Key-wide
+      // problems are worth stopping for — every other 400 moves to the NEXT
+      // model in the chain instead of killing bots outright.
+      const KEY_WIDE = (cls.kind === 'key-invalid' || cls.kind === 'auth-rejected' || cls.kind === 'key-blocked');
+      if (!KEY_WIDE && i < chain.length - 1) {
+        console.warn(`[HubbleNest] AI "${model}" rejected the request (${res.status} ${cls.kind}: ${apiMessage.slice(0, 120)}) — retrying with "${chain[i + 1]}".`);
+        break; // next model in chain
+      }
       // Everything else is final: report the exact cause.
       lastAiFailure = { at: Date.now(), kind: cls.kind, status: res.status, model, message: apiMessage.slice(0, 240) || cls.kind };
       console.warn(`[HubbleNest] AI request failed (${res.status} ${cls.kind}): ${apiMessage.slice(0, 180)}`);
@@ -416,9 +432,14 @@ export async function probeAiConfig(override = {}) {
   }
   const t0 = performance.now();
   try {
+    // v31: the probe sends the SAME request shape the bots send — including
+    // the thinkingConfig switch and its model-family rules — so "Test AI
+    // configuration" can never report success while real bot chats fail.
+    // (The old minimal probe passed on model families whose bot-shaped
+    // requests were rejected with 400 INVALID_ARGUMENT.)
     const { text, model } = await callGenerateContent(cfg, {
       contents: [{ role: 'user', parts: [{ text: 'Reply with exactly this single word: ready' }] }],
-      generationConfig: { temperature: 0 }
+      generationConfig: botGenerationConfig(cfg.model)
     }, { allowModelFallback: true, _startedAt: t0 });
     return { ok: true, model, ms: Math.round(performance.now() - t0), reply: text.slice(0, 60) };
   } catch (err) {
@@ -497,6 +518,18 @@ export function buildBotSystemPrompt(bot) {
 }
 
 /**
+ * The generationConfig every bot/chat request uses — shared by the real bot
+ * path AND the admin configuration probe so both exercise identical shapes.
+ * thinkingConfig goes ONLY to Gemini 2.5 models (the switch is off for the
+ * Gemini 3.x family, which rejects it — see isThinkingAwareModel).
+ */
+function botGenerationConfig(model) {
+  const gc = { temperature: 0.85, maxOutputTokens: 2048, topP: 0.95 };
+  if (isThinkingAwareModel(model)) gc.thinkingConfig = { thinkingBudget: 0 };
+  return gc;
+}
+
+/**
  * One bot conversation turn.
  * @param {object} bot        the bot document (saved or in-progress test config)
  * @param {Array}  history    [{ role: 'user'|'bot', text }] — oldest first, capped by caller
@@ -521,15 +554,10 @@ export async function sendBotChatMessage(bot, history, message) {
   }
   contents.push({ role: 'user', parts: [{ text }] });
 
-  const generationConfig = { temperature: 0.85, maxOutputTokens: 2048, topP: 0.95 };
-  // Thinking-aware models spend tokens thinking first — switch it off so the
-  // whole budget goes to the reply (and so short budgets cannot truncate it).
-  if (isThinkingAwareModel(cfg.model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
-
   const res = await callGenerateContent(cfg, {
     systemInstruction: { parts: [{ text: buildBotSystemPrompt(bot) }] },
     contents,
-    generationConfig
+    generationConfig: botGenerationConfig(cfg.model)
   });
   bumpDailyCount();
   return { text: res.text };
