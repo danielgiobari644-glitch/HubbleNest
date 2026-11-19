@@ -26,14 +26,13 @@ import {
   writeBatch, arrayUnion, arrayRemove, orderBy
 } from './firebase.js';
 
-import {
-  showToast, escapeHtml, formatTimeAgo, getAvatarUrl
-} from './utils.js';
+import { showToast, escapeHtml, formatTimeAgo, getAvatarUrl } from './utils.js';
+import { renderMarkdown } from './markdown.js';
 
 import { uploadToCloudinary } from './cloudinary.js';
 
 import {
-  sendBotChatMessage, safeAiErrorMessage, AiUserError
+  sendBotChatMessage, safeAiErrorMessage, AiUserError, fetchUrlAsInlineData
 } from './ai-client.js';
 
 /* ======================================================================
@@ -167,6 +166,29 @@ let chatUnsub = null;
 let chatSending = false;
 let chatMessages = [];
 let lastFailedMessage = null;
+let lastFailedPayload = null;
+
+/* v33 — attachments: members hand a bot images, PDFs, text/code files,
+   audio, video — anything. Readable bytes travel to the model (inline data
+   or extracted text); every file is ALSO uploaded to Cloudinary so the chat
+   keeps a real, openable copy. Nothing simulated. */
+let chatPendingFiles = [];   // { file, kind, localPreview?, objectUrl? }
+const chatObjectUrls = new Set(); // blob URLs alive while the chat view is open
+const BOT_ATT_MAX_FILES = 4;
+const BOT_ATT_MAX_FILE_BYTES = 8 * 1024 * 1024;   // per file
+const BOT_ATT_MAX_TOTAL_BYTES = 10 * 1024 * 1024; // per message (raw bytes)
+const ATT_TEXT_CHARS = 16000;                     // extracted chars per text file
+const HISTORY_INLINE_PARTS = 3;                   // image/PDF replay budget per turn
+
+const TEXT_FILE_EXTS = new Set([
+  'txt','md','markdown','csv','tsv','json','js','mjs','cjs','jsx','ts','tsx',
+  'html','htm','css','scss','sass','less','py','java','c','h','cpp','hpp','cs',
+  'go','rs','rb','php','swift','kt','kts','sh','bash','zsh','bat','ps1','yml',
+  'yaml','toml','xml','sql','log','ini','cfg','conf','env','properties','gradle',
+  'svg','vue','svelte','astro','dart','scala','lua','pl','r','tex','srt','vtt','gitignore'
+]);
+const INLINE_VISUAL_MIMES = /^(image\/(png|jpe?g|webp|gif|heic|heif)|application\/pdf)$/i;
+const INLINE_AV_MIMES = /^(audio\/(wav|x-wav|mp3|mpeg|ogg|aac|flac|m4a|webm)|video\/(mp4|webm|quicktime|x-matroska))$/i;
 
 let profileBotId = null;
 let profileUnsub = null;
@@ -1195,6 +1217,9 @@ export function openBotChat(botId, opts = {}) {
     chatIsTest = !!testBot;
     chatMessages = [];
     lastFailedMessage = null;
+    lastFailedPayload = null;
+    chatPendingFiles = [];
+    renderChatPending();
 
     state_currentView('bot-chat');
     showView('view-bot-chat');
@@ -1309,12 +1334,265 @@ function subscribeChatMessages() {
 export function closeChatView() {
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
   chatBot = null; chatBotId = null; chatIsTest = false; chatMessages = []; chatSending = false;
+  chatPendingFiles = [];
+  lastFailedMessage = null;
+  lastFailedPayload = null;
+  revokeChatObjectUrls();
 }
 
 export function botChatUseSuggested(text) {
   const input = el('bot-chat-input');
   if (input) { input.value = text; input.focus(); }
   botChatSend();
+}
+
+/* ======================================================================
+   v33 ATTACHMENTS — bots read & understand files and images for real.
+   Pick anything: images, PDFs, audio, video, text/code files — and any
+   other binary. Readable bytes go to the model (inline data or extracted
+   text); EVERY file is also uploaded to Cloudinary so the conversation
+   keeps a real, openable copy. Nothing simulated, nothing faked.
+   ====================================================================== */
+
+const AV_FALLBACK_MIME = {
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+  aac: 'audio/aac', flac: 'audio/flac', mp4: 'video/mp4', webm: 'video/webm',
+  mov: 'video/quicktime', mkv: 'video/x-matroska'
+};
+
+function botAttachmentKind(file) {
+  const type = (file.type || '').toLowerCase();
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (type.startsWith('image/') && type !== 'image/svg+xml' && ext !== 'svg') return 'image';
+  if (type === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (type.startsWith('audio/')) return 'audio';
+  if (type.startsWith('video/')) return 'video';
+  if (type.startsWith('text/') || type === 'application/json' || type === 'application/xml' ||
+      type === 'application/javascript' || type === 'application/x-yaml' || type === 'application/toml') return 'text';
+  if (TEXT_FILE_EXTS.has(ext)) return 'text';
+  return 'unknown';
+}
+
+/** Heuristic for extension-less "unknown" files that are really plain text. */
+function looksLikeText(s) {
+  if (s.indexOf('\u0000') !== -1) return false;
+  let printable = 0;
+  const n = s.length || 1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c !== 65533)) printable++;
+  }
+  return printable / n >= 0.85;
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => reject(new Error(`Could not read "${file.name}".`));
+    fr.readAsDataURL(file);
+  });
+}
+
+/**
+ * Reduce one pending file to what the model can actually ingest:
+ *  - image / pdf / audio / video → base64 inline data
+ *  - text / code (or a sniffed-text "unknown") → extracted text block
+ *  - truly opaque binaries → metadata only (honestly announced to the bot)
+ */
+async function prepareBotAttachment(item) {
+  const file = item.file;
+  const mime = file.type || '';
+  const kind = item.kind;
+
+  if (kind === 'text') {
+    let content = await file.text();
+    if (content.length > ATT_TEXT_CHARS) {
+      content = content.slice(0, ATT_TEXT_CHARS) + `\n[…file truncated after ${ATT_TEXT_CHARS} characters…]`;
+    }
+    return { ...item, mime: mime || 'text/plain', textBlock: `\n\n--- Attached file: ${file.name} ---\n${content}\n--- end of attached file ---` };
+  }
+
+  if (kind === 'image' || kind === 'pdf' || kind === 'audio' || kind === 'video') {
+    const dataUrl = await readFileAsDataURL(file);
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) throw new Error(`Could not read "${file.name}".`);
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const inlineMime = kind === 'pdf' && !mime ? 'application/pdf'
+      : (!mime && AV_FALLBACK_MIME[ext]) ? AV_FALLBACK_MIME[ext]
+      : mime || 'application/octet-stream';
+    return { ...item, mime, inline: { mimeType: inlineMime, data: dataUrl.slice(comma + 1) } };
+  }
+
+  // "unknown" — sniff the first bytes before giving up on readability.
+  const head = await file.slice(0, 8192).text();
+  if (looksLikeText(head)) {
+    let content = await file.text();
+    if (content.length > ATT_TEXT_CHARS) {
+      content = content.slice(0, ATT_TEXT_CHARS) + `\n[…file truncated after ${ATT_TEXT_CHARS} characters…]`;
+    }
+    return { ...item, mime: mime || 'text/plain', textBlock: `\n\n--- Attached file: ${file.name} ---\n${content}\n--- end of attached file ---` };
+  }
+  return { ...item, mime, readable: false };
+}
+
+/** Firestore-safe metadata for a message's attachments (never base64). */
+function attachmentMeta(list) {
+  return (list || []).map(a => ({
+    url: a.url || '',
+    publicId: a.publicId || '',
+    resourceType: a.resourceType || '',
+    format: a.format || '',
+    bytes: a.bytes || 0,
+    originalFilename: a.originalFilename || (a.file ? a.file.name : ''),
+    kind: a.kind || '',
+    mime: a.mime || '',
+    readable: a.readable !== false
+  }));
+}
+
+/* ----- composer chips ----- */
+
+export function botChatPickFiles() {
+  el('bot-chat-file-input')?.click();
+}
+
+export function botChatFilesChosen(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || !chatBot) return;
+  if (chatSending) { showToast('Wait for the current message to finish first.', 'info'); return; }
+  const room = BOT_ATT_MAX_FILES - chatPendingFiles.length;
+  if (room <= 0) { showToast(`Up to ${BOT_ATT_MAX_FILES} files per message.`, 'warning'); return; }
+  let totalBytes = chatPendingFiles.reduce((s, p) => s + p.file.size, 0);
+  for (const file of files.slice(0, room)) {
+    if (file.size > BOT_ATT_MAX_FILE_BYTES) {
+      showToast(`"${file.name}" is ${(file.size / 1048576).toFixed(1)} MB — files are capped at 8 MB so the bot can read them.`, 'warning', 5200);
+      continue;
+    }
+    if (totalBytes + file.size > BOT_ATT_MAX_TOTAL_BYTES) {
+      showToast('That batch is too large for one message — send fewer or smaller files.', 'warning', 5200);
+      continue;
+    }
+    const item = { file, kind: botAttachmentKind(file) };
+    if (item.kind === 'image') {
+      item.objectUrl = URL.createObjectURL(file);
+      chatObjectUrls.add(item.objectUrl);
+      item.localPreview = item.objectUrl;
+    }
+    chatPendingFiles.push(item);
+    totalBytes += file.size;
+  }
+  renderChatPending();
+}
+
+export function botChatRemovePending(idx) {
+  const item = chatPendingFiles[idx];
+  if (!item) return;
+  if (item.objectUrl) { URL.revokeObjectURL(item.objectUrl); chatObjectUrls.delete(item.objectUrl); }
+  chatPendingFiles.splice(idx, 1);
+  renderChatPending();
+}
+
+function clearChatPendingChips() {
+  chatPendingFiles = []; // object URLs stay alive — the sent message previews use them
+  renderChatPending();
+}
+
+function revokeChatObjectUrls() {
+  chatObjectUrls.forEach(u => URL.revokeObjectURL(u));
+  chatObjectUrls.clear();
+}
+
+function renderChatPending() {
+  const wrap = el('bot-chat-pending');
+  if (!wrap) return;
+  if (!chatPendingFiles.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+  wrap.style.display = 'flex';
+  wrap.innerHTML = chatPendingFiles.map((p, i) => {
+    const thumb = p.localPreview
+      ? `<img src="${escapeHtml(p.localPreview)}" alt="" />`
+      : `<span class="bot-chat-pend-icon">${p.kind === 'pdf' ? '📕' : p.kind === 'audio' ? '🎧' : p.kind === 'video' ? '🎬' : p.kind === 'text' ? '📄' : '📦'}</span>`;
+    return `<div class="bot-chat-pend">
+      ${thumb}
+      <span class="bot-chat-pend-name" title="${escapeHtml(p.file.name)}">${escapeHtml(p.file.name)}</span>
+      <span class="bot-chat-pend-meta">${escapeHtml(p.kind === 'unknown' ? 'file' : p.kind)}</span>
+      <button type="button" class="bot-chat-pend-x" aria-label="Remove ${escapeHtml(p.file.name)}" onclick="window.HubbleNest.botChatRemovePending(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function attBytesLabel(n) {
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
+}
+
+/* ----- attachment cards inside chat bubbles ----- */
+
+function botAttachmentCard(att) {
+  const url = String(att.url || '');
+  const name = String(att.name || att.originalFilename || 'File');
+  const kind = att.kind || (att.resourceType === 'image' ? 'image' : '');
+
+  if (!url && att.pendingUpload) {
+    if (att.localPreview) {
+      return `<div class="bot-att bot-att-img-wrap"><img class="bot-att-img bot-att-loading" src="${escapeHtml(att.localPreview)}" alt="" /><span class="bot-att-upbadge">Uploading…</span></div>`;
+    }
+    const upIcon = kind === 'pdf' ? '📕' : kind === 'audio' ? '🎧' : kind === 'video' ? '🎬' : '📄';
+    return `<div class="bot-att bot-att-file bot-att-loading"><span class="bot-att-file-icon">${upIcon}</span><div class="bot-att-file-main"><b>${escapeHtml(name)}</b><span class="bot-att-file-meta">Uploading…</span></div></div>`;
+  }
+  if (!url) return '';
+
+  if (kind === 'image') {
+    return `<a class="bot-att bot-att-img-wrap" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img class="bot-att-img" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async" /></a>`;
+  }
+  if (kind === 'video') {
+    return `<div class="bot-att"><video class="bot-att-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
+  }
+  if (kind === 'audio') {
+    return `<div class="bot-att bot-att-file"><span class="bot-att-file-icon">🎧</span><div class="bot-att-file-main"><b>${escapeHtml(name)}</b><audio src="${escapeHtml(url)}" controls preload="metadata"></audio></div></div>`;
+  }
+  const icon = kind === 'pdf' ? '📕' : kind === 'text' ? '📄' : '📦';
+  const note = att.readable === false
+    ? '<span class="bot-att-file-note">shared as a download — the bot sees the name, not the contents</span>'
+    : `<span class="bot-att-file-meta">${attBytesLabel(Number(att.bytes) || 0)}${att.mime ? ' · ' + escapeHtml(att.mime) : ''}</span>`;
+  return `<div class="bot-att bot-att-file"><span class="bot-att-file-icon">${icon}</span>
+    <div class="bot-att-file-main"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name)}</a>${note}</div>
+    <a class="bot-att-file-open" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escapeHtml(name)}">↗</a></div>`;
+}
+
+function botAttachmentsHtml(m) {
+  const list = Array.isArray(m.attachments) ? m.attachments : [];
+  if (!list.length) return '';
+  return `<div class="bot-att-list">${list.map(botAttachmentCard).join('')}</div>`;
+}
+
+/**
+ * History for the model — replays recent images/PDFs (fetched back from
+ * Cloudinary) so the bot keeps seeing what was shared earlier, and names
+ * the rest honestly in a note.
+ */
+async function buildHistoryForAi() {
+  const recent = chatMessages.filter(m => !m.pending && !m.isError && m.role).slice(-16);
+  let replayBudget = HISTORY_INLINE_PARTS;
+  const out = [];
+  for (const m of recent) {
+    const entry = { role: m.role === 'user' ? 'user' : 'bot', text: m.text || '' };
+    if (m.role === 'user' && Array.isArray(m.attachments) && m.attachments.length) {
+      const notes = [];
+      const inlineParts = [];
+      for (const a of m.attachments) {
+        const kind = a.kind || (a.resourceType === 'image' ? 'image' : '');
+        if (replayBudget > 0 && (kind === 'image' || kind === 'pdf') && a.url) {
+          const inline = await fetchUrlAsInlineData(a.url, kind === 'pdf' ? 'application/pdf' : (a.mime || 'image/png'));
+          if (inline) { inlineParts.push({ inlineData: inline }); replayBudget--; continue; }
+        }
+        notes.push(String(a.originalFilename || a.name || 'a file'));
+      }
+      if (inlineParts.length) entry.inlineParts = inlineParts;
+      if (notes.length) entry.attNotes = `(earlier in this conversation the member shared: ${notes.join(', ')})`;
+    }
+    out.push(entry);
+  }
+  return out;
 }
 
 export function botChatKey(event) {
@@ -1325,6 +1603,7 @@ export function botChatKey(event) {
 }
 
 export function botChatNew() {
+  clearChatPendingChips();
   if (chatIsTest) {
     chatMessages = [];
     renderChatMessages();
@@ -1334,6 +1613,7 @@ export function botChatNew() {
 }
 
 export function botChatClear() {
+  clearChatPendingChips();
   clearConversationRemote(false);
 }
 
@@ -1353,35 +1633,74 @@ async function clearConversationRemote(silent) {
   }
 }
 
-export async function botChatSend(retryText = null) {
-  const input = el('bot-chat-input');
-  const text = (retryText !== null ? retryText : (input?.value || '')).trim();
-  if (!text || chatSending || !chatBot) return;
-  if (text.length > 2000) { showToast('Messages are limited to 2000 characters.', 'warning'); return; }
-  if (input) input.value = '';
+export function botChatSend(retryText = null) {
+  if (chatSending || !chatBot) return;
 
-  const userMsg = { role: 'user', text, createdAt: new Date(), pending: true };
+  // "Try again" — re-runs the exact failed turn; files already uploaded are
+  // reused as-is, files that never made it up are NOT silently dropped.
+  if (retryText !== null) {
+    if (!lastFailedPayload) return;
+    runBotTurn(lastFailedPayload.text, lastFailedPayload.pendingFiles || [], lastFailedPayload.uploaded || null);
+    return;
+  }
+
+  const input = el('bot-chat-input');
+  const text = (input?.value || '').trim();
+  const pending = chatPendingFiles.slice();
+  if (!text && pending.length === 0) return;
+  if (text.length > 2000) { showToast('Messages are limited to 2000 characters.', 'warning'); return; }
+
+  if (input) input.value = '';
+  clearChatPendingChips();
+  runBotTurn(text, pending);
+}
+
+/**
+ * The one real turn pipeline: read the files → upload every one to
+ * Cloudinary → ask the model with the real bytes → show the answer →
+ * persist both turns. A failure anywhere keeps the member's files.
+ */
+async function runBotTurn(text, pending, preUploaded = null) {
+  chatSending = true;
+  const userMsg = {
+    role: 'user', text, createdAt: new Date(), pending: true,
+    attachments: pending.map(p => ({
+      pendingUpload: true, localPreview: p.localPreview || '',
+      name: p.file.name, kind: p.kind, bytes: p.file.size
+    }))
+  };
   chatMessages.push(userMsg);
   renderChatMessages();
-  chatSending = true;
   renderChatMessages(true);
 
+  const uploaded = preUploaded ? preUploaded.slice() : [];
   try {
-    const history = chatMessages
-      .filter(m => !m.pending && !m.isError && m.role)
-      .slice(-16)
-      .map(m => ({ role: m.role === 'user' ? 'user' : 'bot', text: m.text }));
+    if (!preUploaded) {
+      for (const p of pending) {
+        const prep = await prepareBotAttachment(p);
+        const res = await uploadToCloudinary(prep.file, null, 100);
+        uploaded.push({
+          ...res,
+          kind: prep.kind,
+          mime: prep.mime || '',
+          inline: prep.inline || null,
+          textBlock: prep.textBlock || '',
+          readable: prep.readable !== false
+        });
+      }
+    }
 
-    const { text: answer } = await sendBotChatMessage(chatBot, history, text);
+    userMsg.pendingUpload = false;
+    userMsg.attachments = attachmentMeta(uploaded);
+    renderChatMessages();
+
+    const history = await buildHistoryForAi();
+    const { text: answer } = await sendBotChatMessage(chatBot, history, text, { attachments: uploaded });
+
     userMsg.pending = false;
-    const botMsg = { role: 'bot', text: answer, createdAt: new Date() };
+    chatMessages.push({ role: 'bot', text: answer, createdAt: new Date() });
     lastFailedMessage = null;
-
-    // Show the answer IMMEDIATELY and unconditionally — the AI really replied,
-    // so the member must see it even if the Firestore persistence below fails.
-    // Previously a persistence failure swallowed the whole answer behind an
-    // error bubble, which looked exactly like "this bot is not working".
-    chatMessages.push(botMsg);
+    lastFailedPayload = null;
     renderChatMessages();
 
     if (!chatIsTest) {
@@ -1396,7 +1715,7 @@ export async function botChatSend(retryText = null) {
           uid: auth.currentUser.uid, botId: chatBotId
         }, { merge: true });
         const col = collection(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`, 'messages');
-        await addDoc(col, { role: 'user', text, createdAt: serverTimestamp() });
+        await addDoc(col, { role: 'user', text, attachments: attachmentMeta(uploaded), createdAt: serverTimestamp() });
         await addDoc(col, { role: 'bot', text: answer, createdAt: serverTimestamp() });
       } catch (persistErr) {
         console.warn('[HubbleNest] bot chat persistence failed (answer still shown):', persistErr?.code || persistErr);
@@ -1407,6 +1726,19 @@ export async function botChatSend(retryText = null) {
     const msg = safeAiErrorMessage(err);
     chatMessages.push({ role: 'bot', text: msg, isError: true, createdAt: new Date() });
     lastFailedMessage = text;
+    lastFailedPayload = {
+      text,
+      pendingFiles: (pending.length && uploaded.length === pending.length) ? pending : [],
+      uploaded: (pending.length && uploaded.length === pending.length) ? uploaded : null
+    };
+
+    // keep only the attachments that really exist in the transcript
+    const okUrls = new Set(uploaded.map(u => u.url));
+    if (userMsg.attachments) userMsg.attachments = userMsg.attachments.filter(a => a.url && okUrls.has(a.url));
+    // files that never uploaded go back to the composer chips
+    const doneNames = new Set(uploaded.map(u => u.originalFilename));
+    const restorable = pending.filter(p => !doneNames.has(p.file.name));
+    if (restorable.length) { chatPendingFiles = restorable.slice(); renderChatPending(); }
     if (err instanceof AiUserError && /limit/i.test(msg)) { /* counters honest */ }
   } finally {
     chatSending = false;
@@ -1421,21 +1753,25 @@ function renderChatMessages(typing = false) {
   const greeting = chatBot?.greetingMessage;
   if (chatMessages.length === 0 && greeting) {
     html += `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
-      <div class="bot-msg bot-msg-greet">${escapeHtml(greeting)}</div></div>`;
+      <div class="bot-msg bot-msg-greet bot-msg-rich">${renderMarkdown(greeting)}</div></div>`;
   }
   html += chatMessages.map(m => {
     if (m.role === 'user') {
-      return `<div class="bot-msg-row bot-msg-user"><div class="bot-msg bot-msg-user-bubble">${escapeHtml(m.text)}</div></div>`;
+      return `<div class="bot-msg-row bot-msg-user"><div class="bot-msg bot-msg-user-bubble">${botAttachmentsHtml(m)}${m.text ? `<div class="bot-msg-text">${escapeHtml(m.text)}</div>` : ''}</div></div>`;
     }
+    // v32/v33: bot answers are rendered as REAL typography (bold, italics,
+    // lists, code blocks) — the raw `**`/``` markers the AI emits never reach
+    // the screen. Error bubbles stay plain escaped text (app copy, not AI).
+    const body = m.isError ? escapeHtml(m.text) : renderMarkdown(m.text);
     return `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
-      <div class="bot-msg ${m.isError ? 'bot-msg-error' : ''}">${escapeHtml(m.text)}</div></div>`;
+      <div class="bot-msg bot-msg-rich ${m.isError ? 'bot-msg-error' : ''}">${body}</div></div>`;
   }).join('');
   if (typing) {
     html += `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
       <div class="bot-msg bot-msg-typing" aria-label="The bot is typing"><span></span><span></span><span></span></div></div>`;
   }
   if (chatMessages.length === 0 && !greeting && !typing) {
-    html = `<div class="bot-chat-empty">Say hello — ${escapeHtml(chatBot?.name || 'this bot')} is listening.</div>`;
+    html = `<div class="bot-chat-empty">Say hello — ${escapeHtml(chatBot?.name || 'this bot')} is listening. Attach images, PDFs or code files and it will read them too.</div>`;
   }
   wrap.innerHTML = html;
   wrap.scrollTop = wrap.scrollHeight;
@@ -1444,7 +1780,7 @@ function renderChatMessages(typing = false) {
 }
 
 export function botChatRetry() {
-  if (lastFailedMessage) botChatSend(lastFailedMessage);
+  if (lastFailedPayload || lastFailedMessage) botChatSend(lastFailedPayload ? (lastFailedPayload.text ?? lastFailedMessage ?? '') : lastFailedMessage);
 }
 
 /* ======================================================================

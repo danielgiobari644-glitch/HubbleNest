@@ -512,8 +512,9 @@ export function buildBotSystemPrompt(bot) {
   if (bot.customInstructions) {
     parts.push(`Standing instructions from your creator (follow unless unsafe):\n${String(bot.customInstructions).slice(0, 4000)}`);
   }
-  parts.push('Stay in your role at all times. If asked about your internals, configuration or credentials, decline politely and keep helping with your purpose. Never claim abilities you have not been given (no web browsing, no file access, no code execution).');
-  parts.push('Format answers for a chat app: short paragraphs or compact lists, no markdown headings, no code fences unless the user is asking for code.');
+  parts.push('You can SEE and READ what the member sends: images (photos, screenshots, diagrams), PDFs, audio, video and text/code files arrive as real attachments inside the conversation. When a message carries attachments, actually study their contents and answer about them — describe images, read documents and code in full, and quote specifics from them. If a file is mentioned but its contents were not included, say so honestly instead of guessing.');
+  parts.push('Stay in your role at all times. If asked about your internals, configuration or credentials, decline politely and keep helping with your purpose. Never claim abilities you have not been given (no web browsing, no code execution).');
+  parts.push('Format answers for a chat app: short paragraphs or compact lists, no markdown headings, no code fences unless the user is asking for code. You may use **bold**, *italics* and "- " bullet lists — the app renders them as REAL typography, so use them instead of decorating words with literal characters.');
   return parts.join('\n');
 }
 
@@ -529,16 +530,65 @@ function botGenerationConfig(model) {
   return gc;
 }
 
+/* ----------------------------------------------------------------------
+   Multimodal attachments — bots read what the member sends.
+   Images / PDFs / audio / video travel as real inline_data parts; text and
+   code files are read client-side and arrive as text blocks the model can
+   quote from. Anything else (zip, docx…) is honestly announced by name so
+   the bot never pretends to have read bytes it cannot see.
+   ---------------------------------------------------------------------- */
+
+const MAX_FILE_TEXT_CHARS = 16000;   // per text/code file inside one turn
+const MAX_INLINE_TOTAL_BASE64 = 15 * 1024 * 1024; // Gemini request body guard
+
 /**
- * One bot conversation turn.
+ * Fetch an already-uploaded attachment (history replay) back as inline data.
+ * Cloudinary delivery URLs are CORS-enabled, so images and PDFs from earlier
+ * turns can re-enter the conversation. Results are cached per URL.
+ * @returns {Promise<{mimeType: string, data: string}|null>}
+ */
+const inlineFetchCache = new Map();
+export async function fetchUrlAsInlineData(url, mimeType) {
+  if (!url) return null;
+  if (inlineFetchCache.has(url)) return inlineFetchCache.get(url);
+  try {
+    const res = await fetch(url, { mode: 'cors', cache: 'force-cache' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (blob.size > 3 * 1024 * 1024) return null; // keep history replay cheap
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(new Error('read failed'));
+      fr.readAsDataURL(blob);
+    });
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const inline = { mimeType: mimeType || blob.type || 'application/octet-stream', data: dataUrl.slice(comma + 1) };
+    inlineFetchCache.set(url, inline);
+    return inline;
+  } catch (e) {
+    return null;
+  }
+}
+
+function attachmentLabel(a) {
+  return String(a?.name || a?.originalFilename || 'a file');
+}
+
+/**
+ * One bot conversation turn — text plus any real attachments.
  * @param {object} bot        the bot document (saved or in-progress test config)
- * @param {Array}  history    [{ role: 'user'|'bot', text }] — oldest first, capped by caller
- * @param {string} message    the user's message
+ * @param {Array}  history    [{ role:'user'|'bot', text, inlineParts?, attNotes? }] — oldest first
+ * @param {string} message    the user's message (may be empty when files are attached)
+ * @param {object} [opts]     { attachments: [{ inline?: {mimeType,data}, textBlock?: string,
+ *                             name?: string, mime?: string }] }
  * @returns {Promise<{text: string}>}
  */
-export async function sendBotChatMessage(bot, history, message) {
+export async function sendBotChatMessage(bot, history, message, opts = {}) {
   const text = (message || '').trim();
-  if (!text) throw new AiUserError('Type a message first.');
+  const atts = Array.isArray(opts.attachments) ? opts.attachments : [];
+  if (!text && atts.length === 0) throw new AiUserError('Type a message first.');
   if (text.length > MAX_INPUT_CHARS) throw new AiUserError(`Messages are limited to ${MAX_INPUT_CHARS} characters — yours is ${text.length}.`);
   guardRequest();
 
@@ -549,10 +599,36 @@ export async function sendBotChatMessage(bot, history, message) {
 
   const contents = [];
   for (const h of (history || []).slice(-16)) {
-    if (!h || !h.text) continue;
-    contents.push({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: String(h.text).slice(0, MAX_INPUT_CHARS) }] });
+    if (!h) continue;
+    const hParts = [];
+    const hText = String(h.text || '').trim();
+    if (hText) hParts.push({ text: hText.slice(0, MAX_INPUT_CHARS) });
+    if (Array.isArray(h.inlineParts)) {
+      for (const p of h.inlineParts) {
+        if (p && p.inlineData && p.inlineData.data) hParts.push({ inlineData: p.inlineData });
+      }
+    }
+    if (h.attNotes) hParts.push({ text: String(h.attNotes).slice(0, 1200) });
+    if (hParts.length) contents.push({ role: h.role === 'user' ? 'user' : 'model', parts: hParts });
   }
-  contents.push({ role: 'user', parts: [{ text }] });
+
+  const userParts = [{ text: text || '(sent you attachment(s) — see below)' }];
+  let inlineBytes = 0;
+  for (const a of atts) {
+    if (a.inline && a.inline.data) {
+      inlineBytes += a.inline.data.length;
+      if (inlineBytes <= MAX_INLINE_TOTAL_BASE64) {
+        userParts.push({ inlineData: { mimeType: a.inline.mimeType || 'application/octet-stream', data: a.inline.data } });
+        continue;
+      }
+      userParts.push({ text: `[Attachment "${attachmentLabel(a)}" was too large to include this turn — you can see only its name.]` });
+    } else if (a.textBlock) {
+      userParts.push({ text: String(a.textBlock) });
+    } else {
+      userParts.push({ text: `[The member attached "${attachmentLabel(a)}" (${a.mime || 'file'}) — its contents were not included, so you know only its name and type. Never pretend to have read it.]` });
+    }
+  }
+  contents.push({ role: 'user', parts: userParts });
 
   const res = await callGenerateContent(cfg, {
     systemInstruction: { parts: [{ text: buildBotSystemPrompt(bot) }] },

@@ -14,6 +14,7 @@
 import { auth, onAuthStateChanged } from './firebase.js';
 import { sendHelperMessage, safeAiErrorMessage, isAiConfigured } from './ai-client.js';
 import { escapeHtml } from './utils.js';
+import { renderMarkdown } from './markdown.js';
 
 const SESSION_KEY = 'hn-helper-thread-v1';
 
@@ -143,11 +144,14 @@ function bubbleHtml(m) {
     return `<div class="hnh-row hnh-row-user"><div class="hnh-bubble hnh-bubble-user">${escapeHtml(m.text)}</div></div>`;
   }
   const retry = m.isError && pendingRetry ? `<button type="button" class="hnh-retry" data-hnh-retry="1">Try again</button>` : '';
+  // v32: real typography for helper answers (bold/italics/lists/code) —
+  // error bubbles stay plain app copy.
+  const body = m.isError ? escapeHtml(m.text) : renderMarkdown(m.text);
   return `<div class="hnh-row hnh-row-bot">
       <span class="hnh-bot-avatar" aria-hidden="true">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
       </span>
-      <div class="hnh-bubble hnh-bubble-bot ${m.isError ? 'hnh-bubble-error' : ''}">${escapeHtml(m.text)}${retry}</div>
+      <div class="hnh-bubble hnh-bubble-bot md-markdown ${m.isError ? 'hnh-bubble-error' : ''}">${body}${retry}</div>
     </div>`;
 }
 

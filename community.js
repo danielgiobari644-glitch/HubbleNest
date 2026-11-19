@@ -55,13 +55,34 @@ import {
   formatTimeAgo,
   getAvatarUrl,
   linkify,
-  handlePermissionError
+  handlePermissionError,
+  openModal,
+  closeModal
 } from './utils.js';
 
 // Rich text: posts and comments render REAL formatting (bold, italic,
 // headings, lists, code, links) in a vertical multi-line layout — never raw
 // Markdown symbols. linkify stays for legacy snippet helpers.
 import { renderRichText } from './format.js';
+
+// v32: games can be attached to feed posts. getGamesCache reads the live
+// Arcade list (display fields only — light), so the picker never re-downloads
+// game source code. ensureGamesLoaded boots the Arcade listener on demand so
+// the picker works even before the member ever opens the Arcade view.
+// playFeedGame routes the post's Play button into the real player;
+// unplayable source projects land on the Arcade detail page.
+import { getGamesCache, openGamePlayer, startArcade } from './games.js';
+import { openGameDetail } from './arcade.js';
+
+/** The Arcade's live list — self-starting so the picker is never empty. */
+function gamesForPicker() {
+  let cache = getGamesCache();
+  if (!cache || cache.length === 0) {
+    try { startArcade(); } catch (e) { /* signed-out — the picker shows its honest empty state */ }
+    cache = getGamesCache();
+  }
+  return cache || [];
+}
 
 // permission-denied guidance now lives in utils.js (Connection Doctor retired)
 // (imported below from './utils.js' where the rest of utils come from)
@@ -76,6 +97,11 @@ let feedGeneration = 0;
 let feedMode = 'foryou'; // 'foryou' | 'latest'
 let postsCache = [];
 let pendingAttachments = [];
+// v32: the game staged for the next post (display snapshot from the Arcade
+// cache — id + logo/cover + info; never the game's source code).
+let pendingGamePost = null;
+// Poll handle for the picker's "listener still delivering" re-render.
+let pickerPollTimer = null;
 let context = {
   userProfile: null,
   currentUserId: null,
@@ -393,6 +419,7 @@ function renderPostCard(p, idx) {
 
       ${p.text ? `<div class="feed-post-text rich-text">${renderRichText(p.text)}</div>` : ''}
       ${renderAttachments(p)}
+      ${p.game ? feedGameCardHtml(p.game) : ''}
 
       <footer class="feed-post-actions">
         <div class="feed-post-stats">${stats.join('')}</div>
@@ -424,8 +451,8 @@ export async function handleHomePost() {
   const input = document.getElementById('home-composer-input');
   const text = input ? input.value.trim() : '';
 
-  if (!text && pendingAttachments.length === 0) {
-    showToast('Write something first, or attach a file — the community can\'t read minds yet.', 'info');
+  if (!text && pendingAttachments.length === 0 && !pendingGamePost) {
+    showToast('Write something first, or attach a file or game — the community can\'t read minds yet.', 'info');
     return;
   }
   if (!context.userProfile || !context.currentUserId) {
@@ -459,6 +486,11 @@ export async function handleHomePost() {
       authorPhoto: context.userProfile.photoURL || '',
       text: text,
       attachments,
+      // v32: an attached game rides on the post as a compact display snapshot
+      // (id + logo/cover + info). The feed card's Play button routes into the
+      // real Arcade player via the id — the source code never leaves the
+      // games collection.
+      game: pendingGamePost || null,
       likedBy: [],
       likeCount: 0,
       commentCount: 0,
@@ -496,6 +528,7 @@ export async function handleHomePost() {
       input.style.height = 'auto';
     }
     clearAllHomeAttachments();
+    removeGamePost();
     showToast('Posted to the community ✓', 'success');
   } catch (err) {
     console.error('Post failed:', err);
@@ -560,6 +593,171 @@ function renderHomePendingAttachments() {
   }).join('');
 
   area.style.display = 'block';
+}
+
+/* ========================================================================
+   v32 — Attach a game to a post
+   ======================================================================== */
+
+/** Open the game picker modal (composer "Attach Game"). */
+export function openGameComposerPicker() {
+  const list = document.getElementById('game-picker-list');
+  const search = document.getElementById('game-picker-search');
+  if (!list) return;
+  if (search) { search.value = ''; }
+  renderGamePickerList('');
+  openModal('modal-game-picker');
+}
+
+/** Re-render the picker list filtered by the search box. */
+export function filterGamePicker() {
+  const term = (document.getElementById('game-picker-search')?.value || '').trim().toLowerCase();
+  renderGamePickerList(term);
+}
+
+function renderGamePickerList(term) {
+  const list = document.getElementById('game-picker-list');
+  if (!list) return;
+  const uid = context.currentUserId;
+  const games = gamesForPicker().slice();
+
+  if (games.length === 0) {
+    list.innerHTML = `<div class="game-picker-empty">No games in the Arcade yet. Create one with the Create Game button — then attach it here.</div>`;
+    // The first open may have just self-started the Arcade listener: poll
+    // briefly so freshly-delivered games appear without the member having
+    // to close and reopen this modal.
+    clearInterval(pickerPollTimer);
+    let tries = 0;
+    pickerPollTimer = setInterval(() => {
+      tries++;
+      const open = document.getElementById('modal-game-picker')?.classList.contains('modal-active');
+      if (tries > 20 || !open) { clearInterval(pickerPollTimer); return; }
+      if (gamesForPicker().length > 0) { clearInterval(pickerPollTimer); renderGamePickerList(term); }
+    }, 350);
+    return;
+  }
+
+  clearInterval(pickerPollTimer);
+
+  // Your games first (newest first — the cache is createdAt-desc already).
+  games.sort((a, b) => ((a.authorId === uid) ? -1 : 1) - ((b.authorId === uid) ? -1 : 1));
+
+  const filtered = term
+    ? games.filter(g => String(g.title || '').toLowerCase().includes(term) || String(g.description || '').toLowerCase().includes(term))
+    : games;
+
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="game-picker-empty">No game matches "${escapeHtml(term)}".</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.slice(0, 30).map(g => {
+    const mine = g.authorId === uid;
+    const logo = g.logoUrl || g.coverImage
+      ? `<img src="${escapeHtml(g.logoUrl || g.coverImage)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`
+      : `<span class="game-picker-thumb-letter">${escapeHtml((g.title || 'G').charAt(0).toUpperCase())}</span>`;
+    return `
+      <button type="button" class="game-picker-item" onclick="window.HubbleNest.pickGameForPost('${escapeHtml(g.id)}')">
+        <span class="game-picker-thumb">${logo}</span>
+        <span class="game-picker-info">
+          <span class="game-picker-title">${escapeHtml(g.title || 'Untitled game')}${mine ? ' <em class="game-picker-mine">yours</em>' : ''}</span>
+          <span class="game-picker-desc">${escapeHtml((g.description || 'No description yet.').slice(0, 90))}</span>
+        </span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--text-muted);"><path d="M8 5v14l11-7z"/></svg>
+      </button>`;
+  }).join('');
+}
+
+/** Stage a picked game on the composer (display snapshot, removable chip). */
+export function pickGameForPost(gameId) {
+  const g = gamesForPicker().find(x => x.id === gameId);
+  if (!g) { showToast('That game is no longer available.', 'error'); return; }
+
+  pendingGamePost = {
+    id: g.id,
+    title: g.title || 'Untitled game',
+    description: g.description || '',
+    category: g.category || '',
+    kind: g.kind || '',
+    linkHost: g.linkHost || '',
+    logoUrl: g.logoUrl || null,
+    coverImage: g.coverImage || null,
+    authorId: g.authorId || '',
+    authorName: g.authorName || 'Member',
+    runnable: g.runnable !== false && (g.kind === 'link' || !!g.entryPath || (g.fileCount || 0) === 0)
+  };
+
+  closeModal('modal-game-picker');
+  renderStagedGameChip();
+  showToast(`"${pendingGamePost.title}" will be attached to your post.`, 'success', 2600);
+}
+
+/** Remove the staged game chip. */
+export function removeGamePost() {
+  pendingGamePost = null;
+  renderStagedGameChip();
+}
+
+/** The Play button on an embedded game card — straight into the real game. */
+export async function playFeedGame(gameId) {
+  const g = gamesForPicker().find(x => x.id === gameId);
+  const runnable = g && g.runnable !== false && (g.kind === 'link' || !!g.entryPath || (g.fileCount || 0) === 0);
+  if (runnable) {
+    await openGamePlayer(gameId);
+  } else {
+    openGameDetail(gameId);
+  }
+}
+
+function renderStagedGameChip() {
+  const area = document.getElementById('home-game-chip-area');
+  if (!area) return;
+  if (!pendingGamePost) { area.style.display = 'none'; area.innerHTML = ''; return; }
+  const g = pendingGamePost;
+  const logo = g.logoUrl || g.coverImage
+    ? `<img src="${escapeHtml(g.logoUrl || g.coverImage)}" alt="" onerror="this.remove()" />`
+    : `<span class="game-picker-thumb-letter">${escapeHtml((g.title || 'G').charAt(0).toUpperCase())}</span>`;
+  area.innerHTML = `
+    <div class="home-game-chip">
+      <span class="game-picker-thumb">${logo}</span>
+      <span class="game-picker-info">
+        <span class="game-picker-title">${escapeHtml(g.title)}</span>
+        <span class="game-picker-desc">Game attached — posts with a Play button</span>
+      </span>
+      <button type="button" class="pending-card-remove" onclick="window.HubbleNest.removeGamePost()" title="Remove this game">✕</button>
+    </div>`;
+  area.style.display = 'block';
+}
+
+/**
+ * The embedded game card a post renders when it carries a game — logo/cover,
+ * title, description, category and a direct button into the game.
+ */
+function feedGameCardHtml(game) {
+  if (!game || !game.id) return '';
+  const art = game.logoUrl || game.coverImage
+    ? `<img class="feed-game-card-img" src="${escapeHtml(game.logoUrl || game.coverImage)}" alt="${escapeHtml(game.title || 'Game')}" loading="lazy" decoding="async" onerror="this.remove()" />`
+    : `<span class="feed-game-card-letter">${escapeHtml((game.title || 'G').charAt(0).toUpperCase())}</span>`;
+  const runnable = game.runnable !== false;
+  return `
+    <div class="feed-game-card" data-game-id="${escapeHtml(game.id)}">
+      <div class="feed-game-card-art">${art}</div>
+      <div class="feed-game-card-body">
+        <div class="feed-game-card-top">
+          <span class="feed-game-card-name">${escapeHtml(game.title || 'Untitled game')}</span>
+          ${game.category ? `<span class="arc-cat-chip feed-game-card-chip">${escapeHtml(game.category)}</span>` : ''}
+        </div>
+        ${game.description ? `<p class="feed-game-card-desc">${escapeHtml(game.description.slice(0, 160))}${game.description.length > 160 ? '…' : ''}</p>` : ''}
+        <div class="feed-game-card-meta">
+          <span>by ${escapeHtml(game.authorName || 'Member')}</span>
+          ${game.kind === 'link' && game.linkHost ? `<span>· plays from ${escapeHtml(game.linkHost)}</span>` : ''}
+        </div>
+        <button type="button" class="btn btn-primary btn-sm feed-game-card-play" onclick="window.HubbleNest.playFeedGame('${escapeHtml(game.id)}')" ${runnable ? '' : 'disabled'}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-2px;margin-right:5px;"><path d="M8 5v14l11-7z"/></svg>
+          ${runnable ? 'Play now' : 'View in Arcade'}
+        </button>
+      </div>
+    </div>`;
 }
 
 /* ========================================================================

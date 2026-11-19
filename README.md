@@ -426,6 +426,102 @@ sign-in view if the session expired — so returning members never see the
 portfolio again (they can still reach it anytime via the account menu →
 "Explore Landing Page").
 
+## v33 — Bots read files and images, markdown asterisks impossible
+
+**Attach anything to a bot conversation.** The bot chat composer has a
+paperclip button next to the text field. Members can attach up to four
+files per message (8 MB each) — photos, screenshots, diagrams, PDFs,
+audio, video, code and text files, and anything else besides. Every
+attached file is uploaded to Cloudinary first, so the conversation keeps
+a real, openable copy of it forever; the chat bubble then shows images as
+tappable thumbnails, audio/video with inline players and documents as
+download cards with name, size and type.
+
+**The bot actually reads the contents.** Images, PDFs, audio and video
+reach the AI as genuine inline data parts of the request; text and code
+files (`.js`, `.py`, `.md`, `.csv`, `.json`, `.html`, `.css`, …) are read
+in full client-side and arrive as quoted text the model can analyse,
+explain and debug — with an honest truncation note past 16,000
+characters. Extension-less or unusual files are sniffed: if the bytes are
+plain text the bot reads them too; genuinely opaque binaries (zip, docx,
+xlsx…) are shared as download cards and the bot is told explicitly that it
+can see only the name and type — it will say so instead of pretending.
+Attachments ride along in the conversation history: recent images and
+PDFs are re-fetched and re-sent on later turns, so follow-up questions
+("what does the diagram in the second picture say?") keep working, while
+files that cannot be replayed are named honestly in the context. The
+"Try again" button re-sends the failed message with its files, and
+attachments persist in the private chat history in Firestore (metadata
+and links only — never megabytes of base64).
+
+**No raw asterisks can ever reach the screen.** The safe markdown
+renderer now handles `***bold italic***` as real bold+italic, allows
+single `*italics*` nested inside `**bold**`, and ends with a final
+asterisk safety net: any leftover run of `**`/`***`/`****` collapses and
+re-renders as emphasis, so an AI that emits unusual emphasis markup still
+never shows a raw star. Arithmetic like `2 * 3 * 4` is untouched, code
+spans and fenced blocks are protected, and the system prompt instructs
+bots to use real markdown formatting for emphasis and lists.
+
+## v32 — Games on the feed, real bot typography, people as a list, featured-space control
+
+**Post your game on the feed.** The community composer has a new
+**Attach Game** button next to Create Game. It opens a picker listing the
+Arcade's real games (yours first, searchable by title or description, with
+logo/cover thumbnails). The picked game rides on the post as a compact
+display snapshot — id, logo/cover, title, description, category, author —
+never the game's source code. The post renders an embedded **game card**:
+art on the left, title + category chip, a two-line description, author line
+and a **Play now** button that goes straight into the real Arcade player
+(source-only projects open the game's Arcade page instead, where the file
+tree explains why they are not runnable in a browser). A removable chip on
+the composer previews the staged game before posting; a game can be posted
+on its own, without text or files. Deleting rights, likes and comments work
+on game posts exactly as on every other post.
+
+**Bots now speak in real typography.** Every AI answer — bot chats, the bot's
+greeting, and the Get Help assistant — is rendered through a new safe
+Markdown renderer (`markdown.js`): `**bold**` becomes real bold, `*text*`
+real italics, `-`/`*`/`•` lines become real bullet lists, `1.` lines numbered
+lists, `#` headings, bare https links become real anchors, and fenced
+``` code blocks render as dark rounded code panels with a language badge and
+horizontal scrolling. Raw asterisks and backticks never reach the screen.
+The renderer escapes all HTML before parsing (no injection path), and error
+bubbles stay plain app copy. Push-style contexts use `stripMarkdown` so no
+markers leak there either.
+
+**People is a list, not a wall of cards.** The People section renders one
+compact row per contact — avatar, name, one-line bio/handle, Chat button and
+a remove button — and **tapping a row opens that member's profile card**.
+Rows animate in, stay readable on phones (the status label collapses away),
+and the search/filter behaviour is unchanged.
+
+**The Featured Space actually works now.** Until v32 nothing in the app
+could set `spaces.featured` — the dashboard card could never show a featured
+Space. Space Settings (Settings tab) gains a **"Feature this Space"** toggle,
+visible only to the platform admin account; featuring a Space unfeatures the
+previous one server-side in one atomic batch. The dashboard card is now a
+**live subscription**: featuring/unfeaturing updates every open dashboard
+within a second. With nothing featured, the card honestly says
+"Nothing featured yet" instead of silently pretending a member's own Space
+is featured.
+
+**Game covers no longer swallow the info page.** On a game's Arcade detail
+page the cover image is now a framed preview inside the panel (rounded,
+capped at 280px, taller on phones) instead of a full-bleed slab that pushed
+the game info down. The badge and play overlay stay on the image.
+
+**Contact page is a list.** The "Ways to reach us" section renders four
+numbered-feel list rows with icons and hairline separators instead of a card
+grid.
+
+**Direct Share got a real arrival moment.** Files that just arrived slide in
+with a dedicated glow-sweep animation, staggered per card so a batch
+cascades; the receiver gets an arrival toast ("N new files just arrived from
+…") and the peer card pulses into receiving state. Panes animate in when
+switching Send/Receive. Reduced-motion users get the same information
+without the motion.
+
 ## v31 — Visible notifications, bots AI fix, admin game management, separate logo/cover, dedicated Create-Game page
 
 **Notifications are now genuinely visible — on the app AND off it.** A new

@@ -243,6 +243,11 @@ import {
   stageHomeAttachment as stageHomeFile,
   removeHomeAttachment,
   clearAllHomeAttachments,
+  openGameComposerPicker,
+  filterGamePicker,
+  pickGameForPost,
+  removeGamePost,
+  playFeedGame,
   feedSetMode,
   feedToggleLike,
   feedToggleComments,
@@ -358,6 +363,9 @@ import {
   botChatClear,
   botChatRetry,
   botChatUseSuggested,
+  botChatPickFiles,
+  botChatFilesChosen,
+  botChatRemovePending,
   openBotProfile,
   botProfileRate,
   botProfileSubmitComment,
@@ -1574,28 +1582,39 @@ function renderSidebarSpaces() {
  */
 function renderDashRail() {
   // Featured space = the Space the platform admin featured (spaces.featured).
-  // Falls back to the member's most recent Space when nothing is featured.
-  (async () => {
-    let featured = null;
-    try {
-      const snap = await getDocs(query(
-        collection(db, 'spaces'),
-        where('featured', '==', true),
-        limit(1)
-      ));
-      if (!snap.empty) featured = { id: snap.docs[0].id, ...snap.docs[0].data() };
-    } catch (e) { /* fallback below */ }
-    if (!featured) featured = state.userSpaces[0] || null;
-
-    const featName = document.getElementById('rail-featured-name');
-    const featDesc = document.getElementById('rail-featured-desc');
-    const featBtn = document.getElementById('rail-featured-btn');
-    if (featured) {
-      if (featName) featName.textContent = featured.name || 'HubbleSpace Community';
-      if (featDesc) featDesc.textContent = featured.description || 'For Everyone Who Needs Help Around The App';
-      if (featBtn) featBtn.onclick = () => openSpace(featured.id);
-    }
-  })();
+  // v32: LIVE subscription — featuring/unfeaturing in Space settings updates
+  // every dashboard within a second, no reload. When nothing is featured the
+  // card honestly says so instead of pretending a member's own space is
+  // "featured" (the See-all button still leads to Spaces).
+  if (typeof state.featuredSpaceUnsub === 'function') state.featuredSpaceUnsub();
+  state.featuredSpaceUnsub = null;
+  try {
+    state.featuredSpaceUnsub = onSnapshot(
+      query(collection(db, 'spaces'), where('featured', '==', true), limit(1)),
+      (snap) => {
+        const featured = snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
+        const featName = document.getElementById('rail-featured-name');
+        const featDesc = document.getElementById('rail-featured-desc');
+        const featBtn = document.getElementById('rail-featured-btn');
+        if (featured) {
+          if (featName) featName.textContent = featured.name || 'HubbleSpace Community';
+          if (featDesc) featDesc.textContent = featured.description || 'For Everyone Who Needs Help Around The App';
+          if (featBtn) {
+            featBtn.disabled = false;
+            featBtn.onclick = () => openSpace(featured.id);
+          }
+        } else {
+          if (featName) featName.textContent = 'Nothing featured yet';
+          if (featDesc) featDesc.textContent = 'The platform admin can feature a Space from its Settings tab — it then appears here for every member.';
+          if (featBtn) {
+            featBtn.disabled = false;
+            featBtn.onclick = () => openSpacesSection();
+          }
+        }
+      },
+      (err) => console.warn('Featured space listener:', err?.code || err)
+    );
+  } catch (e) { /* the rail still renders below */ }
 
   // Members card: show YOUR contacts (real data, live count)
   if (state.currentUser) {
@@ -1964,6 +1983,11 @@ function initSettingsTab() {
   if (publicInput) publicInput.checked = state.activeSpace.isPublic === true;
   if (nameInput) nameInput.value = state.activeSpace.name || '';
   if (descInput) descInput.value = state.activeSpace.description || '';
+  // v32: only the PLATFORM admin can feature a Space on the dashboard rail.
+  const featuredWrap = document.getElementById('edit-space-featured-wrap');
+  const featuredInput = document.getElementById('edit-space-featured-tab');
+  if (featuredWrap) featuredWrap.style.display = isPlatformAdmin() ? 'block' : 'none';
+  if (featuredInput) featuredInput.checked = state.activeSpace.featured === true;
 }
 
 export async function handleSaveSpaceSettingsFromTab() {
@@ -1983,9 +2007,39 @@ export async function handleSaveSpaceSettingsFromTab() {
     state.activeSpace.name = name;
     state.activeSpace.description = desc;
     renderSpaceHeader();
+
+    // v32: featuring is platform-admin only. Featuring this Space unfeatures
+    // the previously featured one, so the dashboard rail always has at most
+    // one — the widget reads the single featured==true doc live.
+    const featuredInput = document.getElementById('edit-space-featured-tab');
+    if (featuredInput && isPlatformAdmin()) {
+      const wantFeatured = featuredInput.checked;
+      if (wantFeatured !== (state.activeSpace.featured === true)) {
+        if (wantFeatured) {
+          const prev = await getDocs(query(
+            collection(db, 'spaces'),
+            where('featured', '==', true),
+            limit(5)
+          ));
+          const batch = writeBatch(db);
+          prev.forEach((d) => { if (d.id !== state.activeSpace.id) batch.update(d.ref, { featured: false }); });
+          batch.update(doc(db, 'spaces', state.activeSpace.id), { featured: true });
+          await batch.commit();
+        } else {
+          await updateDoc(doc(db, 'spaces', state.activeSpace.id), { featured: false });
+        }
+        state.activeSpace.featured = wantFeatured;
+        showToast(wantFeatured ? 'This Space is now featured on every dashboard ✓' : 'This Space is no longer featured.', 'success');
+      }
+    }
+
     showToast('Space settings saved successfully!', 'success');
   } catch (err) {
-    showToast(err.message || 'Failed to save space settings', 'error');
+    if (err?.code === 'permission-denied' && /featured/i.test(err?.message || '')) {
+      showToast('Featuring Spaces is restricted to the platform admin account.', 'error');
+    } else {
+      showToast(err.message || 'Failed to save space settings', 'error');
+    }
   }
 }
 
@@ -3249,35 +3303,31 @@ function renderPeopleGrid(contactsList) {
 
   const pendingSet = state.pendingFriendUids instanceof Set ? state.pendingFriendUids : new Set();
 
-  container.innerHTML = list.map(p => {
+  // v32: People renders as a LIST (one compact row per member) instead of a
+  // wall of cards. Tapping a row opens that member's profile card.
+  container.innerHTML = `<div class="people-list">` + list.map(p => {
     const isPending = pendingSet.has(p.uid);
     return `
-      <div class="person-card">
-        <div class="person-header" onclick="window.HubbleNest.openUserCardModal('${p.uid}')" title="View profile">
-          <div class="person-avatar">
-            <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
-          </div>
-          <div style="flex: 1; min-width: 0;">
-            <div class="person-name">${escapeHtml(p.displayName)}${isPending ? '<span class="pending-chip">⏳ Pending</span>' : ''}</div>
-            <div class="person-handle">@${escapeHtml(p.username || '')}</div>
-          </div>
+      <div class="person-row" role="button" tabindex="0" onclick="window.HubbleNest.openUserCardModal('${p.uid}')" onkeydown="if(event.key==='Enter')window.HubbleNest.openUserCardModal('${p.uid}')" title="View ${escapeHtml(p.displayName)}'s profile">
+        <div class="person-row-avatar">
+          <img src="${getAvatarUrl(p.photoURL, p.displayName)}" alt="${escapeHtml(p.displayName)}" loading="lazy" decoding="async" />
         </div>
-        ${p.bio ? `<div class="person-bio">${escapeHtml(p.bio)}</div>` : ''}
-        <div class="person-footer">
-          <span style="font-size: 0.8rem; color: var(--text-muted);">${isPending ? 'Waiting for acceptance' : 'Friend'}</span>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.chatWithPerson('${p.uid}')" title="${isPending ? 'Chat unlocks once your request is accepted' : `Open your private chat with ${escapeHtml(p.displayName)}`}" ${isPending ? 'style="opacity: 0.75;"' : ''}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
-            </button>
-            <button class="btn btn-sm btn-secondary" onclick="window.HubbleNest.openUserCardModal('${p.uid}')">
-              Profile
-            </button>
-            <button class="btn btn-sm btn-ghost" style="color: var(--text-muted);" onclick="window.HubbleNest.removeContactFromList('${p.uid}')" title="Remove from contacts">✕</button>
-          </div>
+        <div class="person-row-main">
+          <div class="person-row-name">${escapeHtml(p.displayName)}${isPending ? '<span class="pending-chip">⏳ Pending</span>' : ''}</div>
+          <div class="person-row-sub">${p.bio ? `${escapeHtml(p.bio.slice(0, 60))}${p.bio.length > 60 ? '…' : ''} · ` : ''}@${escapeHtml(p.username || '')}</div>
+        </div>
+        <div class="person-row-actions" onclick="event.stopPropagation()">
+          <span class="person-row-status">${isPending ? 'Waiting for acceptance' : 'Friend'}</span>
+          <button class="btn btn-sm btn-primary" onclick="window.HubbleNest.chatWithPerson('${p.uid}')" title="${isPending ? 'Chat unlocks once your request is accepted' : `Open your private chat with ${escapeHtml(p.displayName)}`}" ${isPending ? 'style="opacity: 0.75;"' : ''}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
+          </button>
+          <button class="btn btn-sm btn-ghost person-row-remove" onclick="window.HubbleNest.removeContactFromList('${p.uid}')" title="Remove from contacts" aria-label="Remove ${escapeHtml(p.displayName)} from contacts">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
         </div>
       </div>
     `;
-  }).join('');
+  }).join('') + `</div>`;
 }
 
 export function handlePeopleSearch(term) {
@@ -5801,6 +5851,9 @@ Object.assign(window.HubbleNest, {
   botChatClear,
   botChatRetry,
   botChatUseSuggested,
+  botChatPickFiles,
+  botChatFilesChosen,
+  botChatRemovePending,
   openBotProfile,
   botProfileRate,
   botProfileSubmitComment,
@@ -5920,6 +5973,11 @@ Object.assign(window.HubbleNest, {
   stageHomeAttachment: (file) => stageHomeFile(file, 100),
   removeHomeAttachment,
   clearAllHomeAttachments,
+  openGameComposerPicker,
+  filterGamePicker,
+  pickGameForPost,
+  removeGamePost,
+  playFeedGame,
   feedSetMode,
   feedToggleLike,
   feedToggleComments,

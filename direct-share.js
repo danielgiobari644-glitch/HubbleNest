@@ -432,6 +432,15 @@ function renderReceiverShare(share) {
 
   const files = share.files || [];
   const incoming = files.filter(freshFileKey).length;
+  // v32: files that actually just arrived get a real arrival moment — a
+  // toast plus the peer card pulsing into "receiving" state. freshFileKey is
+  // computed BEFORE markSeenFiles below, so this fires exactly once per
+  // genuinely new batch (metadata-only snapshots never re-trigger it).
+  if (incoming > 0) {
+    showToast(incoming === 1
+      ? `A file just arrived from ${share.ownerName || 'the sender'}.`
+      : `${incoming} new files just arrived from ${share.ownerName || 'the sender'}.`, 'success', 4200);
+  }
   body.innerHTML = `
     <div class="ds-peer-card ${incoming > 0 ? 'ds-peer-receiving' : ''}">
       <span class="ds-peer-rings" aria-hidden="true"></span>
@@ -471,15 +480,18 @@ function renderFileCards(share, senderView) {
     } else if (isVid) {
       preview = `<video src="${f.url}" controls preload="metadata" class="ds-file-video"></video>`;
     }
-    // Brand-new files (just arrived on this snapshot) slide in with a glow;
-    // older ones render without re-animating.
+    // Brand-new files (just arrived on this snapshot) arrive with the
+    // dedicated ds-arrive animation — glow sweep + slide — staggered per
+    // card so a multi-file batch cascades; older ones render without
+    // re-animating.
     const isNew = freshFileKey(f);
+    const arriveDelay = isNew ? ` style="animation-delay:${Math.min(idx * 80, 640)}ms"` : '';
     const name = escapeHtml(f.originalFilename || 'file');
     const downloadAction = isStoredAttachment(f)
       ? `<button type="button" class="btn btn-primary btn-sm ds-download-btn" onclick="window.HubbleNest.downloadStoredFile('${escapeHtml(f.blobId)}', '${name}')">Download</button>`
       : `<a class="btn btn-primary btn-sm ds-download-btn" href="${f.url}" target="_blank" rel="noopener noreferrer" download="${name}">Download</a>`;
     return `
-      <div class="ds-file-card ${isNew ? 'ds-file-card-in' : ''}">
+      <div class="ds-file-card ${isNew ? 'ds-file-card-in' : ''}"${arriveDelay}>
         ${preview}
         <div class="ds-file-info">
           <div class="ds-file-name" title="${name}">${name}</div>
