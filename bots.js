@@ -32,7 +32,7 @@ import { renderMarkdown } from './markdown.js';
 import { uploadToCloudinary } from './cloudinary.js';
 
 import {
-  sendBotChatMessage, safeAiErrorMessage, AiUserError, fetchUrlAsInlineData
+  sendBotChatMessage, safeAiErrorMessage, AiUserError, fetchUrlAsInlineData, generateBotImage
 } from './ai-client.js';
 
 /* ======================================================================
@@ -174,6 +174,15 @@ let lastFailedPayload = null;
    keeps a real, openable copy. Nothing simulated. */
 let chatPendingFiles = [];   // { file, kind, localPreview?, objectUrl? }
 const chatObjectUrls = new Set(); // blob URLs alive while the chat view is open
+let chatImageMode = false;   // v34 — image generation toggle
+
+/* v34 smoothness state — the transcript renders INCREMENTALLY: only new or
+   changed bubbles are touched, so nothing shakes, flickers or jumps. */
+const chatDomKeys = new Map();   // key → { node, sig }
+let chatMsgSeq = 0;
+let chatLastListSig = '';
+let chatLastRowCount = 0;
+let chatForceScroll = false;
 const BOT_ATT_MAX_FILES = 4;
 const BOT_ATT_MAX_FILE_BYTES = 8 * 1024 * 1024;   // per file
 const BOT_ATT_MAX_TOTAL_BYTES = 10 * 1024 * 1024; // per message (raw bytes)
@@ -1219,6 +1228,10 @@ export function openBotChat(botId, opts = {}) {
     lastFailedMessage = null;
     lastFailedPayload = null;
     chatPendingFiles = [];
+    chatImageMode = false;
+    const imBtn = el('bot-chat-image-mode');
+    if (imBtn) { imBtn.classList.remove('active'); imBtn.setAttribute('aria-pressed', 'false'); }
+    resetChatRenderer();
     renderChatPending();
 
     state_currentView('bot-chat');
@@ -1324,6 +1337,20 @@ function subscribeChatMessages() {
     (snap) => {
       const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       rows.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+      // v34 smoothness: adopt the in-memory optimistic messages' render keys
+      // when the persisted copies arrive with identical content — the swap
+      // then changes NOTHING visually (same node, same signature), instead
+      // of re-animating and reloading images at the moment of persistence.
+      const adoptable = new Map();
+      for (const m of chatMessages) {
+        if (m.id || !m._key) continue;
+        const sig = `${m.role}§${m.text || ''}§${(m.attachments || []).map(a => a.url || '').join('|')}`;
+        if (!adoptable.has(sig)) adoptable.set(sig, m._key);
+      }
+      for (const r of rows) {
+        const sig = `${r.role}§${r.text || ''}§${(r.attachments || []).map(a => a.url || '').join('|')}`;
+        if (adoptable.has(sig)) { r._key = adoptable.get(sig); adoptable.delete(sig); }
+      }
       chatMessages = rows;
       renderChatMessages();
     },
@@ -1335,9 +1362,40 @@ export function closeChatView() {
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
   chatBot = null; chatBotId = null; chatIsTest = false; chatMessages = []; chatSending = false;
   chatPendingFiles = [];
+  chatImageMode = false;
   lastFailedMessage = null;
   lastFailedPayload = null;
+  resetChatRenderer();
   revokeChatObjectUrls();
+}
+
+/** Reset the incremental transcript renderer for a fresh conversation. */
+function resetChatRenderer() {
+  chatDomKeys.clear();
+  chatMsgSeq = 0;
+  chatLastListSig = '';
+  chatLastRowCount = 0;
+  chatForceScroll = false;
+}
+
+/** v34 — image mode: the next message asks the bot to PAINT an image. */
+export function botChatToggleImageMode() {
+  chatImageMode = !chatImageMode;
+  const btn = el('bot-chat-image-mode');
+  if (btn) {
+    btn.classList.toggle('active', chatImageMode);
+    btn.setAttribute('aria-pressed', chatImageMode ? 'true' : 'false');
+  }
+  const input = el('bot-chat-input');
+  if (input) {
+    input.placeholder = chatImageMode
+      ? 'Describe the image you want — the bot will paint it…'
+      : 'Message this bot… attach files or images too (Enter to send, Shift+Enter for a new line)';
+    input.focus();
+  }
+  if (chatImageMode && chatPendingFiles.length) {
+    showToast('Image mode paints a NEW image — turn it off to send your attached files instead.', 'info', 5000);
+  }
 }
 
 export function botChatUseSuggested(text) {
@@ -1542,7 +1600,8 @@ function botAttachmentCard(att) {
   if (!url) return '';
 
   if (kind === 'image') {
-    return `<a class="bot-att bot-att-img-wrap" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img class="bot-att-img" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async" /></a>`;
+    const gen = att.generated ? '<span class="bot-att-genbadge">✨ AI image</span>' : '';
+    return `<a class="bot-att bot-att-img-wrap" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img class="bot-att-img" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async" />${gen}</a>`;
   }
   if (kind === 'video') {
     return `<div class="bot-att"><video class="bot-att-video" src="${escapeHtml(url)}" controls preload="metadata"></video></div>`;
@@ -1640,6 +1699,7 @@ export function botChatSend(retryText = null) {
   // reused as-is, files that never made it up are NOT silently dropped.
   if (retryText !== null) {
     if (!lastFailedPayload) return;
+    if (lastFailedPayload.imageRequest) { runBotImageTurn(lastFailedPayload.text); return; }
     runBotTurn(lastFailedPayload.text, lastFailedPayload.pendingFiles || [], lastFailedPayload.uploaded || null);
     return;
   }
@@ -1647,6 +1707,17 @@ export function botChatSend(retryText = null) {
   const input = el('bot-chat-input');
   const text = (input?.value || '').trim();
   const pending = chatPendingFiles.slice();
+
+  // v34 image mode — deterministic path: describe → the bot paints.
+  if (chatImageMode) {
+    if (pending.length) { showToast('Turn image mode off to send your attached files.', 'warning'); return; }
+    if (!text) { showToast('Describe the image you want the bot to paint.', 'warning'); return; }
+    if (text.length > 2000) { showToast('Image descriptions are limited to 2000 characters.', 'warning'); return; }
+    if (input) input.value = '';
+    runBotImageTurn(text);
+    return;
+  }
+
   if (!text && pending.length === 0) return;
   if (text.length > 2000) { showToast('Messages are limited to 2000 characters.', 'warning'); return; }
 
@@ -1662,6 +1733,7 @@ export function botChatSend(retryText = null) {
  */
 async function runBotTurn(text, pending, preUploaded = null) {
   chatSending = true;
+  chatForceScroll = true; // the member's own message must be visible
   const userMsg = {
     role: 'user', text, createdAt: new Date(), pending: true,
     attachments: pending.map(p => ({
@@ -1746,37 +1818,217 @@ async function runBotTurn(text, pending, preUploaded = null) {
   }
 }
 
-function renderChatMessages(typing = false) {
+/** base64 (from the image model) → a real File for the Cloudinary uploader. */
+function base64ToFile(b64, mime, name) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+/**
+ * v34 IMAGE TURN — the bot paints a real image: request → image model chain
+ * → Cloudinary upload → bubble + persisted history. Honest at every step:
+ * a refusal comes back as words, a failure as a clear friendly message,
+ * never a placeholder picture.
+ */
+async function runBotImageTurn(text) {
+  chatSending = true;
+  chatForceScroll = true;
+  const userMsg = { role: 'user', text, createdAt: new Date(), pending: true, imageRequest: true };
+  chatMessages.push(userMsg);
+  renderChatMessages(false);
+  chatForceScroll = true;
+  renderChatMessages(true, { paint: true });
+
+  try {
+    const history = await buildHistoryForAi();
+    const result = await generateBotImage(chatBot, history, text);
+    userMsg.pending = false;
+
+    let botMsg;
+    if (result.images && result.images.length) {
+      const uploaded = [];
+      for (const img of result.images) {
+        const ext = /jpe?g/i.test(img.mimeType || '') ? 'jpg' : /webp/i.test(img.mimeType || '') ? 'webp' : 'png';
+        const file = base64ToFile(img.data, img.mimeType || 'image/png', `bot-image-${Date.now()}.${ext}`);
+        const res = await uploadToCloudinary(file, null, 100);
+        uploaded.push({ ...res, kind: 'image', mime: img.mimeType || 'image/png', readable: true });
+      }
+      botMsg = {
+        role: 'bot', text: result.text || '', createdAt: new Date(),
+        attachments: attachmentMeta(uploaded).map(a => ({ ...a, generated: true }))
+      };
+    } else {
+      botMsg = { role: 'bot', text: result.text || 'I could not create that image — try describing it differently.', createdAt: new Date() };
+    }
+    chatMessages.push(botMsg);
+    lastFailedMessage = null;
+    lastFailedPayload = null;
+    chatForceScroll = true;
+    renderChatMessages(false);
+
+    if (!chatIsTest) {
+      // Persist both turns; generated images live on Cloudinary, so the
+      // history keeps a real copy and later turns replay it like any image.
+      try {
+        await setDoc(doc(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`), {
+          uid: auth.currentUser.uid, botId: chatBotId
+        }, { merge: true });
+        const col = collection(db, 'botChats', `${auth.currentUser.uid}_${chatBotId}`, 'messages');
+        await addDoc(col, { role: 'user', text, imageRequest: true, createdAt: serverTimestamp() });
+        await addDoc(col, { role: 'bot', text: botMsg.text, attachments: botMsg.attachments || [], createdAt: serverTimestamp() });
+      } catch (persistErr) {
+        console.warn('[HubbleNest] bot chat persistence failed (image still shown):', persistErr?.code || persistErr);
+      }
+    }
+  } catch (err) {
+    userMsg.pending = false;
+    const msg = safeAiErrorMessage(err);
+    chatMessages.push({ role: 'bot', text: msg, isError: true, createdAt: new Date() });
+    lastFailedMessage = text;
+    lastFailedPayload = { text, imageRequest: true };
+    renderChatMessages();
+  } finally {
+    chatSending = false;
+    renderChatMessages();
+  }
+}
+
+/* ======================================================================
+   v34 SMOOTH TRANSCRIPT — incremental keyed rendering.
+   The old renderer rebuilt innerHTML on every update, so every bubble's
+   entry animation replayed and every image reloaded on each snapshot —
+   members saw the chat shake and glitch. Now each bubble is a tracked
+   node with a content signature: unchanged bubbles are never touched,
+   animations play once per bubble, images load exactly once, and the
+   view only auto-scrolls when the member is already at the bottom.
+   ====================================================================== */
+
+function chatRowKey(m) {
+  if (m.id) return 'db:' + m.id;
+  if (!m._key) m._key = 'mem:' + (++chatMsgSeq);
+  return m._key;
+}
+
+function chatRowSig(m, isGreeting) {
+  const atts = (m.attachments || [])
+    .map(a => `${a.url || a.localPreview || ''}|${a.pendingUpload ? 'u' : 'd'}|${a.kind || ''}|${a.generated ? 'g' : ''}`)
+    .join('~');
+  return [isGreeting ? 'greet' : (m.role || ''), m.isError ? 'err' : '', m.imageRequest ? 'img' : '', m.text || '', atts].join('§');
+}
+
+function nearChatBottom(wrap) {
+  return wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 160;
+}
+
+function makeChatRowNode(m, isGreeting) {
+  const row = document.createElement('div');
+  if (isGreeting) {
+    row.className = 'bot-msg-row bot-msg-bot';
+    row.innerHTML = `<img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
+      <div class="bot-msg bot-msg-greet bot-msg-rich bot-msg-enter">${renderMarkdown(chatBot?.greetingMessage || '')}</div>`;
+    return row;
+  }
+  if (m.role === 'user') {
+    const chip = m.imageRequest ? '<div class="bot-imgreq-chip">🎨 Image request</div>' : '';
+    row.className = 'bot-msg-row bot-msg-user';
+    row.innerHTML = `<div class="bot-msg bot-msg-user-bubble bot-msg-enter">${chip}${botAttachmentsHtml(m)}${m.text ? `<div class="bot-msg-text">${escapeHtml(m.text)}</div>` : ''}</div>`;
+  } else {
+    // Bot answers are rendered as REAL typography — raw `**`/``` markers
+    // never reach the screen. Error bubbles stay plain app copy.
+    const body = m.isError ? escapeHtml(m.text) : renderMarkdown(m.text);
+    row.className = 'bot-msg-row bot-msg-bot';
+    row.innerHTML = `<img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
+      <div class="bot-msg bot-msg-rich bot-msg-enter ${m.isError ? 'bot-msg-error' : ''}">${body}</div>`;
+  }
+  // Images fade in once when loaded and keep the view pinned while the
+  // member is reading the latest messages — no jarring layout jumps.
+  const wrap = el('bot-chat-messages');
+  row.querySelectorAll('.bot-att-img').forEach(img => {
+    if (img.complete) { img.classList.add('bot-img-loaded'); return; }
+    img.addEventListener('load', () => {
+      img.classList.add('bot-img-loaded');
+      if (wrap && nearChatBottom(wrap)) wrap.scrollTop = wrap.scrollHeight;
+    }, { once: true });
+  });
+  return row;
+}
+
+function makeTypingRowNode(paint) {
+  const row = document.createElement('div');
+  row.className = 'bot-msg-row bot-msg-bot';
+  row.innerHTML = `<img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
+    <div class="bot-msg bot-msg-typing" aria-label="${paint ? 'The bot is painting an image' : 'The bot is typing'}"><span></span><span></span><span></span>${paint ? '<span class="bot-msg-typing-label">Painting your image…</span>' : ''}</div>`;
+  return row;
+}
+
+function makeEmptyRowNode() {
+  const row = document.createElement('div');
+  row.className = 'bot-chat-empty';
+  row.innerHTML = `Say hello — ${escapeHtml(chatBot?.name || 'this bot')} is listening. Attach images, PDFs or code files and it will read them too; tap the palette to make it paint.`;
+  return row;
+}
+
+function renderChatMessages(typing = false, opts = {}) {
   const wrap = el('bot-chat-messages');
   if (!wrap) return;
-  let html = '';
+  const paint = !!opts.paint;
+
+  // Desired rows, in order.
+  const rows = [];
   const greeting = chatBot?.greetingMessage;
-  if (chatMessages.length === 0 && greeting) {
-    html += `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
-      <div class="bot-msg bot-msg-greet bot-msg-rich">${renderMarkdown(greeting)}</div></div>`;
+  if (chatMessages.length === 0 && greeting && !typing) {
+    rows.push({ key: 'greet', sig: 'greet§' + (greeting || ''), make: () => makeChatRowNode({}, true) });
   }
-  html += chatMessages.map(m => {
-    if (m.role === 'user') {
-      return `<div class="bot-msg-row bot-msg-user"><div class="bot-msg bot-msg-user-bubble">${botAttachmentsHtml(m)}${m.text ? `<div class="bot-msg-text">${escapeHtml(m.text)}</div>` : ''}</div></div>`;
-    }
-    // v32/v33: bot answers are rendered as REAL typography (bold, italics,
-    // lists, code blocks) — the raw `**`/``` markers the AI emits never reach
-    // the screen. Error bubbles stay plain escaped text (app copy, not AI).
-    const body = m.isError ? escapeHtml(m.text) : renderMarkdown(m.text);
-    return `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
-      <div class="bot-msg bot-msg-rich ${m.isError ? 'bot-msg-error' : ''}">${body}</div></div>`;
-  }).join('');
+  for (const m of chatMessages) {
+    const key = chatRowKey(m);
+    rows.push({ key, sig: chatRowSig(m, false), make: () => makeChatRowNode(m, false) });
+  }
   if (typing) {
-    html += `<div class="bot-msg-row bot-msg-bot"><img class="bot-msg-avatar" src="${escapeHtml(botLogoUrl(chatBot))}" alt="" />
-      <div class="bot-msg bot-msg-typing" aria-label="The bot is typing"><span></span><span></span><span></span></div></div>`;
+    rows.push({ key: 'typing', sig: 'typing§' + (paint ? 'paint' : 'text'), make: () => makeTypingRowNode(paint) });
+  } else if (chatMessages.length === 0 && !greeting) {
+    rows.push({ key: 'empty', sig: 'empty', make: makeEmptyRowNode });
   }
-  if (chatMessages.length === 0 && !greeting && !typing) {
-    html = `<div class="bot-chat-empty">Say hello — ${escapeHtml(chatBot?.name || 'this bot')} is listening. Attach images, PDFs or code files and it will read them too.</div>`;
+
+  // Nothing actually changed → do NOTHING at all (this is what kills the
+  // repeated-snapshot flicker).
+  const listSig = rows.map(r => `${r.key}=${r.sig}`).join('##') + `|#${rows.length}`;
+  if (listSig === chatLastListSig && !chatForceScroll) return;
+  chatLastListSig = listSig;
+
+  // 1) Remove nodes whose row disappeared.
+  const wanted = new Set(rows.map(r => r.key));
+  for (const [key, rec] of Array.from(chatDomKeys)) {
+    if (!wanted.has(key)) { rec.node.remove(); chatDomKeys.delete(key); }
   }
-  wrap.innerHTML = html;
-  wrap.scrollTop = wrap.scrollHeight;
+  // 2) Create/replace only new or changed rows — kept bubbles are untouched.
+  for (const r of rows) {
+    const rec = chatDomKeys.get(r.key);
+    if (rec && rec.sig === r.sig) continue;
+    if (rec) rec.node.remove();
+    chatDomKeys.set(r.key, { node: r.make(), sig: r.sig });
+  }
+  // 3) Enforce order, touching only misplaced nodes (new rows append once).
+  for (let i = 0; i < rows.length; i++) {
+    const node = chatDomKeys.get(rows[i].key)?.node;
+    if (!node) continue;
+    if (wrap.children[i] !== node) wrap.insertBefore(node, wrap.children[i] || null);
+  }
+
+  // Scroll only when it is wanted: own messages always, new bot messages
+  // only while the member is already near the bottom.
+  const countChanged = rows.length !== chatLastRowCount;
+  chatLastRowCount = rows.length;
+  if (chatForceScroll || (countChanged && nearChatBottom(wrap))) {
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+  chatForceScroll = false;
+
   const retryBtn = document.getElementById('bot-chat-retry');
-  if (retryBtn) retryBtn.style.display = lastFailedMessage && !chatSending ? 'inline-flex' : 'none';
+  const wantRetry = lastFailedMessage && !chatSending;
+  const disp = wantRetry ? 'inline-flex' : 'none';
+  if (retryBtn && retryBtn.style.display !== disp) retryBtn.style.display = disp;
 }
 
 export function botChatRetry() {

@@ -640,6 +640,153 @@ export async function sendBotChatMessage(bot, history, message, opts = {}) {
 }
 
 /* ----------------------------------------------------------------------
+   Bot IMAGE GENERATION — bots can paint, for real.
+   Native Gemini image models answer with an image part (inlineData) inside
+   the same generateContent protocol; the last resort is theImagen predict
+   endpoint. The chain self-heals across models exactly like the text chain,
+   and every failure is classified into the same friendly, model-blind copy.
+   ---------------------------------------------------------------------- */
+
+const IMAGE_MODEL_CHAIN = [
+  'gemini-2.5-flash-image',
+  'gemini-2.0-flash-preview-image-generation',
+  'gemini-2.5-flash-image-preview'
+];
+const IMAGEN_MODEL = 'imagen-3.0-generate-002';
+
+function imageSystemPrompt(bot) {
+  const name = String(bot?.name || 'this bot');
+  const persona = String(bot?.description || bot?.systemPrompt || '').replace(/\s+/g, ' ').trim().slice(0, 800);
+  return [
+    `You are ${name}, an AI bot on HubbleNest, and you can now GENERATE IMAGES.`,
+    persona ? `Stay in character: ${persona}.` : '',
+    'Generate exactly ONE image that matches the member\'s latest request, in a style that fits your persona and their words.',
+    'If the request is unsafe to depict, do not generate it and briefly explain why in words.',
+    'Keep any text reply to at most one short sentence — the image is the answer.'
+  ].filter(Boolean).join(' ');
+}
+
+/**
+ * One image-generation turn for a bot.
+ * @param {object} bot      the bot document (persona feeds the image style)
+ * @param {Array}  history  text-only context entries [{role, text, attNotes?}]
+ * @param {string} prompt   what to paint
+ * @returns {Promise<{ images: Array<{mimeType: string, data: string}>, text: string }>}
+ */
+export async function generateBotImage(bot, history, prompt) {
+  const text = String(prompt || '').trim();
+  if (!text) throw new AiUserError('Describe the image you want first.');
+  if (text.length > MAX_INPUT_CHARS) throw new AiUserError(`Image descriptions are limited to ${MAX_INPUT_CHARS} characters — yours is ${text.length}.`);
+  guardRequest();
+
+  const cfg = await getAiRuntime();
+  if (!cfg.apiKey) {
+    throw new AiUserError('HubbleNest AI is not switched on yet. The project admin can enable it once in Profile & Settings → AI configuration — after that every bot comes alive.');
+  }
+  const apiKey = cfg.apiKey;
+
+  const contents = [];
+  for (const h of (history || []).slice(-10)) {
+    if (!h) continue;
+    const t = [h.text, h.attNotes].filter(Boolean).join(' ').trim();
+    if (t) contents.push({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: t.slice(0, 800) }] });
+  }
+  contents.push({ role: 'user', parts: [{ text }] });
+
+  const sys = imageSystemPrompt(bot);
+  let lastClassified = null;
+
+  for (const model of IMAGE_MODEL_CHAIN) {
+    // Two shapes per model: with persona instruction first, minimal when the
+    // model rejects the optional field (same self-heal as the text chain).
+    for (let shape = 0; shape < 2; shape++) {
+      const body = {
+        contents,
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.8 }
+      };
+      if (shape === 0) body.systemInstruction = { parts: [{ text: sys }] };
+
+      const res = await rawModelRequest(model, apiKey, body);
+      if (res.ok) {
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* treated as empty below */ }
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const images = parts
+          .filter(p => p.inlineData && /^image\//i.test(String(p.inlineData.mimeType || '')))
+          .map(p => ({ mimeType: p.inlineData.mimeType, data: p.inlineData.data }));
+        const reply = parts.map(p => p.text || '').join('').trim();
+        if (images.length) {
+          bumpDailyCount();
+          lastAiSuccess = { at: Date.now(), model, ms: null };
+          lastAiFailure = null;
+          return { images, text: reply, model };
+        }
+        const block = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason;
+        if (block && !/STOP|MAX_TOKENS/i.test(String(block))) {
+          throw new AiUserError('The image request was declined by the safety filters — try describing it differently.');
+        }
+        if (reply) return { images: [], text: reply }; // the model answered in words only
+        lastClassified = { kind: 'empty', status: 200, model, message: 'no image in response' };
+        break; // next model
+      }
+
+      const { apiMessage, reason } = await parseErrorResponse(res);
+      const cls = classifyModelFailure(res.status, apiMessage, reason);
+      lastClassified = { ...cls, status: res.status, model };
+      if (cls.kind === 'bad-request-retryable' && shape === 0) continue; // retry same model, minimal shape
+      const KEY_WIDE = (cls.kind === 'key-invalid' || cls.kind === 'auth-rejected' || cls.kind === 'key-blocked');
+      if (KEY_WIDE) {
+        const err = new AiUserError(cls.message);
+        err.kind = cls.kind;
+        throw err; // the key is the problem — no model will help
+      }
+      console.warn(`[HubbleNest] image model "${model}" unavailable (${res.status} ${cls.kind}) — trying the next one.`);
+      break; // next model in the image chain
+    }
+  }
+
+  // Last resort: theImagen predict endpoint (different protocol, same key).
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        instances: [{ prompt: text }],
+        parameters: { sampleCount: 1, personGeneration: 'allow_adult' }
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const pred = (data?.predictions || [])[0];
+      if (pred?.bytesBase64Encoded) {
+        bumpDailyCount();
+        lastAiSuccess = { at: Date.now(), model: IMAGEN_MODEL, ms: null };
+        lastAiFailure = null;
+        return { images: [{ mimeType: pred?.mimeType || 'image/png', data: pred.bytesBase64Encoded }], text: '', model: IMAGEN_MODEL };
+      }
+    } else {
+      const { apiMessage, reason } = await parseErrorResponse(res);
+      const cls = classifyModelFailure(res.status, apiMessage, reason);
+      lastClassified = { ...cls, status: res.status, model: IMAGEN_MODEL };
+      if (cls.kind === 'quota' || cls.kind === 'overloaded') {
+        throw new AiUserError('The image service is at capacity right now — give it a minute and try again.');
+      }
+    }
+  } catch (e) {
+    if (e instanceof AiUserError) throw e;
+    /* fall through to the honest final message */
+  }
+
+  lastAiFailure = {
+    at: Date.now(), kind: lastClassified?.kind || 'image-failed',
+    status: lastClassified?.status || 0, model: 'image-chain',
+    message: lastClassified?.message || 'no image model answered'
+  };
+  throw new AiUserError('The image service could not create that image right now. Please try again in a little while.');
+}
+
+/* ----------------------------------------------------------------------
    HubbleNest Helper — the Get Help assistant that knows the app.
    ---------------------------------------------------------------------- */
 

@@ -139,56 +139,105 @@ function retryLast() {
   respond();
 }
 
-function bubbleHtml(m) {
-  if (m.role === 'user') {
-    return `<div class="hnh-row hnh-row-user"><div class="hnh-bubble hnh-bubble-user">${escapeHtml(m.text)}</div></div>`;
-  }
-  const retry = m.isError && pendingRetry ? `<button type="button" class="hnh-retry" data-hnh-retry="1">Try again</button>` : '';
+/* v34: the helper transcript renders INCREMENTALLY — each bubble is a tracked
+   node with a content signature. Unchanged bubbles are never touched, entry
+   animations play once, and the view only scrolls when it should. This kills
+   the shake that a full innerHTML rebuild caused on every update. */
+
+function hnhSig(m) {
+  return `${m.role}|${m.isError ? 'e' : ''}|${m.text || ''}|${(m.isError && pendingRetry) ? 'r' : ''}`;
+}
+
+function hnhWelcomeNode(signedOut) {
+  const div = document.createElement('div');
+  div.className = 'hnh-welcome';
+  div.innerHTML = signedOut
+    ? `<div class="hnh-welcome-icon" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
+      </div>
+      <b>Hi, I'm the HubbleNest Helper</b>
+      <p>Sign in to HubbleNest and ask me anything — joining Spaces, friend requests, the Arcade, Bots, Direct Share, troubleshooting and more.</p>`
+    : `<div class="hnh-welcome-icon" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
+      </div>
+      <b>Hi, I'm the HubbleNest Helper</b>
+      <p>I know every corner of this app — Spaces, friend requests, the Arcade, Bots, Direct Share, notifications and more. What can I explain or fix for you?</p>`;
+  return div;
+}
+
+function hnhTypingNode() {
+  const div = document.createElement('div');
+  div.className = 'hnh-row hnh-row-bot';
+  div.innerHTML = `<span class="hnh-bot-avatar" aria-hidden="true">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/></svg>
+    </span><div class="hnh-bubble hnh-bubble-bot hnh-typing" aria-label="The helper is typing"><span></span><span></span><span></span></div>`;
+  return div;
+}
+
+function hnhBubbleNode(m) {
+  const div = document.createElement('div');
   // v32: real typography for helper answers (bold/italics/lists/code) —
   // error bubbles stay plain app copy.
+  const retry = m.isError && pendingRetry ? `<button type="button" class="hnh-retry" data-hnh-retry="1">Try again</button>` : '';
   const body = m.isError ? escapeHtml(m.text) : renderMarkdown(m.text);
-  return `<div class="hnh-row hnh-row-bot">
-      <span class="hnh-bot-avatar" aria-hidden="true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
-      </span>
-      <div class="hnh-bubble hnh-bubble-bot md-markdown ${m.isError ? 'hnh-bubble-error' : ''}">${body}${retry}</div>
-    </div>`;
+  div.innerHTML = m.role === 'user'
+    ? `<div class="hnh-row hnh-row-user"><div class="hnh-bubble hnh-bubble-user hnh-enter">${escapeHtml(m.text)}</div></div>`
+    : `<div class="hnh-row hnh-row-bot">
+        <span class="hnh-bot-avatar" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
+        </span>
+        <div class="hnh-bubble hnh-bubble-bot md-markdown hnh-enter ${m.isError ? 'hnh-bubble-error' : ''}">${body}${retry}</div>
+      </div>`;
+  div.querySelectorAll('[data-hnh-retry]').forEach(b => b.addEventListener('click', retryLast));
+  return div.firstElementChild;
 }
 
 function renderThread(container, opts = {}, typing = false) {
   if (!container) return;
   const signedOut = opts.embedded && auth?.currentUser == null;
-  let html = '';
 
-  if (signedOut) {
-    html = `<div class="hnh-welcome">
-      <div class="hnh-welcome-icon" aria-hidden="true">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
-      </div>
-      <b>Hi, I'm the HubbleNest Helper</b>
-      <p>Sign in to HubbleNest and ask me anything — joining Spaces, friend requests, the Arcade, Bots, Direct Share, troubleshooting and more.</p>
-    </div>`;
-  } else if (thread.length === 0) {
-    html = `<div class="hnh-welcome">
-      <div class="hnh-welcome-icon" aria-hidden="true">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/><path d="M9 13.5v2M15 13.5v2"/></svg>
-      </div>
-      <b>Hi, I'm the HubbleNest Helper</b>
-      <p>I know every corner of this app — Spaces, friend requests, the Arcade, Bots, Direct Share, notifications and more. What can I explain or fix for you?</p>
-    </div>`;
-  } else {
-    html = thread.map(bubbleHtml).join('');
+  // Desired rows, in order.
+  const rows = [];
+  if (signedOut) rows.push({ key: 'welcome-out', sig: 'out', make: () => hnhWelcomeNode(true) });
+  else if (thread.length === 0) rows.push({ key: 'welcome', sig: 'in', make: () => hnhWelcomeNode(false) });
+  else thread.forEach((m, i) => rows.push({ key: 'm' + i, sig: hnhSig(m), make: () => hnhBubbleNode(thread[i]) }));
+  if (typing) rows.push({ key: 'typing', sig: 't', make: hnhTypingNode });
+
+  const listSig = rows.map(r => `${r.key}=${r.sig}`).join('##') + `|#${rows.length}`;
+  const st = container._hnhState || (container._hnhState = { keys: new Map(), sig: '', count: -1 });
+  if (listSig === st.sig) return;
+  st.sig = listSig;
+
+  const keys = st.keys;
+  // 1) drop removed
+  const wanted = new Set(rows.map(r => r.key));
+  for (const [key, rec] of Array.from(keys)) {
+    if (!wanted.has(key)) { rec.node.remove(); keys.delete(key); }
+  }
+  // 2) create/replace only new or changed rows
+  for (const r of rows) {
+    const rec = keys.get(r.key);
+    if (rec && rec.sig === r.sig) continue;
+    if (rec) rec.node.remove();
+    keys.set(r.key, { node: r.make(), sig: r.sig });
+  }
+  // 3) enforce order, touching only misplaced nodes
+  for (let i = 0; i < rows.length; i++) {
+    const node = keys.get(rows[i].key)?.node;
+    if (!node) continue;
+    if (container.children[i] !== node) container.insertBefore(node, container.children[i] || null);
   }
 
-  if (typing) {
-    html += `<div class="hnh-row hnh-row-bot"><span class="hnh-bot-avatar" aria-hidden="true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="5"/><path d="M12 8V5"/><circle cx="12" cy="3.5" r="1.4"/></svg>
-      </span><div class="hnh-bubble hnh-bubble-bot hnh-typing" aria-label="The helper is typing"><span></span><span></span><span></span></div></div>`;
+  // Scroll: always chase the member's own message; otherwise only while
+  // already near the bottom.
+  const lastIsUser = rows.length && /^m\d+$/.test(rows[rows.length - 1].key)
+    ? thread[Number(rows[rows.length - 1].key.slice(1))]?.role === 'user'
+    : false;
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 160;
+  if (rows.length !== st.count || lastIsUser) {
+    if (nearBottom || lastIsUser) container.scrollTop = container.scrollHeight;
   }
-
-  container.innerHTML = html;
-  container.scrollTop = container.scrollHeight;
-  container.querySelectorAll('[data-hnh-retry]').forEach(b => b.addEventListener('click', retryLast));
+  st.count = rows.length;
 
   // starters only make sense on an empty thread
   const starters = container.parentElement?.querySelector('.hnh-starters');

@@ -426,6 +426,39 @@ sign-in view if the session expired — so returning members never see the
 portfolio again (they can still reach it anytime via the account menu →
 "Explore Landing Page").
 
+## v34 — Bots paint images, and the chat finally stops shaking
+
+**Bots can now GENERATE images.** The bot chat composer has a second
+button next to the paperclip — a palette. Tap it and the composer switches
+to image mode (it glows, and the placeholder asks you to describe the
+image): write what you want painted, send, and the bot creates a real
+image and answers with it. Under the hood the request runs down a
+dedicated image-model chain (native Gemini image models via
+`responseModalities: ["TEXT","IMAGE"]`, with theImagen predict endpoint as
+the final fallback) and self-heals across models exactly like the text
+chain. The finished image is uploaded to Cloudinary, stamped with an
+honest "✨ AI image" badge, shown in the bubble, and persisted with the
+conversation — so it stays in the chat history and later turns still see
+it ("make the sky in that image darker" keeps working). Safety declines
+come back as plain words, never as a fake placeholder picture, and every
+failure uses the same friendly, model-blind copy as the rest of the AI.
+
+**The chat no longer shakes or glitches.** Until v34 every update — a
+snapshot from Firestore, the typing indicator toggling, a message
+sending — rebuilt the ENTIRE transcript's innerHTML, which replayed every
+bubble's entry animation and re-loaded every image at once: members saw
+the whole conversation flicker, shake and jump on every message. The bot
+chat now renders incrementally: each bubble is a tracked node with a
+content signature, so unchanged bubbles are never touched (repeated
+identical snapshots do literally nothing), the entry animation plays once
+per bubble, images load exactly once and fade in when ready, and the view
+auto-scrolls only when the member is already reading the latest messages
+— never yanking them away from something they scrolled back to read. When
+the persisted copies of just-sent messages arrive from Firestore, they
+adopt the optimistic bubbles' render keys, so the moment of saving is
+visually invisible. The Get Help assistant got the same incremental
+renderer, and a `prefers-reduced-motion` opt-out is respected.
+
 ## v33 — Bots read files and images, markdown asterisks impossible
 
 **Attach anything to a bot conversation.** The bot chat composer has a

@@ -10366,7 +10366,8 @@ h1, h2, h3, h4 {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  animation: botMsgIn 200ms ease both;
+  /* v34: the entry animation moved to .bot-msg-enter — it must play once per
+     bubble, never replay when the transcript re-renders (that was the shake). */
 }
 @keyframes botMsgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .bot-msg-user-bubble {
@@ -10539,6 +10540,69 @@ h1, h2, h3, h4 {
 body.light-theme .bot-att-img { border-color: rgba(21, 94, 255, 0.25); }
 body.light-theme .bot-att-file { border-color: var(--border-subtle); background: rgba(255, 255, 255, 0.65); }
 body.light-theme .bot-att-upbadge { background: rgba(2, 6, 18, 0.72); }
+
+/* ---- v34: image mode + smooth transcript ---- */
+/* Image-mode toggle (palette) — glows while active, mirroring the send button. */
+.bot-chat-image-mode.active {
+  background: linear-gradient(135deg, #7028FF, #087CFF);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(112, 40, 255, 0.4);
+}
+.bot-chat-image-mode.active:hover { color: #fff; border-color: rgba(255, 255, 255, 0.24); }
+
+/* Entry animation plays ONCE per bubble — never on the whole transcript. */
+.bot-msg.bot-msg-enter { animation: botMsgIn 200ms ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .bot-msg.bot-msg-enter { animation: none; }
+  .bot-chat-pend { animation: none; }
+}
+
+/* Typing/painting indicator label. */
+.bot-msg-typing-label { font-size: 0.78rem; color: var(--text-muted); margin-left: 6px; font-weight: 600; }
+
+/* "Image request" chip inside the member's bubble. */
+.bot-imgreq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  margin: 0 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* Attachments fade in once when loaded (no pop-in jump). */
+.bot-att-img {
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.06);
+  transition: opacity 240ms ease;
+}
+.bot-att-img.bot-img-loaded { opacity: 1; }
+.bot-att-img.bot-att-loading { opacity: 0.55; }
+
+/* Generated images carry an honest badge. */
+.bot-att-genbadge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(112, 40, 255, 0.92), rgba(8, 124, 255, 0.92));
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 14px rgba(112, 40, 255, 0.35);
+}
+body.light-theme .bot-att-img { background: rgba(21, 94, 255, 0.06); }
 
 /* ==========================================================================
    BOT PUBLIC PROFILE
@@ -10750,8 +10814,10 @@ body.light-theme .bot-att-upbadge { background: rgba(2, 6, 18, 0.72); }
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  animation: botMsgIn 200ms ease both;
+  /* v34: entry animation moved to .hnh-enter — plays once per bubble only. */
 }
+.hnh-bubble.hnh-enter { animation: botMsgIn 200ms ease both; }
+@media (prefers-reduced-motion: reduce) { .hnh-bubble.hnh-enter { animation: none; } }
 .hnh-bubble-user {
   background: linear-gradient(135deg, #155EFF, #7028FF);
   color: #fff;
