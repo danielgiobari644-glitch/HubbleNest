@@ -426,6 +426,95 @@ sign-in view if the session expired — so returning members never see the
 portfolio again (they can still reach it anytime via the account menu →
 "Explore Landing Page").
 
+## v36 — The AI survives Google's model retirements on its own
+
+**What happened:** Google's July 2026 retirement wiped out the ENTIRE
+Gemini 2.x generation overnight — the live console showed the only model
+still answering (`gemini-flash-latest`) dying with 503 "overloaded" while
+`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` and
+`gemini-2.0-flash-lite` all died with 404, taking bots, Get Help and AI
+game creation down with them.
+
+**The fix — a chain that can no longer go blind.** The static chain now
+leads with the models that actually exist in November 2026 (confirmed by
+real API documentation searches): `gemini-3.6-flash` (GA Jul 22, 2026),
+`gemini-flash-latest` (Google's always-newest-flash alias),
+`gemini-3.5-flash`, `gemini-3.5-flash-lite` — the exact successor Google's
+own 404 message recommended — and `gemini-flash-lite-latest`. Around it,
+four self-healing layers make the NEXT retirement a hiccup instead of an
+outage:
+
+1. **503s retry the same model.** Overload means the model EXISTS and
+   Google is busy — the old chain marched straight past it into retired
+   404s while the one live model could have recovered. Now every model
+   gets up to two same-model retries with backoff before the chain moves
+   on.
+2. **Google's 404 hints are obeyed.** Retirement errors literally say
+   "use models/X instead" — that hint is parsed and X is spliced into the
+   chain on the spot, so the successor is tried the very moment Google
+   names it.
+3. **Live discovery as the last resort.** If the whole chain dies, the
+   client calls the ListModels endpoint with the same key — the REAL
+   probe — and tries the top chat-capable Gemini models it reports,
+   ranked (flash over lite, aliases boosted, embeddings/TTS/video models
+   excluded).
+4. **It remembers.** The last model that answered is sticky and leads the
+   next call (a working model is never re-discovered through 404s), and
+   models that 404'd recently are skipped for 15 minutes — a retired
+   configured model stops costing a dead round-trip on every message.
+   `thinkingConfig` is also stripped pre-flight for any 3.x recipient, so
+   an admin whose saved model is retired can no longer poison working
+   models with a guaranteed-400 body.
+
+**The image chain got the same treatment.** The old fallback was the
+Imagen `:predict` endpoint — which Google SHUT DOWN entirely in the same
+removal — so it is gone for good. The chain now leads with
+`gemini-3-pro-image` (Nano Banana Pro) and `gemini-3.1-flash-image`
+(Nano Banana 2), obeys the same 404 hints, and falls back to live image
+model discovery. Admin defaults and the AI configuration panel now point
+at `gemini-flash-latest`, the alias that can never be retired.
+
+The whole mechanism is sandbox-tested in Node with a scripted mock fetch
+(19 checks): the splice, the same-model overload recovery, the discovery
+ranking, the sticky second call, the thinkingConfig strip and the image
+chain all verified against real-fetch semantics (single-read bodies).
+
+## v35 — No size limit on game creation, and updates apply without a restart
+
+**The 600 KB game-creation limit is gone for good.** Until now a project's
+source files lived inside a Firestore document, and Firestore caps any
+single document at 1 MiB — that was the real reason uploads were capped at
+600 KB total / 300 KB per file. Project files now live where every other
+file in HubbleNest already lives: each one is uploaded to **Cloudinary as a
+raw file** at save time (with live "Uploading project files (3/25)…" progress
+and an all-or-nothing guarantee — a failed upload saves nothing and leaves
+the previous version of the game untouched). Firestore stores only the
+paths + URLs (`filesRef`), so the old total cap simply has no reason to
+exist anymore: up to 300 text/code files, 12 MB each, any language. Only
+the typed HTML/CSS/JS fields keep a technical ceiling (900 KB — Firestore's
+document limit; bigger projects belong in the Files tab, which has none).
+Playing and editing fetch the raw bytes once, reassemble the same file map
+the sandbox always consumed, and relative paths between files still work.
+Games saved on older builds migrate themselves to Cloudinary the first
+time their author opens them — and if an upload ever fails mid-migration
+the inline copy is kept, so nothing can ever lose its files. The player
+says so honestly if the CDN hiccups instead of showing a blank frame.
+
+**Updates from GitHub now apply without any restart.** Two real gaps made
+deploys feel like they needed one: GitHub Pages caches `service-worker.js`
+itself for 10 minutes, so every update check kept fetching the OLD worker
+out of the browser's HTTP cache; and the page-side auto-reload armed itself
+only once per tab lifetime, silently ignoring a second deploy. Fixed on
+both ends: the worker now registers with `updateViaCache: 'none'` (the SW
+script is always network-revalidated), the deploy check runs every 10
+minutes plus on tab focus and network return, freshly installed workers
+are force-activated from the page side (`SKIP_WAITING` — a waiting worker
+can never sit between a deploy and the running app), and each worker
+broadcasts its build version to every open page: a page that sees a new
+version reloads itself exactly once — no loops, and the second, third,
+fifth deploy in a long-lived tab applies just as automatically as the
+first. Push notifications and offline caching behave exactly as before.
+
 ## v34 — Bots paint images, and the chat finally stops shaking
 
 **Bots can now GENERATE images.** The bot chat composer has a second

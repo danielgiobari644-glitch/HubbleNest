@@ -32,9 +32,16 @@
  * - Google Fonts:               stale-while-revalidate
  * - Cloudinary images:          stale-while-revalidate + 220-entry FIFO cap
  * - Firestore/Auth/FCM APIs:    NEVER intercepted (SDK handles persistence)
+ *
+ * v35 NO-RESTART UPDATES: the page registers with updateViaCache:'none' (the
+ * SW script itself is always network-revalidated — GitHub Pages' 10-minute
+ * HTTP cache of service-worker.js was the reason deploys seemed to need a
+ * restart), the SW reports CACHE_NAME to every page (activate broadcast +
+ * GET_VERSION reply), and a page that sees a NEW version reloads itself
+ * exactly once. Deploys therefore apply to every open tab automatically.
  */
 
-const CACHE_NAME = 'hubblenest-v34';
+const CACHE_NAME = 'hubblenest-v36';
 const IMAGE_CACHE = 'hubblenest-images-v21';
 const IMAGE_CACHE_CAP = 220;
 const PRECACHE_ASSETS = [
@@ -115,7 +122,9 @@ self.addEventListener('install', (event) => {
   })());
 });
 
-// Activate: Clean up old caches
+// Activate: Clean up old caches, claim every page, and tell each one which
+// build now controls it — the page reloads itself exactly once when the
+// version changes (v35 NO-RESTART UPDATES).
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -124,8 +133,25 @@ self.addEventListener('activate', (event) => {
           .filter((key) => key !== CACHE_NAME && key !== IMAGE_CACHE)
           .map((key) => caches.delete(key))
       );
-    }).then(() => self.clients.claim())
+    }).then(async () => {
+      await self.clients.claim();
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      clientList.forEach((client) => {
+        try { client.postMessage({ type: 'sw-version', version: CACHE_NAME }); } catch (e) { /* best effort */ }
+      });
+    })
   );
+});
+
+// v35 NO-RESTART UPDATES — the page side can force-activate a freshly
+// installed worker (belt and braces alongside install-time skipWaiting), and
+// any client can ask which build is running (covers pages that opened while
+// the activation broadcast had already happened).
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'GET_VERSION') {
+    try { event.source && event.source.postMessage({ type: 'sw-version', version: CACHE_NAME }); } catch (e) { /* gone */ }
+  }
 });
 
 /* ---------------------------------- helpers ---------------------------------- */

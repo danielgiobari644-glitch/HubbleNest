@@ -508,41 +508,80 @@ let directAnimatedIds = null;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const reg = await navigator.serviceWorker.register('./service-worker.js');
+      // v35 NO-RESTART UPDATES — updateViaCache:'none' is the keystone: it
+      // makes the browser ALWAYS revalidate service-worker.js over the
+      // network instead of serving it from the HTTP cache. GitHub Pages
+      // caches the worker script for 10 minutes (max-age=600), and the
+      // browser used to fetch the OLD worker out of that cache on every
+      // update check — which is exactly why deploys appeared to need a
+      // manual restart before they were applied. Now the very next check
+      // (tab focus, network return, or the 10-minute timer) sees the new
+      // build, activates it, and the page reloads itself exactly once.
+      const reg = await navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' });
 
       // DEPLOY WATCH: the browser only re-downloads the service worker script
       // on page navigation — a tab or installed PWA that stays open for hours
-      // would otherwise NEVER discover a new deploy, which is exactly why
-      // members had to refresh manually to see new HubbleNest changes. A
-      // periodic check (plus a check whenever the tab becomes visible again
-      // or the network returns) finds every new build on its own; the new
-      // service worker skipWaiting+claims, and the controllerchange handler
-      // below reloads the page once so the new code goes live instantly.
+      // would otherwise NEVER discover a new deploy on its own. A periodic
+      // check (10 min — GitHub Pages' own cache window), a check whenever the
+      // tab becomes visible again, and one when the network returns, find
+      // every new build without any user action.
       const checkForDeploy = () => { try { reg.update().catch(() => {}); } catch (e) { /* noop */ } };
-      setInterval(checkForDeploy, 20 * 60 * 1000);          // every 20 minutes
+      setInterval(checkForDeploy, 10 * 60 * 1000);          // every 10 minutes
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') checkForDeploy();
       });
       window.addEventListener('online', checkForDeploy);
       checkForDeploy();
+
+      // Belt and braces: when an update is found, force-activate it from the
+      // page side the moment it is installed — a waiting worker can never sit
+      // between a deploy and the running app — and wake any worker that was
+      // left waiting by an earlier session.
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            nw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        reg.waiting.postMessage('SKIP_WAITING');
+      }
+      // Ask the current worker which build it is (covers pages that open while
+      // an activation broadcast has already happened).
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage('GET_VERSION');
+      }
     } catch (e) { /* registration failed — the app still works from the network */ }
   });
 
-  // DEPLOY AUTO-REFRESH (reworked): when a newly-installed service worker
-  // takes over an ALREADY-controlled page (skipWaiting + clients.claim fire
-  // controllerchange), reload ONCE per page lifetime so every module,
-  // stylesheet and the HTML shell come from the new cache atomically.
-  // The previous sessionStorage state machine mis-armed across page loads and
-  // swallowed the reload on the second deploy of the same tab session — this
-  // in-memory guard can never skip a deploy and can never loop: a reload
-  // starts a fresh page whose controller is already the new worker, so no
-  // further controllerchange fires until the NEXT deploy.
-  let swReloadArmed = !!navigator.serviceWorker.controller; // first-ever claim on a brand-new tab needs no reload
-  let swReloadDone = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!swReloadArmed || swReloadDone) return;
-    swReloadDone = true;
-    window.location.reload();
+  // DEPLOY AUTO-APPLY (v35): the worker reports its build version to every
+  // page (broadcast on activate, or on request). When a page sees a NEW
+  // version it reloads exactly once — a fresh page booting under the new
+  // worker sees the same version and never loops, and a SECOND deploy during
+  // the same tab session applies just as automatically (the old
+  // controllerchange reload armed itself only once per tab lifetime and
+  // silently ignored the second deploy).
+  const SW_VERSION_KEY = 'hn-sw-version';
+  let swSeenVersion = null;
+  try { swSeenVersion = sessionStorage.getItem(SW_VERSION_KEY); } catch (e) { /* private mode */ }
+  const applySwVersion = (v) => {
+    if (!v) return;
+    if (!swSeenVersion) {
+      swSeenVersion = v;
+      try { sessionStorage.setItem(SW_VERSION_KEY, v); } catch (e) { /* private mode */ }
+      return; // first sighting in this tab — nothing to apply
+    }
+    if (v === swSeenVersion) return;
+    swSeenVersion = v;
+    try { sessionStorage.setItem(SW_VERSION_KEY, v); } catch (e) { /* private mode */ }
+    window.location.reload(); // exactly once per new deploy
+  };
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const msg = event?.data;
+    if (msg && msg.type === 'sw-version') applySwVersion(msg.version);
   });
 
   // v31 VISIBLE NOTIFICATIONS — push while this tab is FOCUSED: the service
@@ -6246,7 +6285,7 @@ export async function initAiSettingsUI() {
     const fail = getLastAiFailure();
     if (snap.exists() && snap.data().apiKey) {
       const d = snap.data();
-      const model = String(d.model || 'gemini-2.5-flash').trim();
+      const model = String(d.model || 'gemini-flash-latest').trim();
       const key = String(d.apiKey || '');
       const fp = `${key.slice(0, 7)}…${key.slice(-4)}`;
       const health = fail
@@ -6322,7 +6361,7 @@ export async function saveAiConfigFromSettings() {
   const modelInput = document.getElementById('ai-model-input');
   const btn = document.getElementById('ai-save-btn');
   const apiKey = (keyInput?.value || '').trim();
-  const model = (modelInput?.value || '').trim() || 'gemini-2.5-flash';
+  const model = (modelInput?.value || '').trim() || 'gemini-flash-latest';
   if (!apiKey) {
     showToast('Paste your Google AI Studio key first — create one free at aistudio.google.com/app/apikey.', 'warning', 6000);
     return;

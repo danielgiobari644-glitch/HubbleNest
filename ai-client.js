@@ -14,7 +14,19 @@
  *    actionable, UI-safe message — an invalid/expired key can never again
  *    masquerade as a generic "connection problem".
  *  - Invalid or retired model names self-heal: the client transparently
- *    retries down a known-good model chain.
+ *    retries down a known-good model chain. v36 hardening after Google's
+ *    July 2026 retirement wiped out the whole Gemini 2.x family (every
+ *    request died with 404 while the ONLY live model sat overloaded):
+ *      1. the chain leads with the CURRENT generation (3.6/3.5 flash);
+ *      2. a 503 now retries the SAME model before moving on;
+ *      3. Google's 404 "use models/X instead" hint is parsed and X is
+ *         spliced into the chain on the spot;
+ *      4. when the whole chain dies the client ASKS GOOGLE what actually
+ *         exists (ListModels with the same key) and tries the top live
+ *         chat models — the app can never go blind to another generation
+ *         retirement;
+ *      5. the last model that answered is remembered and tried first on
+ *         the next call, and models that 404'd recently are skipped.
  *  - KEY FORMATS (2026 Google security upgrade): Google AI Studio now
  *    exclusively issues "AQ." Auth keys (Google's permanent replacement for
  *    classic "AIza" Traffic keys, which Google rejects outright since its
@@ -41,13 +53,13 @@ const CONFIG_TTL_MS = 5 * 60 * 1000;
 export async function getAiRuntime() {
   const now = Date.now();
   if (cachedConfig && now - cachedAt < CONFIG_TTL_MS) return cachedConfig;
-  let cfg = { apiKey: '', model: 'gemini-2.5-flash' };
+  let cfg = { apiKey: '', model: 'gemini-flash-latest' };
   try {
     const snap = await getDoc(doc(db, 'config', 'ai'));
     if (snap.exists() && snap.data().apiKey) {
       cfg = {
         apiKey: String(snap.data().apiKey || '').trim(),
-        model: String(snap.data().model || 'gemini-2.5-flash').trim() || 'gemini-2.5-flash'
+        model: String(snap.data().model || 'gemini-flash-latest').trim() || 'gemini-flash-latest'
       };
     }
   } catch (e) {
@@ -185,7 +197,7 @@ function classifyModelFailure(status, apiMessage, reason) {
   if (looksLikeModelMissing(status, msg)) {
     return {
       kind: 'model-missing',
-      message: 'The configured AI model name does not exist. The admin should set the model to "gemini-2.5-flash" (or "gemini-flash-latest") in Profile & Settings → AI configuration.'
+      message: 'The configured AI model name no longer exists — Google retires old model generations. HubbleNest retries the current models automatically, so no action is needed; if the admin wants to pin one, "gemini-flash-latest" is the future-proof choice (Profile & Settings → AI configuration).'
     };
   }
   if (status === 429 || why === 'RESOURCE_EXHAUSTED' || /quota/i.test(msg)) {
@@ -230,18 +242,149 @@ export function resetAiHealth() { lastAiFailure = null; lastAiSuccess = null; }
    Low-level model call (implementation detail — never surfaced raw in UI).
    ---------------------------------------------------------------------- */
 
+/* v36 model chain — the CURRENT generation first. Google's July 2026
+   retirement 404'd the entire Gemini 2.x family overnight (the live console
+   showed gemini-flash-latest 503 while 2.5/2.0 all died with 404), so the
+   chain leads with the models that actually exist in November 2026:
+     gemini-3.6-flash        newest GA flash (Jul 22, 2026)
+     gemini-flash-latest     Google's alias → always the newest stable flash
+     gemini-3.5-flash        GA May 19, 2026 (Google redirects it to 3.6)
+     gemini-3.5-flash-lite   cheaper tier, explicitly recommended by Google's
+                             own 404 message during the retirement
+     gemini-flash-lite-latest alias → newest stable flash-lite
+   Beyond the static chain, three self-healing layers keep the AI alive
+   across FUTURE retirements: 404 hints are parsed and spliced in
+   (suggestedReplacementModel), ListModels discovery asks Google what really
+   exists (discoverLiveModels), and the last model that answered is sticky. */
 const MODEL_FALLBACK_CHAIN = [
-  'gemini-2.5-flash',
+  'gemini-3.6-flash',
   'gemini-flash-latest',
-  'gemini-2.5-flash-lite',
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite'
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest'
 ];
 
 /** Transient service-side failures worth retrying on ANOTHER model. */
 const RETRYABLE_KINDS = new Set(['overloaded', 'quota', 'server']);
 
 function sleepMs(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+/* -----------------------------------------------------------------------
+   Self-healing memory — shared by the text and image chains.
+   ----------------------------------------------------------------------- */
+
+// Models that 404'd recently (retired generations). Skipped at chain-build
+// time so a retired configured model never wastes a round-trip again.
+const knownBadModels = new Map();   // name → timestamp
+const KNOWN_BAD_TTL_MS = 15 * 60 * 1000;
+function markModelBad(model) {
+  knownBadModels.set(String(model || ''), Date.now());
+}
+function isModelKnownBad(model) {
+  const t = knownBadModels.get(String(model || ''));
+  if (!t) return false;
+  if (Date.now() - t > KNOWN_BAD_TTL_MS) { knownBadModels.delete(model); return false; }
+  return true;
+}
+
+// The last model that actually answered — tried first on the next call so
+// a working model is never re-discovered through 404s every single turn.
+let lastGoodModel = null;
+let lastGoodAt = 0;
+const LAST_GOOD_TTL_MS = 30 * 60 * 1000;
+function noteLastGood(model) {
+  lastGoodModel = String(model || '');
+  lastGoodAt = Date.now();
+}
+function stickyLastGood() {
+  if (!lastGoodModel) return null;
+  if (Date.now() - lastGoodAt > LAST_GOOD_TTL_MS) { lastGoodModel = null; return null; }
+  return lastGoodModel;
+}
+
+// Google's retirement errors spell out the successor:
+//   "…is no longer available. Please update your code to use
+//    models/gemini-3.5-flash-lite for the latest features…"
+// Parse that hint out of the 404 body and splice the successor into the
+// chain right where the dead model sat — the chain heals itself from
+// Google's own error text.
+function suggestedReplacementModel(apiMessage) {
+  const m = /use\s+models\/([a-z0-9][a-z0-9._-]+)/i.exec(String(apiMessage || ''));
+  return m ? m[1] : null;
+}
+
+// Live-model discovery — the REAL probe. ListModels is called with the same
+// key and returns exactly what this key can use right now. Chat-capable
+// Gemini models only (no embeddings/TTS/video/image helpers), ranked:
+// aliases and flash tier first, pro last. Cached for 10 minutes.
+const DISCOVERY_TTL_MS = 10 * 60 * 1000;
+let discoveredTextChain = null;
+let discoveredTextAt = 0;
+function rankChatModel(name) {
+  let s = 0;
+  if (/-latest$/i.test(name)) s += 3;
+  if (/flash/i.test(name) && !/lite/i.test(name)) s += 6;
+  else if (/flash-lite/i.test(name)) s += 4;
+  else if (/pro/i.test(name)) s += 1;
+  const ver = /gemini-(\d+)(?:\.(\d+))?/i.exec(name);
+  if (ver) s += parseInt(ver[1], 10) + (ver[2] ? parseInt(ver[2], 10) / 10 : 0);
+  return s;
+}
+async function discoverLiveModels(apiKey) {
+  if (discoveredTextChain && Date.now() - discoveredTextAt < DISCOVERY_TTL_MS) return discoveredTextChain;
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': apiKey }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const names = (Array.isArray(data?.models) ? data.models : [])
+      .filter(m => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+      .map(m => String(m?.name || '').replace(/^models\//, ''))
+      .filter(name => /^gemini/i.test(name))
+      .filter(name => !/embedding|aqa|tts|veo|imagen|image|native-audio|live|thinking|robotics|computer-use/i.test(name))
+      .sort((a, b) => rankChatModel(b) - rankChatModel(a))
+      .slice(0, 4);
+    if (names.length) {
+      discoveredTextChain = names;
+      discoveredTextAt = Date.now();
+      console.info('[HubbleNest] AI discovery: live chat models right now →', names.join(', '));
+      return names;
+    }
+  } catch (e) { /* offline / blocked — the static chain and its error copy stay in charge */ }
+  return null;
+}
+
+// Image models: the July 2026 shutdown also killed Imagen entirely (the old
+// imagen-3.0 :predict fallback is gone for good). The native image models
+// are generateContent models whose names carry "image" — discovered the
+// same way, ranked pro-image first.
+let discoveredImageChain = null;
+let discoveredImageAt = 0;
+async function discoverLiveImageModels(apiKey) {
+  if (discoveredImageChain && Date.now() - discoveredImageAt < DISCOVERY_TTL_MS) return discoveredImageChain;
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': apiKey }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const names = (Array.isArray(data?.models) ? data.models : [])
+      .filter(m => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+      .map(m => String(m?.name || '').replace(/^models\//, ''))
+      .filter(name => /^gemini/i.test(name) && /image/i.test(name))
+      .filter(name => !/edit|thinking/i.test(name))
+      .sort((a, b) => rankChatModel(b) - rankChatModel(a))
+      .slice(0, 3);
+    if (names.length) {
+      discoveredImageChain = names;
+      discoveredImageAt = Date.now();
+      console.info('[HubbleNest] AI discovery: live image models right now →', names.join(', '));
+      return names;
+    }
+  } catch (e) { /* offline — the static image chain stays in charge */ }
+  return null;
+}
 
 /**
  * Only Gemini 2.5 models accept the thinkingConfig { thinkingBudget } switch.
@@ -311,6 +454,23 @@ function stripOptionalRequestFields(body) {
  * Throws AiUserError with the EXACT actionable reason on failure.
  * @returns {{ text: string, model: string }}
  */
+/**
+ * One HTTP attempt against one model with one body shape. thinkingConfig is
+ * a Gemini 2.5-only switch — the 3.x families reject the WHOLE request with
+ * 400 INVALID_ARGUMENT — so it is stripped pre-flight for any model that
+ * cannot accept it (an admin who saved a retired 2.5 model must not poison
+ * every 3.x attempt with a guaranteed-400 body).
+ */
+async function tryModelOnce(model, apiKey, body, shape) {
+  let attemptBody = shape === 0 ? body : stripOptionalRequestFields(body);
+  if (attemptBody?.generationConfig?.thinkingConfig !== undefined && !isThinkingAwareModel(model)) {
+    const gc = { ...attemptBody.generationConfig };
+    delete gc.thinkingConfig;
+    attemptBody = { ...attemptBody, generationConfig: gc };
+  }
+  return rawModelRequest(model, apiKey, attemptBody);
+}
+
 export async function callGenerateContent(cfg, body, opts = {}) {
   const apiKey = String(cfg?.apiKey || '').trim();
   if (!apiKey) {
@@ -320,23 +480,54 @@ export async function callGenerateContent(cfg, body, opts = {}) {
     throw new AiUserError(`The saved AI key is not a valid Google AI Studio key. Google now issues "AQ." Auth keys (they start with "AQ."); classic keys started with "AIza" and are being retired. ${AI_KEY_FIX}`);
   }
 
-  const configuredModel = String(cfg?.model || '').trim() || 'gemini-2.5-flash';
+  const configuredModel = String(cfg?.model || '').trim() || 'gemini-flash-latest';
   const allowFallback = opts.allowModelFallback !== false;
-  const chain = [configuredModel];
+
+  // v36 chain build: the configured model leads — UNLESS it 404'd recently
+  // (a retired generation; skipping it saves a dead round-trip on every
+  // call) — then the sticky last-good model, then the current static chain.
+  const chain = [];
+  const pushModel = (m) => {
+    if (!m || chain.includes(m) || chain.length >= 8) return;
+    chain.push(m);
+  };
+  if (!isModelKnownBad(configuredModel)) pushModel(configuredModel);
   if (allowFallback) {
+    const sticky = stickyLastGood();
+    if (sticky) pushModel(sticky);
     for (const m of MODEL_FALLBACK_CHAIN) {
-      if (m !== configuredModel && chain.length < 5) chain.push(m);
+      if (!isModelKnownBad(m)) pushModel(m); // retired entries skip their dead round-trip
     }
   }
+  if (chain.length === 0) pushModel(configuredModel); // known-bad + fallback off
 
   let lastClassified = null;
+  const OVERLOAD_RETRIES = 2; // extra SAME-model attempts on 503 before moving on
+
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i];
     // Two shapes per model: full body first, minimal body when the model
     // rejects an optional field (400 "Unknown name" / "Invalid JSON payload").
     for (let shape = 0; shape < 2; shape++) {
-      const attemptBody = shape === 0 ? body : stripOptionalRequestFields(body);
-      const res = await rawModelRequest(model, apiKey, attemptBody);
+      let overloadTries = 0;
+      let res = await tryModelOnce(model, apiKey, body, shape);
+      // Parse the error body EXACTLY ONCE per response — a real fetch body
+      // can only be consumed once, and the classification below needs it.
+      let parsedErr = null;
+      while (true) {
+        if (res.ok) { parsedErr = null; break; }
+        parsedErr = await parseErrorResponse(res);
+        const cls = classifyModelFailure(res.status, parsedErr.apiMessage, parsedErr.reason);
+        if (cls.kind === 'overloaded' && overloadTries < OVERLOAD_RETRIES) {
+          overloadTries++;
+          const wait = 900 * overloadTries;
+          console.warn(`[HubbleNest] AI "${model}" is overloaded (503) — retrying the SAME model in ${wait}ms (attempt ${overloadTries}/${OVERLOAD_RETRIES}).`);
+          await sleepMs(wait);
+          res = await tryModelOnce(model, apiKey, body, shape);
+          continue;
+        }
+        break;
+      }
 
       if (res.ok) {
         let data = null;
@@ -349,27 +540,41 @@ export async function callGenerateContent(cfg, body, opts = {}) {
             ? 'The AI declined to answer that one. Try rephrasing your message.'
             : 'The AI returned an empty answer — try sending that again.');
         }
+        noteLastGood(model);
         lastAiSuccess = { at: Date.now(), model, ms: opts._startedAt ? Math.round(performance.now() - opts._startedAt) : null };
         lastAiFailure = null;
         return { text: text.trim(), model };
       }
 
-      const { apiMessage, reason } = await parseErrorResponse(res);
+      const apiMessage = parsedErr.apiMessage;
+      const reason = parsedErr.reason;
       const cls = classifyModelFailure(res.status, apiMessage, reason);
       lastClassified = { ...cls, status: res.status, model };
 
-      // v30: transient pressure (overloaded / quota / 500) no longer kills the
-      // request — after a short backoff the NEXT model in the chain is tried
-      // for real, so one busy Google model can never take the AI down.
-      if (RETRYABLE_KINDS.has(cls.kind) && i < chain.length - 1) {
-        const wait = Math.min(2200, 650 * (i + 1));
-        console.warn(`[HubbleNest] AI "${model}" is ${cls.kind} (${res.status}) — retrying with "${chain[i + 1]}" in ${wait}ms.`);
-        await sleepMs(wait);
+      // v30: transient pressure (quota / 500) no longer kills the request —
+      // after a short backoff the NEXT model in the chain is tried for real,
+      // so one busy Google model can never take the AI down. (503 overload
+      // already got its same-model retries above.)
+      if (RETRYABLE_KINDS.has(cls.kind)) {
+        if (i < chain.length - 1) {
+          const wait = Math.min(2200, 650 * (i + 1));
+          console.warn(`[HubbleNest] AI "${model}" is ${cls.kind} (${res.status}) — retrying with "${chain[i + 1]}" in ${wait}ms.`);
+          await sleepMs(wait);
+        }
         break; // next model in chain
       }
-      // A model name that does not exist → transparently try the next one.
-      if (cls.kind === 'model-missing' && i < chain.length - 1) {
-        console.warn(`[HubbleNest] AI model "${model}" not available (${res.status}) — retrying with "${chain[i + 1]}".`);
+      // A model name that does not exist → remember it as dead, splice in
+      // Google's own suggested successor (when the 404 names one) and try
+      // the next entry transparently.
+      if (cls.kind === 'model-missing') {
+        markModelBad(model);
+        const hint = suggestedReplacementModel(apiMessage);
+        if (hint && !chain.includes(hint)) {
+          chain.splice(i + 1, 0, hint);
+          console.warn(`[HubbleNest] AI model "${model}" retired (404) — Google itself suggests "${hint}"; spliced into the chain.`);
+        } else {
+          console.warn(`[HubbleNest] AI model "${model}" not available (${res.status}) — retrying with "${chain[i + 1] || 'the discovery fallback'}".`);
+        }
         break; // next model in chain
       }
       // An optional field the model does not know → retry same model, minimal shape.
@@ -398,6 +603,47 @@ export async function callGenerateContent(cfg, body, opts = {}) {
     }
   }
 
+  // v36 LAST RESORT — the whole static chain is dead (generation-wide
+  // retirement): ASK GOOGLE what actually exists right now (ListModels with
+  // the same key) and try the top live chat models. This is what turns the
+  // next Google retirement from an outage into a hiccup.
+  if (allowFallback) {
+    const discovered = (await discoverLiveModels(apiKey) || []).filter(m => !isModelKnownBad(m) && !chain.includes(m));
+    for (const model of discovered) {
+      for (let shape = 0; shape < 2; shape++) {
+        const res = await tryModelOnce(model, apiKey, body, shape);
+        if (res.ok) {
+          let data = null;
+          try { data = await res.json(); } catch (e) { /* treated as empty below */ }
+          const text = extractAnswerText(data);
+          if (text.trim()) {
+            noteLastGood(model);
+            lastAiSuccess = { at: Date.now(), model, ms: opts._startedAt ? Math.round(performance.now() - opts._startedAt) : null };
+            lastAiFailure = null;
+            console.info(`[HubbleNest] AI recovered via discovered live model "${model}".`);
+            return { text: text.trim(), model };
+          }
+          break; // empty answer from this model — try the next discovery
+        }
+        const { apiMessage, reason } = await parseErrorResponse(res);
+        const cls = classifyModelFailure(res.status, apiMessage, reason);
+        lastClassified = { ...cls, status: res.status, model };
+        if (cls.kind === 'model-missing') { markModelBad(model); break; } // next discovered model
+        if (cls.kind === 'bad-request-retryable' && shape === 0) continue; // minimal shape
+        const KEY_WIDE = (cls.kind === 'key-invalid' || cls.kind === 'auth-rejected' || cls.kind === 'key-blocked');
+        if (KEY_WIDE) {
+          lastAiFailure = { at: Date.now(), kind: cls.kind, status: res.status, model, message: apiMessage.slice(0, 240) || cls.kind };
+          const err = new AiUserError(cls.message);
+          err.kind = cls.kind;
+          err.httpStatus = res.status;
+          err.apiMessage = apiMessage;
+          throw err;
+        }
+        break; // other failure — next discovered model
+      }
+    }
+  }
+
   // The whole chain failed with transient pressure — report it honestly.
   if (lastClassified && RETRYABLE_KINDS.has(lastClassified.kind)) {
     lastAiFailure = { at: Date.now(), kind: lastClassified.kind, status: lastClassified.status, model: lastClassified.model, message: `all ${chain.length} fallback models ${lastClassified.kind}` };
@@ -409,7 +655,7 @@ export async function callGenerateContent(cfg, body, opts = {}) {
 
   // The whole chain was model-missing.
   lastAiFailure = { at: Date.now(), kind: 'model-missing', status: 404, model: configuredModel, message: 'no model in the fallback chain answered' };
-  const err = new AiUserError(lastClassified?.message || 'The configured AI model name does not exist. The admin should set the model to "gemini-2.5-flash" in Profile & Settings → AI configuration.');
+  const err = new AiUserError(lastClassified?.message || 'The configured AI model name no longer exists — HubbleNest could not find any live replacement either. The admin can set "gemini-flash-latest" in Profile & Settings → AI configuration.');
   err.kind = 'model-missing';
   throw err;
 }
@@ -423,7 +669,7 @@ export async function callGenerateContent(cfg, body, opts = {}) {
 export async function probeAiConfig(override = {}) {
   let cfg;
   if (override && override.apiKey) {
-    cfg = { apiKey: String(override.apiKey).trim(), model: String(override.model || 'gemini-2.5-flash').trim() };
+    cfg = { apiKey: String(override.apiKey).trim(), model: String(override.model || 'gemini-flash-latest').trim() };
   } else {
     cfg = await getAiRuntime();
   }
@@ -642,17 +888,42 @@ export async function sendBotChatMessage(bot, history, message, opts = {}) {
 /* ----------------------------------------------------------------------
    Bot IMAGE GENERATION — bots can paint, for real.
    Native Gemini image models answer with an image part (inlineData) inside
-   the same generateContent protocol; the last resort is theImagen predict
-   endpoint. The chain self-heals across models exactly like the text chain,
-   and every failure is classified into the same friendly, model-blind copy.
+   the same generateContent protocol. The chain self-heals across models
+   exactly like the text chain (404 hints splice Google's own suggested
+   successor; live discovery replaces the retired Imagen endpoint as the
+   last resort), and every failure is classified into the same friendly,
+   model-blind copy.
    ---------------------------------------------------------------------- */
 
 const IMAGE_MODEL_CHAIN = [
-  'gemini-2.5-flash-image',
-  'gemini-2.0-flash-preview-image-generation',
-  'gemini-2.5-flash-image-preview'
+  'gemini-3-pro-image',      // Nano Banana Pro — the current flagship (confirmed live)
+  'gemini-3.1-flash-image'   // Nano Banana 2 tier — the cheaper, faster option
 ];
-const IMAGEN_MODEL = 'imagen-3.0-generate-002';
+/* The July 2026 shutdown removed Imagen from the Gemini API entirely — the
+   old imagen-3.0 :predict fallback is GONE and must never be called again.
+   The safety net below the static chain is now LIVE DISCOVERY: ask Google
+   which image models exist right now and try them. */
+
+/** Pull the image/text/safety parts out of one image-model response. */
+function extractImageReply(data) {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const images = parts
+    .filter(p => p.inlineData && /^image\//i.test(String(p.inlineData.mimeType || '')))
+    .map(p => ({ mimeType: p.inlineData.mimeType, data: p.inlineData.data }));
+  const reply = parts.map(p => p.text || '').join('').trim();
+  const block = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason;
+  return { images, reply, block };
+}
+
+/** One image-model request body (persona instruction only on shape 0). */
+function imageRequestBody(sys, contents, shape) {
+  const body = {
+    contents,
+    generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.8 }
+  };
+  if (shape === 0) body.systemInstruction = { parts: [{ text: sys }] };
+  return body;
+}
 
 function imageSystemPrompt(bot) {
   const name = String(bot?.name || 'this bot');
@@ -696,32 +967,26 @@ export async function generateBotImage(bot, history, prompt) {
   const sys = imageSystemPrompt(bot);
   let lastClassified = null;
 
-  for (const model of IMAGE_MODEL_CHAIN) {
+  // v36: index-based chain so Google's own 404 hints can be spliced in
+  // mid-walk, exactly like the text chain.
+  const chain = [...IMAGE_MODEL_CHAIN];
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
     // Two shapes per model: with persona instruction first, minimal when the
     // model rejects the optional field (same self-heal as the text chain).
     for (let shape = 0; shape < 2; shape++) {
-      const body = {
-        contents,
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.8 }
-      };
-      if (shape === 0) body.systemInstruction = { parts: [{ text: sys }] };
-
-      const res = await rawModelRequest(model, apiKey, body);
+      const res = await rawModelRequest(model, apiKey, imageRequestBody(sys, contents, shape));
       if (res.ok) {
         let data = null;
         try { data = await res.json(); } catch (e) { /* treated as empty below */ }
-        const parts = data?.candidates?.[0]?.content?.parts || [];
-        const images = parts
-          .filter(p => p.inlineData && /^image\//i.test(String(p.inlineData.mimeType || '')))
-          .map(p => ({ mimeType: p.inlineData.mimeType, data: p.inlineData.data }));
-        const reply = parts.map(p => p.text || '').join('').trim();
+        const { images, reply, block } = extractImageReply(data);
         if (images.length) {
           bumpDailyCount();
+          noteLastGood(model);
           lastAiSuccess = { at: Date.now(), model, ms: null };
           lastAiFailure = null;
           return { images, text: reply, model };
         }
-        const block = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason;
         if (block && !/STOP|MAX_TOKENS/i.test(String(block))) {
           throw new AiUserError('The image request was declined by the safety filters — try describing it differently.');
         }
@@ -740,42 +1005,61 @@ export async function generateBotImage(bot, history, prompt) {
         err.kind = cls.kind;
         throw err; // the key is the problem — no model will help
       }
+      if (cls.kind === 'model-missing') {
+        markModelBad(model);
+        const hint = suggestedReplacementModel(apiMessage);
+        if (hint && !chain.includes(hint)) {
+          chain.splice(i + 1, 0, hint);
+          console.warn(`[HubbleNest] image model "${model}" retired (404) — Google suggests "${hint}"; spliced into the chain.`);
+        } else {
+          console.warn(`[HubbleNest] image model "${model}" unavailable (${res.status}) — trying the next one.`);
+        }
+        break; // next model in the image chain
+      }
       console.warn(`[HubbleNest] image model "${model}" unavailable (${res.status} ${cls.kind}) — trying the next one.`);
       break; // next model in the image chain
     }
   }
 
-  // Last resort: theImagen predict endpoint (different protocol, same key).
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        instances: [{ prompt: text }],
-        parameters: { sampleCount: 1, personGeneration: 'allow_adult' }
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const pred = (data?.predictions || [])[0];
-      if (pred?.bytesBase64Encoded) {
-        bumpDailyCount();
-        lastAiSuccess = { at: Date.now(), model: IMAGEN_MODEL, ms: null };
-        lastAiFailure = null;
-        return { images: [{ mimeType: pred?.mimeType || 'image/png', data: pred.bytesBase64Encoded }], text: '', model: IMAGEN_MODEL };
+  // v36 last resort — Imagen is SHUT DOWN (its :predict endpoint died in the
+  // July 2026 removal), so instead of a dead endpoint the client ASKS Google
+  // which image models are alive right now and tries the top ones.
+  const discoveredImages = (await discoverLiveImageModels(apiKey) || [])
+    .filter(m => !isModelKnownBad(m) && !chain.includes(m));
+  for (const model of discoveredImages) {
+    for (let shape = 0; shape < 2; shape++) {
+      const res = await rawModelRequest(model, apiKey, imageRequestBody(sys, contents, shape));
+      if (res.ok) {
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* treated as empty below */ }
+        const { images, reply, block } = extractImageReply(data);
+        if (images.length) {
+          bumpDailyCount();
+          noteLastGood(model);
+          lastAiSuccess = { at: Date.now(), model, ms: null };
+          lastAiFailure = null;
+          console.info(`[HubbleNest] image generation recovered via discovered live model "${model}".`);
+          return { images, text: reply, model };
+        }
+        if (block && !/STOP|MAX_TOKENS/i.test(String(block))) {
+          throw new AiUserError('The image request was declined by the safety filters — try describing it differently.');
+        }
+        if (reply) return { images: [], text: reply };
+        break; // empty answer — next discovered model
       }
-    } else {
       const { apiMessage, reason } = await parseErrorResponse(res);
       const cls = classifyModelFailure(res.status, apiMessage, reason);
-      lastClassified = { ...cls, status: res.status, model: IMAGEN_MODEL };
-      if (cls.kind === 'quota' || cls.kind === 'overloaded') {
-        throw new AiUserError('The image service is at capacity right now — give it a minute and try again.');
+      lastClassified = { ...cls, status: res.status, model };
+      if (cls.kind === 'model-missing') { markModelBad(model); break; }
+      if (cls.kind === 'bad-request-retryable' && shape === 0) continue;
+      const KEY_WIDE = (cls.kind === 'key-invalid' || cls.kind === 'auth-rejected' || cls.kind === 'key-blocked');
+      if (KEY_WIDE) {
+        const err = new AiUserError(cls.message);
+        err.kind = cls.kind;
+        throw err;
       }
+      break; // other failure — next discovered model
     }
-  } catch (e) {
-    if (e instanceof AiUserError) throw e;
-    /* fall through to the honest final message */
   }
 
   lastAiFailure = {

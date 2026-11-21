@@ -88,16 +88,20 @@ let editorLogoUrl = null;    // v31: the game's LOGO/icon — a SEPARATE image, 
 let editorLogoBusy = false;  // logo upload in flight — save waits for it
 let editorLinkUrl = '';      // https URL when editing/restoring a LINK game
 
-/* Multi-file game project (path → text content). Any code language: the
-   files are stored verbatim in Firestore and served to the sandbox as
-   data: URLs, so HTML/CSS/JS entry files can reference their siblings
-   (scripts, stylesheets, JSON data, assets) with ordinary relative paths. */
+/* Multi-file game project (path → text content). Any code language. v35: the
+   files live on CLOUDINARY — one raw file per project file, uploaded at save
+   time; Firestore only stores their paths + URLs (filesRef). That is why the
+   old 600 KB total cap is GONE: a Firestore document never touches the source,
+   so project size is bounded only by Cloudinary itself (12 MB per file here).
+   Files are served to the sandbox as data: URLs after the player fetches
+   their raw bytes, so HTML/CSS/JS entry files still reference siblings with
+   ordinary relative paths. */
 let editorFiles = {};      // { 'src/main.js': '...content...' }
 let editorEntry = null;    // 'index.html' or first .html file
 
-const MAX_TOTAL_BYTES = 600 * 1024; // well under Firestore's 1 MiB doc cap
-const MAX_FILE_COUNT = 150;
-const MAX_SINGLE_FILE_BYTES = 300 * 1024;
+const MAX_FILE_COUNT = 300;                       // real UI limit — file COUNT, not size
+const MAX_SINGLE_FILE_BYTES = 12 * 1024 * 1024;   // Cloudinary raw ceiling, honest and generous
+const MAX_INLINE_BYTES = 900 * 1024;              // typed HTML/CSS/JS stay in the code doc (Firestore 1 MiB doc limit)
 const DRAFT_KEY = 'hn-arcade-draft';
 
 /* ========================================================================
@@ -880,15 +884,6 @@ function currentEntryCandidate() {
   return paths.find(p => /(^|\/)index\.html?$/i.test(p)) || paths.find(p => /\.html?$/i.test(p)) || null;
 }
 
-function gameProjectBytes() {
-  let total = 0;
-  for (const content of Object.values(editorFiles)) total += content.length;
-  total += (document.getElementById('game-code-html')?.value || '').length;
-  total += (document.getElementById('game-code-css')?.value || '').length;
-  total += (document.getElementById('game-code-js')?.value || '').length;
-  return total;
-}
-
 export async function handleGameFilesUpload(fileList) {
   const incoming = Array.from(fileList || []);
   if (incoming.length === 0) return;
@@ -899,7 +894,7 @@ export async function handleGameFilesUpload(fileList) {
     if (!path) { skipped++; continue; }
     if (file.size > MAX_SINGLE_FILE_BYTES) {
       skipped++;
-      showToast(`${path} is ${(file.size / 1024).toFixed(0)} KB — single files are capped at ${MAX_SINGLE_FILE_BYTES / 1024} KB.`, 'warning');
+      showToast(`${path} is ${(file.size / (1024 * 1024)).toFixed(1)} MB — single files top out at 12 MB (Cloudinary's raw ceiling).`, 'warning');
       continue;
     }
     try {
@@ -919,7 +914,7 @@ export async function handleGameFilesUpload(fileList) {
 
   const count = Object.keys(editorFiles).length;
   if (count > MAX_FILE_COUNT) {
-    showToast(`Game projects hold up to ${MAX_FILE_COUNT} files.`, 'warning');
+    showToast(`Game projects hold up to ${MAX_FILE_COUNT} files — trim generated assets or split the project.`, 'warning');
   }
   editorEntry = currentEntryCandidate();
 
@@ -1175,9 +1170,12 @@ export async function saveCurrentGame() {
 
   if (!title) { showToast('Give your game a title first.', 'warning'); return; }
   const entry = currentEntryCandidate();
-  const total = gameProjectBytes();
-  if (total > MAX_TOTAL_BYTES) {
-    showToast(`Your game is ${(total / 1024).toFixed(0)} KB — the limit is ${MAX_TOTAL_BYTES / 1024} KB. Trim it down.`, 'error');
+  // v35: project FILES have NO size limit (they live on Cloudinary). Only the
+  // typed HTML/CSS/JS stays in a Firestore document, so that — and only that —
+  // has a technical ceiling (Firestore's 1 MiB document limit).
+  const inlineBytes = html.length + css.length + js.length;
+  if (inlineBytes > MAX_INLINE_BYTES) {
+    showToast(`The typed HTML/CSS/JS is ${(inlineBytes / 1024).toFixed(0)} KB — inline code tops out at ${(MAX_INLINE_BYTES / 1024).toFixed(0)} KB (a Firestore document limit). Bigger projects belong in the Files tab — those have no size limit.`, 'error', 6500);
     return;
   }
   const hasClassic = html.trim() || js.trim();
@@ -1210,15 +1208,15 @@ export async function saveCurrentGame() {
 
   const existing = editingGameId ? gamesCache.find(g => g.id === editingGameId) : null;
 
-  // v30 split: the game's SOURCE CODE goes to games/{id}/code/main, so the
-  // realtime browse list only carries display fields (the old layout kept
-  // every game's full source inside its main doc, and Firestore re-delivered
-  // the entire collection's code on every play/like — the cause of slow
-  // Arcade loads). entryPath/fileCount/languages stay on the main doc: the
-  // list and detail views need them for routing and honest runnability.
+  // v30 split, v35 storage: the game's typed HTML/CSS/JS goes to games/{id}/code/main;
+  // project FILES live on Cloudinary and only their path+URL refs (filesRef)
+  // are stored here, so source size no longer hits any Firestore ceiling.
+  // entryPath/fileCount/languages stay on the main doc: the list and detail
+  // views need them for routing and honest runnability.
   const codePayload = {
     html, css, js,
-    files: hasFiles ? editorFiles : null
+    files: null,
+    filesRef: hasFiles ? filesRef : null
   };
   const payload = {
     title: title.slice(0, 80),
@@ -1255,6 +1253,31 @@ export async function saveCurrentGame() {
 
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Publishing…'; }
   if (statusEl) { statusEl.textContent = 'Saving to Firestore…'; }
+
+  // v35: upload every project file to Cloudinary (raw) BEFORE touching
+  // Firestore — nothing is saved half-published, and a failed upload leaves
+  // the previous version of the game completely untouched.
+  let filesRef = null;
+  if (hasFiles) {
+    if (statusEl) statusEl.textContent = 'Uploading project files…';
+    filesRef = [];
+    const entries = Object.entries(editorFiles);
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        const [path, content] = entries[i];
+        if (statusEl) statusEl.textContent = `Uploading project files (${i + 1}/${entries.length})…`;
+        const file = new File([content], path.replace(/[^a-zA-Z0-9._-]/g, '_'), { type: 'text/plain' });
+        const res = await uploadToCloudinary(file, null, 12);
+        filesRef.push({ path, url: res.url, bytes: content.length });
+      }
+    } catch (upErr) {
+      console.error('Game file upload failed:', upErr);
+      if (statusEl) statusEl.textContent = '';
+      showToast(`A project file failed to upload (${upErr?.message || 'network error'}). Nothing was saved — try again.`, 'error', 7000);
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = existing ? 'Save changes' : 'Publish to Arcade'; }
+      return;
+    }
+  }
 
   try {
     let gameId = editingGameId;
@@ -1368,6 +1391,22 @@ async function ensureFullGame(gameId) {
     }
   }
   if (!full) return cached; // unreachable doc — play exactly what we have
+  // v35: project files live on Cloudinary (filesRef) — fetch their raw bytes
+  // once per session and reassemble the text map every downstream consumer
+  // already reads (player sandbox, editor tabs, file tree).
+  if (!full.files && Array.isArray(full.filesRef) && full.filesRef.length) {
+    try {
+      const pairs = await Promise.all(full.filesRef.map(async (ref) => {
+        const res = await fetch(ref.url, { cache: 'default' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} for ${ref.path}`);
+        return [ref.path, await res.text()];
+      }));
+      full.files = Object.fromEntries(pairs);
+    } catch (err) {
+      console.warn('[HubbleNest] Project files fetch failed:', err?.message || err);
+      full._filesUnavailable = true;
+    }
+  }
   fullGameCache.set(gameId, full);
   const merged = { ...full, _fullDoc: true };
   gamesCache = gamesCache.map(g => (g.id === gameId ? merged : g));
@@ -1381,17 +1420,37 @@ async function ensureFullGame(gameId) {
 /**
  * Legacy migration: move top-level html/css/js into the code doc and strip
  * the heavy fields from the main doc, so the browse snapshot gets lighter
- * every time an author opens one of their own games.
+ * every time an author opens one of their own games. v35: inline project
+ * files also move to Cloudinary (filesRef) — but ONLY when every file
+ * uploads; a partial upload must never cost the game its files, so on any
+ * failure the inline copy stays and the next author visit retries.
  */
 async function migrateLegacyGameCode(gameId, full) {
   if (legacyMigrating.has(gameId)) return;
   legacyMigrating.add(gameId);
   try {
+    let filesRef = null;
+    const inlineFiles = (full.files && typeof full.files === 'object') ? full.files : null;
+    if (inlineFiles && Object.keys(inlineFiles).length) {
+      filesRef = [];
+      for (const [path, content] of Object.entries(inlineFiles)) {
+        try {
+          const file = new File([String(content)], path.replace(/[^a-zA-Z0-9._-]/g, '_'), { type: 'text/plain' });
+          const res = await uploadToCloudinary(file, null, 12);
+          filesRef.push({ path, url: res.url, bytes: String(content).length });
+        } catch (e) {
+          console.warn('[HubbleNest] Migration upload failed for', path, '— keeping the inline copy:', e?.message || e);
+          filesRef = null;
+          break;
+        }
+      }
+    }
     await setDoc(doc(db, 'games', gameId, 'code', 'main'), {
       html: full.html || '',
       css: full.css || '',
       js: full.js || '',
-      files: full.files || null
+      files: filesRef ? null : (inlineFiles || null),
+      filesRef
     });
     await updateDoc(doc(db, 'games', gameId), {
       html: deleteField(),
@@ -1399,7 +1458,7 @@ async function migrateLegacyGameCode(gameId, full) {
       js: deleteField(),
       files: deleteField()
     });
-    console.info('[HubbleNest] Game storage compacted (code moved to the code doc):', gameId);
+    console.info('[HubbleNest] Game storage compacted (code doc + Cloudinary file refs):', gameId);
   } catch (err) {
     // Rules pending or offline — the game stays fully playable either way.
     console.warn('Code compaction skipped:', err?.code || err);
@@ -1467,6 +1526,9 @@ export async function openGamePlayer(gameId) {
       frame.srcdoc = playerLoadingDoc();
       const full = await ensureFullGame(gameId);
       if (playerGameId !== gameId) return; // the member left before it arrived
+      if (full._filesUnavailable) {
+        showToast('The project files could not be loaded right now (network or CDN hiccup) — try again in a moment.', 'error', 6000);
+      }
       if (full.entryPath && full.files) {
         frame.srcdoc = buildSrcDocFromFiles(full.files, full.entryPath);
       } else if (full.files && !full.entryPath) {

@@ -36,14 +36,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
 
   <!-- Kick off the two ES-module entry points while the CSS parses.
-       NOTE: the app.js URLs carry the deploy version (?v=34) so a new release
+       NOTE: the app.js URLs carry the deploy version (?v=36) so a new release
        is never served from a stale cache; the firebase.js preload must match
        the EXACT URL app.js imports (./firebase.js, unversioned) or the browser
        would download the module twice. -->
-  <link rel="modulepreload" href="./app.js?v=34" />
+  <link rel="modulepreload" href="./app.js?v=36" />
   <link rel="modulepreload" href="./firebase.js" />
 
-  <link rel="stylesheet" href="./style.css?v=34" />
+  <link rel="stylesheet" href="./style.css?v=36" />
 
   <!-- PWA Manifest & App Compliance -->
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -2200,7 +2200,7 @@
                     <button type="button" class="btn btn-secondary btn-sm" id="game-ai-scaffold" onclick="window.HubbleNest.scaffoldProjectWithAi()" title="Generate a playable browser game from your uploaded project">✨ Make it playable with AI</button>
                     <button type="button" class="btn btn-ghost btn-sm" onclick="window.HubbleNest.clearGameFiles()">Clear all</button>
                   </div>
-                  <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. 600 KB total, files only — no binaries.</div>
+                  <div class="game-files-hint">Upload code in ANY language (HTML, CSS, JS, TS, Python, Java, C/C++, C#, PHP, Ruby, Go, Rust, Lua…). Folder structure is preserved. Browser-native projects (HTML entry) preview and run; other languages are stored and shared as readable source. No size limit — projects live on Cloudinary; up to 300 text/code files, 12 MB each, no binaries.</div>
                   <div class="game-files-list" id="game-files-list"></div>
                 </div>
                 <div id="game-pane-link" class="game-code-pane" style="display:none;">
@@ -2621,7 +2621,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="ai-model-input">Model</label>
-                  <input type="text" id="ai-model-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="gemini-2.5-flash" />
+                  <input type="text" id="ai-model-input" class="form-input" autocomplete="off" spellcheck="false" placeholder="gemini-flash-latest" />
                 </div>
                 <div class="push-config-actions">
                   <button type="button" class="btn btn-primary" id="ai-save-btn" onclick="window.HubbleNest.saveAiConfigFromSettings()">Save AI configuration</button>
@@ -2629,8 +2629,8 @@
                   <a class="btn btn-secondary" style="text-decoration: none;" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Get a free API key ↗</a>
                 </div>
                 <p class="settings-hint">
-                  Valid models: <b>gemini-2.5-flash</b> (recommended), <b>gemini-2.0-flash</b> or
-                  <b>gemini-flash-latest</b>. The Test button sends one real
+                  Valid models: <b>gemini-flash-latest</b> (recommended — always the newest stable Flash), <b>gemini-3.6-flash</b>, <b>gemini-3.5-flash</b> or
+                  <b>gemini-3.5-flash-lite</b>. The Test button sends one real
                   request and reports the exact result — so an invalid, expired, retired or restricted key can never hide behind a generic error.
                 </p>
               </div>
@@ -3679,7 +3679,7 @@
   </div>
 
   <!-- Vanilla JavaScript Entry Point -->
-  <script type="module" src="./app.js?v=34"></script>
+  <script type="module" src="./app.js?v=36"></script>
 
 </body>
 </html>
